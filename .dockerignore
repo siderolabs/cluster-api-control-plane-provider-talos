@@ -1,0 +1,10 @@
+*
+!api
+!config
+!controllers
+!hack
+!internal
+!pkg
+!go.mod
+!go.sum
+!main.go
