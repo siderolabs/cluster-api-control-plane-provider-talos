@@ -3,7 +3,8 @@
 Initializing a new project.
 
 ```bash
-make init DOMAIN=domain.tld NAMESPACE=template
+controlplane.cluster.x-k8s.io
+make init DOMAIN=controlplane.cluster.x-k8s.io NAMESPACE=template
 ```
 
 Rename the controller.

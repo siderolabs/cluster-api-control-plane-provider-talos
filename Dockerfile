@@ -5,7 +5,7 @@ ENV GO111MODULE on
 ENV GOPROXY https://proxy.golang.org
 ENV CGO_ENABLED 0
 WORKDIR /tmp
-RUN go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.2.5
+RUN go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.2.8
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
@@ -17,7 +17,8 @@ RUN ! go mod tidy -v 2>&1 | grep .
 
 FROM build AS manifests-build
 ARG NAME
-RUN controller-gen rbac:roleName=${NAME}-role crd paths="./..." output:rbac:artifacts:config=config/rbac output:crd:artifacts:config=config/crd/bases
+RUN controller-gen crd:crdVersions=v1 paths="./api/..." output:crd:dir=config/crd/bases output:webhook:dir=config/webhook webhook
+RUN controller-gen rbac:roleName=manager-role paths="./controllers/..." output:rbac:dir=config/rbac
 FROM scratch AS manifests
 COPY --from=manifests-build /src/config/crd /config/crd
 COPY --from=manifests-build /src/config/rbac /config/rbac
@@ -30,9 +31,9 @@ COPY --from=generate-build /src/api /api
 FROM k8s.gcr.io/hyperkube:v1.17.0 AS release-build
 RUN apt update -y \
   && apt install -y curl \
-  && curl -LO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv3.4.0/kustomize_v3.4.0_linux_amd64.tar.gz \
-  && tar -xf kustomize_v3.4.0_linux_amd64.tar.gz -C /usr/local/bin \
-  && rm kustomize_v3.4.0_linux_amd64.tar.gz
+  && curl -LO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv3.5.4/kustomize_v3.5.4_linux_amd64.tar.gz \
+  && tar -xf kustomize_v3.5.4_linux_amd64.tar.gz -C /usr/local/bin \
+  && rm kustomize_v3.5.4_linux_amd64.tar.gz
 COPY ./config ./config
 ARG REGISTRY_AND_USERNAME
 ARG NAME
@@ -40,9 +41,12 @@ ARG TAG
 RUN cd config/manager \
   && kustomize edit set image controller=${REGISTRY_AND_USERNAME}/${NAME}:${TAG} \
   && cd - \
-  && kubectl kustomize config >/release.yaml
+  && kustomize config >/control-plane-components.yaml \
+  && cp config/metadata/metadata.yaml /metadata.yaml
+
 FROM scratch AS release
-COPY --from=release-build /release.yaml /release.yaml
+COPY --from=release-build /control-plane-components.yaml /control-plane-components.yaml
+COPY --from=release-build /metadata.yaml /metadata.yaml
 
 FROM build AS binary
 RUN --mount=type=cache,target=/root/.cache/go-build GOOS=linux go build -ldflags "-s -w" -o /manager
