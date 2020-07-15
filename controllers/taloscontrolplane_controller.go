@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
@@ -125,6 +126,9 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// If object doesn't have a finalizer, add one.
+	controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+
 	defer func() {
 		if requeueErr, ok := errors.Cause(reterr).(capierrors.HasRequeueAfterError); ok {
 			if res.RequeueAfter == 0 {
@@ -160,8 +164,10 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return r.reconcileDelete(ctx, cluster, tcp)
 	}
 
-	// If object doesn't have a finalizer, add one.
-	controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+	// Update ownerrefs on infra templates
+	if err := r.addClusterOwnerToObj(ctx, tcp.Spec.InfrastructureTemplate, cluster); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// If ControlPlaneEndpoint is not set, return early
 	if cluster.Spec.ControlPlaneEndpoint.IsZero() {
@@ -476,4 +482,25 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 	}
 
 	return nil
+}
+
+func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, ref v1.ObjectReference, cluster *capiv1.Cluster) error {
+	obj, err := external.Get(ctx, r.Client, &ref, cluster.Namespace)
+	if err != nil {
+		return err
+	}
+
+	objPatchHelper, err := patch.NewHelper(obj, r.Client)
+	if err != nil {
+		return err
+	}
+
+	obj.SetOwnerReferences(util.EnsureOwnerRef(obj.GetOwnerReferences(), metav1.OwnerReference{
+		APIVersion: clusterv1.GroupVersion.String(),
+		Kind:       "Cluster",
+		Name:       cluster.Name,
+		UID:        cluster.UID,
+	}))
+
+	return objPatchHelper.Patch(ctx, obj)
 }
