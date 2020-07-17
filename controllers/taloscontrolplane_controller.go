@@ -315,6 +315,10 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
 			Namespace: tcp.Namespace,
+			Labels: map[string]string{
+				clusterv1.ClusterLabelName:          cluster.ClusterName,
+				capiv1.MachineControlPlaneLabelName: "",
+			},
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
 			},
