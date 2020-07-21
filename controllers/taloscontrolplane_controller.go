@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -278,6 +279,19 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 
 }
 
+// getFailureDomain will return a slice of failure domains from the cluster status.
+func (r *TalosControlPlaneReconciler) getFailureDomain(ctx context.Context, cluster *capiv1.Cluster) []string {
+	if cluster.Status.FailureDomains == nil {
+		return nil
+	}
+
+	retList := []string{}
+	for key := range cluster.Status.FailureDomains {
+		retList = append(retList, key)
+	}
+	return retList
+}
+
 func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane, nodeType NodeType) (ctrl.Result, error) {
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
 	// OwnerReference here without the Controller field set
@@ -331,6 +345,11 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 				ConfigRef: bootstrapRef,
 			},
 		},
+	}
+
+	failureDomains := r.getFailureDomain(ctx, cluster)
+	if len(failureDomains) > 0 {
+		machine.Spec.FailureDomain = &failureDomains[rand.Intn(len(failureDomains))]
 	}
 
 	if err := r.Client.Create(ctx, machine); err != nil {

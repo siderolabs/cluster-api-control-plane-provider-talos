@@ -18,7 +18,9 @@ package main
 
 import (
 	"flag"
+	"math/rand"
 	"os"
+	"time"
 
 	bootstrapv1alpha3 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1alpha3 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
@@ -47,6 +49,8 @@ func init() {
 }
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
+
 	var metricsAddr string
 	var enableLeaderElection bool
 	var webhookPort int
