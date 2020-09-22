@@ -47,6 +47,8 @@ const (
 	controlplaneNode
 )
 
+const requeueDuration = 30 * time.Second
+
 // ControlPlane holds business logic around control planes.
 // It should never need to connect to a service, that responsibility lies outside of this struct.
 type ControlPlane struct {
@@ -233,9 +235,33 @@ func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(o handler.MapOb
 }
 
 func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPlane) (ctrl.Result, error) {
-	//TODO: logic around only deleting if controlplane nodes are only ones left.
-	controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
-	return ctrl.Result{}, nil
+	// Get list of all control plane machines
+	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster), tcp.Name)
+	if err != nil {
+		r.Log.Error(err, "failed to retrieve control plane machines for cluster")
+		return ctrl.Result{}, err
+	}
+
+	// If no control plane machines remain, remove the finalizer
+	if len(ownedMachines) == 0 {
+		controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+		return ctrl.Result{}, nil
+	}
+
+	for _, ownedMachine := range ownedMachines {
+		// Already deleting this machine
+		if !ownedMachine.ObjectMeta.DeletionTimestamp.IsZero() {
+			continue
+		}
+		// Submit deletion request
+		if err := r.Client.Delete(ctx, ownedMachine); err != nil && !apierrors.IsNotFound(err) {
+			r.Log.Error(err, "Failed to cleanup owned machine")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Requeue the deletion so we can check to make sure machines got cleaned up
+	return ctrl.Result{RequeueAfter: requeueDuration}, nil
 }
 
 // newControlPlane returns an instantiated ControlPlane.
@@ -360,18 +386,13 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 }
 
 func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *capiv1.Cluster, spec *cabptv1.TalosConfigSpec) (*corev1.ObjectReference, error) {
-	owner := metav1.OwnerReference{
-		APIVersion: controlplanev1.GroupVersion.String(),
-		Kind:       "TalosControlPlane",
-		Name:       tcp.Name,
-		UID:        tcp.UID,
-	}
-
 	bootstrapConfig := &cabptv1.TalosConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
-			Namespace:       tcp.Namespace,
-			OwnerReferences: []metav1.OwnerReference{owner},
+			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
+			Namespace: tcp.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
+			},
 		},
 		Spec: *spec,
 	}
