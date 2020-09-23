@@ -24,6 +24,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/pointer"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -386,13 +387,19 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 }
 
 func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *capiv1.Cluster, spec *cabptv1.TalosConfigSpec) (*corev1.ObjectReference, error) {
+	owner := metav1.OwnerReference{
+		APIVersion:         controlplanev1.GroupVersion.String(),
+		Kind:               "TalosControlPlane",
+		Name:               tcp.Name,
+		UID:                tcp.UID,
+		BlockOwnerDeletion: pointer.BoolPtr(true),
+	}
+
 	bootstrapConfig := &cabptv1.TalosConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
-			Namespace: tcp.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
-			},
+			Name:            names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
+			Namespace:       tcp.Namespace,
+			OwnerReferences: []metav1.OwnerReference{owner},
 		},
 		Spec: *spec,
 	}
