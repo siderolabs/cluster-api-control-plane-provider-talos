@@ -55,7 +55,7 @@ const requeueDuration = 30 * time.Second
 type ControlPlane struct {
 	TCP      *controlplanev1.TalosControlPlane
 	Cluster  *capiv1.Cluster
-	Machines []*capiv1.Machine
+	Machines []capiv1.Machine
 }
 
 // TalosControlPlaneReconciler reconciles a TalosControlPlane object
@@ -123,13 +123,6 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Initialize the patch helper.
-	patchHelper, err := patch.NewHelper(tcp, r.Client)
-	if err != nil {
-		logger.Error(err, "Failed to configure the patch helper")
-		return ctrl.Result{Requeue: true}, nil
-	}
-
 	// If object doesn't have a finalizer, add one.
 	controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
 
@@ -141,14 +134,14 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 			}
 		}
 
-		// // Always attempt to update status.
+		// Always attempt to update status.
 		if err := r.updateStatus(ctx, tcp, cluster); err != nil {
 			logger.Error(err, "Failed to update TalosControlPlane Status")
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 
 		// Always attempt to Patch the TalosControlPlane object and status after each reconciliation.
-		if err := patchHelper.Patch(ctx, tcp); err != nil {
+		if err := r.Client.Status().Update(ctx, tcp); err != nil {
 			logger.Error(err, "Failed to patch TalosControlPlane")
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
@@ -206,7 +199,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	// We are scaling down
 	case numMachines > desiredReplicas:
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		//return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane)
+		return r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name)
 	}
 
 	// Generate Cluster Kubeconfig if needed
@@ -255,7 +248,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 			continue
 		}
 		// Submit deletion request
-		if err := r.Client.Delete(ctx, ownedMachine); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.Client.Delete(ctx, &ownedMachine); err != nil && !apierrors.IsNotFound(err) {
 			r.Log.Error(err, "Failed to cleanup owned machine")
 			return ctrl.Result{}, err
 		}
@@ -266,7 +259,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 }
 
 // newControlPlane returns an instantiated ControlPlane.
-func newControlPlane(cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines []*capiv1.Machine) *ControlPlane {
+func newControlPlane(cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines []capiv1.Machine) *ControlPlane {
 	return &ControlPlane{
 		TCP:      tcp,
 		Cluster:  cluster,
@@ -274,11 +267,45 @@ func newControlPlane(cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPl
 	}
 }
 
-func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx context.Context, cluster client.ObjectKey, cpName string) ([]*capiv1.Machine, error) {
-	returnList := []*capiv1.Machine{}
+func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, cluster client.ObjectKey, cpName string) (ctrl.Result, error) {
+	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
+	if len(machines) == 0 {
+		return ctrl.Result{}, fmt.Errorf("no machines found")
+	}
+
+	r.Log.Info("Found control plane machines", "machines", len(machines))
+
+	oldest := machines[0]
+	for _, machine := range machines {
+		if machine.CreationTimestamp.Before(&oldest.CreationTimestamp) {
+			oldest = machine
+		}
+	}
+
+	r.Log.Info("Deleting control plane machine", "machine", oldest.Name)
+
+	// TODO: We need to remove the etcd member. This can be done by calling the
+	// Talos reset API.
+	// TODO: We should use the control plane ready count to know if we can safely
+	// remove a node.
+	// TODO: Delete the node from the workload cluster.
+	err = r.Client.Delete(ctx, &oldest)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Requeue so that we handle any additional scaling.
+	return ctrl.Result{Requeue: true, RequeueAfter: time.Minute}, nil
+}
+
+func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx context.Context, cluster client.ObjectKey, cpName string) ([]capiv1.Machine, error) {
 	selector := map[string]string{
-		capiv1.ClusterLabelName: cluster.Name,
+		capiv1.ClusterLabelName:             cluster.Name,
+		capiv1.MachineControlPlaneLabelName: "",
 	}
 
 	machineList := capiv1.MachineList{}
@@ -288,21 +315,10 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 		client.InNamespace(cluster.Namespace),
 		client.MatchingLabels(selector),
 	); err != nil {
-		return returnList, err
+		return nil, err
 	}
 
-	for _, machine := range machineList.Items {
-		controllerRef := metav1.GetControllerOf(&machine)
-		if controllerRef == nil {
-			continue
-		}
-
-		if controllerRef.Kind == "TalosControlPlane" && controllerRef.Name == cpName {
-			returnList = append(returnList, &machine)
-		}
-	}
-
-	return returnList, nil
+	return machineList.Items, nil
 
 }
 
@@ -479,9 +495,12 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	for _, ownedMachine := range ownedMachines {
 		if ownedMachine.Status.NodeRef == nil {
-			return fmt.Errorf("owned machine does not yet have noderef")
+			r.Log.Info("owned machine does not yet have noderef", "machine", ownedMachine.Name)
+			continue
 		}
 
+		// If this fails for whatever reason, we can't accurately set the status
+		// of the control plane.
 		node, err := clientset.CoreV1().Nodes().Get(ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
