@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -206,7 +207,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	// We are scaling down
 	case numMachines > desiredReplicas:
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		//return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane)
+		return r.scaleDownControlPlane(ctx, req.NamespacedName, controlPlane.TCP.Name)
 	}
 
 	// Generate Cluster Kubeconfig if needed
@@ -272,6 +273,30 @@ func newControlPlane(cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPl
 		Cluster:  cluster,
 		Machines: machines,
 	}
+}
+
+func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, cluster client.ObjectKey, cpName string) (ctrl.Result, error) {
+	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	var oldest *v1alpha3.Machine
+	for _, machine := range machines {
+		if machine.CreationTimestamp.Before(&oldest.CreationTimestamp) {
+			oldest = machine
+		}
+	}
+
+	// TODO: We need to remove the etcd member. This can be done by calling the
+	// Talos reset API.
+	err = r.Client.Delete(ctx, oldest)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Requeue so that we handle any additional scaling.
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx context.Context, cluster client.ObjectKey, cpName string) ([]*capiv1.Machine, error) {
