@@ -299,7 +299,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 	}
 
 	// Requeue so that we handle any additional scaling.
-	return ctrl.Result{Requeue: true, RequeueAfter: time.Minute}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx context.Context, cluster client.ObjectKey, cpName string) ([]capiv1.Machine, error) {
