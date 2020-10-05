@@ -11,9 +11,13 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/pkg/errors"
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	"github.com/talos-systems/talos/pkg/machinery/api/machine"
+	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
+	talosconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -102,9 +107,15 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	// Fetch the Cluster.
 	cluster, err := util.GetOwnerCluster(ctx, r.Client, tcp.ObjectMeta)
 	if err != nil {
-		logger.Error(err, "Failed to retrieve owner Cluster from the API Server")
-		return ctrl.Result{}, err
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "Failed to retrieve owner Cluster from the API Server")
+
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
+
 	if cluster == nil {
 		logger.Info("Cluster Controller has not yet set OwnerRef")
 		return ctrl.Result{Requeue: true}, nil
@@ -123,10 +134,36 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// If object doesn't have a finalizer, add one.
-	controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+	// Initialize the patch helper.
+	patchHelper, err := patch.NewHelper(tcp, r.Client)
+	if err != nil {
+		logger.Error(err, "Failed to configure the patch helper")
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	// Add finalizer first if not exist to avoid the race condition between init and delete
+	if !controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer) {
+		controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+
+		// patch and return right away instead of reusing the main defer,
+		// because the main defer may take too much time to get cluster status
+		// Patch ObservedGeneration only if the reconciliation completed successfully
+		patchOpts := []patch.Option{}
+		if reterr == nil {
+			patchOpts = append(patchOpts, patch.WithStatusObservedGeneration{})
+		}
+
+		if err := patchHelper.Patch(ctx, tcp, patchOpts...); err != nil {
+			logger.Error(err, "Failed to add finalizer to TalosControlPlane")
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{}, nil
+	}
 
 	defer func() {
+		r.Log.Info("Attempting to set control plane status")
+
 		if requeueErr, ok := errors.Cause(reterr).(capierrors.HasRequeueAfterError); ok {
 			if res.RequeueAfter == 0 {
 				res.RequeueAfter = requeueErr.GetRequeueAfter()
@@ -137,6 +174,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		// Always attempt to update status.
 		if err := r.updateStatus(ctx, tcp, cluster); err != nil {
 			logger.Error(err, "Failed to update TalosControlPlane Status")
+
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 
@@ -150,10 +188,12 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		// Make TCP to requeue in case status is not ready, so we can check for node status without waiting for a full resync (by default 10 minutes).
 		// Only requeue if we are not going in exponential backoff due to error, or if we are not already re-queueing, or if the object has a deletion timestamp.
 		if reterr == nil && !res.Requeue && !(res.RequeueAfter > 0) && tcp.ObjectMeta.DeletionTimestamp.IsZero() {
-			if !tcp.Status.Ready {
+			if !tcp.Status.Ready || tcp.Status.UnavailableReplicas > 0 {
 				res = ctrl.Result{RequeueAfter: 20 * time.Second}
 			}
 		}
+
+		r.Log.Info("Successfully updated control plane status")
 	}()
 
 	if !tcp.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -232,7 +272,8 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 	// Get list of all control plane machines
 	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster), tcp.Name)
 	if err != nil {
-		r.Log.Error(err, "failed to retrieve control plane machines for cluster")
+		r.Log.Error(err, "Failed to retrieve control plane machines for cluster")
+
 		return ctrl.Result{}, err
 	}
 
@@ -281,18 +322,121 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	oldest := machines[0]
 	for _, machine := range machines {
+		if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
+			r.Log.Info("Machine is in process of deletion", "machine", machine.Name)
+
+			return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
+		}
+
 		if machine.CreationTimestamp.Before(&oldest.CreationTimestamp) {
 			oldest = machine
 		}
 	}
 
-	r.Log.Info("Deleting control plane machine", "machine", oldest.Name)
+	if oldest.Status.NodeRef == nil {
+		return ctrl.Result{}, fmt.Errorf("%q machine does not have a nodeRef", oldest.Name)
+	}
 
-	// TODO: We need to remove the etcd member. This can be done by calling the
-	// Talos reset API.
-	// TODO: We should use the control plane ready count to know if we can safely
-	// remove a node.
-	// TODO: Delete the node from the workload cluster.
+	kubeconfigSecret := &v1.Secret{}
+
+	err = r.Client.Get(ctx,
+		types.NamespacedName{
+			Namespace: cluster.Namespace,
+			Name:      cluster.Name + "-kubeconfig",
+		},
+		kubeconfigSecret,
+	)
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigSecret.Data["value"])
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	var address string
+
+	node, err := clientset.CoreV1().Nodes().Get(ctx, oldest.Status.NodeRef.Name, metav1.GetOptions{})
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == v1.NodeInternalIP {
+			address = addr.Address
+			break
+		}
+	}
+
+	if address == "" {
+		return ctrl.Result{Requeue: true}, fmt.Errorf("no address was found for node %q", node.Name)
+	}
+
+	var (
+		cfgs  cabptv1.TalosConfigList
+		found *cabptv1.TalosConfig
+	)
+
+	err = r.Client.List(ctx, &cfgs)
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	for _, cfg := range cfgs.Items {
+		for _, ref := range cfg.OwnerReferences {
+			if ref.Kind == "Machine" && ref.Name == oldest.Name {
+				found = &cfg
+				break
+			}
+		}
+	}
+
+	if found == nil {
+		return ctrl.Result{Requeue: true}, fmt.Errorf("failed to find TalosConfig for %q", oldest.Name)
+	}
+
+	t, err := talosconfig.FromString(found.Status.TalosConfig)
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	c, err := talosclient.New(ctx, talosclient.WithEndpoints(address), talosclient.WithConfig(t))
+	if err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
+	r.Log.Info("Forfeiting leadership", "machine", oldest.Status.NodeRef.Name)
+
+	_, err = c.MachineClient.EtcdForfeitLeadership(ctx, &machine.EtcdForfeitLeadershipRequest{})
+	if err != nil {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	r.Log.Info("Leaving etcd", "machine", oldest.Name, "node", node.Name, "address", address)
+
+	_, err = c.MachineClient.EtcdLeaveCluster(ctx, &machine.EtcdLeaveClusterRequest{})
+	if err != nil {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	// NB: We shutdown the node here so that a loadbalancer will drop the backend.
+	// The Kubernetes API server is configured to talk to etcd on localhost, but
+	// at this point etcd has been stopped.
+	r.Log.Info("Shutting down node", "machine", oldest.Name, "node", node.Name, "address", address)
+
+	_, err = c.MachineClient.Shutdown(ctx, &empty.Empty{})
+	if err != nil {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	r.Log.Info("Deleting control plane node", "machine", oldest.Name, "node", node.Name)
+
 	err = r.Client.Delete(ctx, &oldest)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -493,29 +637,59 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return err
 	}
 
+	errChan := make(chan error)
+
 	for _, ownedMachine := range ownedMachines {
-		if ownedMachine.Status.NodeRef == nil {
-			r.Log.Info("owned machine does not yet have noderef", "machine", ownedMachine.Name)
-			continue
-		}
+		ownedMachine := ownedMachine
 
-		// If this fails for whatever reason, we can't accurately set the status
-		// of the control plane.
-		node, err := clientset.CoreV1().Nodes().Get(ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
+		go func() {
+			e := func() error {
+				if v1alpha3.MachinePhase(ownedMachine.Status.Phase) == v1alpha3.MachinePhaseDeleting {
+					return fmt.Errorf("machine is deleting")
+				}
 
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-				tcp.Status.ReadyReplicas++
+				if ownedMachine.Status.NodeRef == nil {
+					return fmt.Errorf("machine %q does not have a noderef", ownedMachine.Name)
+				}
+
+				ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				defer cancel()
+
+				node, err := clientset.CoreV1().Nodes().Get(ctx, ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
+				if err != nil {
+					return fmt.Errorf("failed to get node %q: %w", node.Name, err)
+				}
+
+				for _, condition := range node.Status.Conditions {
+					if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+						return nil
+					}
+				}
+
+				return fmt.Errorf("node ready condition not found")
+			}()
+
+			if e != nil {
+				e = fmt.Errorf("failed to get status for %q: %w", ownedMachine.Name, e)
 			}
+
+			errChan <- e
+		}()
+	}
+
+	for range ownedMachines {
+		err = <-errChan
+		if err == nil {
+			tcp.Status.ReadyReplicas++
+		} else {
+			r.Log.Info("Failed to get readiness of machine", "err", err)
 		}
 	}
 
 	tcp.Status.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
 
 	if tcp.Status.ReadyReplicas > 0 {
+		r.Log.Info("Ready replicas", "count", tcp.Status.ReadyReplicas)
 		tcp.Status.Ready = true
 	}
 
