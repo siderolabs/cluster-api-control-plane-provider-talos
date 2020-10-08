@@ -1,10 +1,28 @@
 
+<a name="v0.1.0-alpha.5"></a>
+## [v0.1.0-alpha.5](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2020-10-05)
+
+### Chore
+
+* update image pull policy
+
+### Fix
+
+* leave etcd on scale down
+* remove requeue time
+* scale down the control plane
+
+
 <a name="v0.1.0-alpha.4"></a>
 ## [v0.1.0-alpha.4](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) (2020-09-23)
 
 ### Fix
 
 * ensure talosconfigs are created w/o controller=true in ownerref
+
+### Release
+
+* **v0.1.0-alpha.4:** prepare release
 
 
 <a name="v0.1.0-alpha.3"></a>
