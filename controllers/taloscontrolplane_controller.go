@@ -161,6 +161,13 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
+	// nb: we moved the deletion reconcile before the defer to avoid additional, unneccessary patching.
+	// we handle the patches necessary directly in the reconcileDelete function and will eventually get rid of this defer altogether.
+	if !tcp.ObjectMeta.DeletionTimestamp.IsZero() {
+		// Handle deletion reconciliation loop.
+		return r.reconcileDelete(ctx, cluster, tcp)
+	}
+
 	defer func() {
 		r.Log.Info("Attempting to set control plane status")
 
@@ -195,11 +202,6 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 
 		r.Log.Info("Successfully updated control plane status")
 	}()
-
-	if !tcp.ObjectMeta.DeletionTimestamp.IsZero() {
-		// Handle deletion reconciliation loop.
-		return r.reconcileDelete(ctx, cluster, tcp)
-	}
 
 	// Update ownerrefs on infra templates
 	if err := r.addClusterOwnerToObj(ctx, tcp.Spec.InfrastructureTemplate, cluster); err != nil {
@@ -280,7 +282,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 	// If no control plane machines remain, remove the finalizer
 	if len(ownedMachines) == 0 {
 		controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.Client.Update(ctx, tcp)
 	}
 
 	for _, ownedMachine := range ownedMachines {
