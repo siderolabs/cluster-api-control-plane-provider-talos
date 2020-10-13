@@ -1,6 +1,14 @@
 
+<a name="v0.1.0-alpha.6"></a>
+## [v0.1.0-alpha.6](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) (2020-10-13)
+
+### Fix
+
+* ensure we handle finalizer removal properly
+
+
 <a name="v0.1.0-alpha.5"></a>
-## [v0.1.0-alpha.5](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2020-10-05)
+## [v0.1.0-alpha.5](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2020-10-08)
 
 ### Chore
 
@@ -11,6 +19,10 @@
 * leave etcd on scale down
 * remove requeue time
 * scale down the control plane
+
+### Release
+
+* **v0.1.0-alpha.5:** prepare release
 
 
 <a name="v0.1.0-alpha.4"></a>
