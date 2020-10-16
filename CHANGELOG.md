@@ -1,10 +1,22 @@
 
+<a name="v0.1.0-alpha.7"></a>
+## [v0.1.0-alpha.7](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) (2020-10-16)
+
+### Fix
+
+* address scale down issues
+
+
 <a name="v0.1.0-alpha.6"></a>
 ## [v0.1.0-alpha.6](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) (2020-10-13)
 
 ### Fix
 
 * ensure we handle finalizer removal properly
+
+### Release
+
+* **v0.1.0-alpha.6:** prepare release
 
 
 <a name="v0.1.0-alpha.5"></a>
