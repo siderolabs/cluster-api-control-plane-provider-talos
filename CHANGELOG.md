@@ -1,10 +1,22 @@
 
+<a name="v0.1.0-alpha.8"></a>
+## [v0.1.0-alpha.8](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2020-10-20)
+
+### Chore
+
+* update talos machinery v0.7.0-alpha.7
+
+
 <a name="v0.1.0-alpha.7"></a>
 ## [v0.1.0-alpha.7](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) (2020-10-16)
 
 ### Fix
 
 * address scale down issues
+
+### Release
+
+* **v0.1.0-alpha.7:** prepare release
 
 
 <a name="v0.1.0-alpha.6"></a>
@@ -88,4 +100,16 @@
 ### Release
 
 * **v0.1.0-alpha.1:** prepare release
+
+
+<a name="v0.1.0-alpha.0"></a>
+## v0.1.0-alpha.0 (2020-05-28)
+
+### Feat
+
+* publish first working version
+
+### Fix
+
+* ensure releases are built properly
 
