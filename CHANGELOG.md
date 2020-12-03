@@ -1,10 +1,21 @@
 
+<a name="v0.1.0-alpha.9"></a>
+## [v0.1.0-alpha.9](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2020-12-03)
+
+### Feat
+
+* update imported bootstrap provider package
+
 <a name="v0.1.0-alpha.8"></a>
 ## [v0.1.0-alpha.8](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2020-10-20)
 
 ### Chore
 
 * update talos machinery v0.7.0-alpha.7
+
+### Release
+
+* **v0.1.0-alpha.8:** prepare release
 
 
 <a name="v0.1.0-alpha.7"></a>
