@@ -3,13 +3,14 @@ module github.com/talos-systems/cluster-api-control-plane-provider-talos
 go 1.13
 
 require (
+	cloud.google.com/go v0.47.0 // indirect
 	github.com/go-logr/logr v0.1.0
 	github.com/golang/protobuf v1.4.2
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1
 	github.com/pkg/errors v0.9.1
-	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.6
-	github.com/talos-systems/talos/pkg/machinery v0.0.0-20201020161939-d2583e228288
+	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.8
+	github.com/talos-systems/talos/pkg/machinery v0.0.0-20201203014938-ed31056d91d0
 	k8s.io/api v0.18.6
 	k8s.io/apimachinery v0.18.6
 	k8s.io/apiserver v0.18.6
