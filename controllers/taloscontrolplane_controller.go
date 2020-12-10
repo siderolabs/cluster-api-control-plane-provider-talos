@@ -736,7 +736,17 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		tcp.Status.Ready = true
 	}
 
-	tcp.Status.Initialized = true
+	// We consider ourselves "initialized" if the workload cluster returns any number of nodes.
+	// We also do not return client list errors (just log them) as it's expected that it will fail
+	// for a while until the cluster is up.
+	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err == nil {
+		if len(nodeList.Items) > 0 {
+			tcp.Status.Initialized = true
+		}
+	} else {
+		r.Log.Error(err, "Failed attempt to contact workload cluster")
+	}
 
 	return nil
 }
