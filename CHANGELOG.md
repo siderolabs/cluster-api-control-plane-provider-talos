@@ -1,10 +1,23 @@
 
+<a name="v0.1.0-alpha.10"></a>
+## [v0.1.0-alpha.10](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2020-12-10)
+
+### Fix
+
+* update initialization for CAPI v0.3.11
+
+
 <a name="v0.1.0-alpha.9"></a>
 ## [v0.1.0-alpha.9](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2020-12-03)
 
 ### Feat
 
 * update imported bootstrap provider package
+
+### Release
+
+* **v0.1.0-alpha.9:** prepare release
+
 
 <a name="v0.1.0-alpha.8"></a>
 ## [v0.1.0-alpha.8](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2020-10-20)
@@ -111,16 +124,4 @@
 ### Release
 
 * **v0.1.0-alpha.1:** prepare release
-
-
-<a name="v0.1.0-alpha.0"></a>
-## v0.1.0-alpha.0 (2020-05-28)
-
-### Feat
-
-* publish first working version
-
-### Fix
-
-* ensure releases are built properly
 
