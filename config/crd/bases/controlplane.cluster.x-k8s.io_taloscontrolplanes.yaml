@@ -88,6 +88,8 @@ spec:
                         type: string
                       generateType:
                         type: string
+                      talosVersion:
+                        type: string
                     required:
                     - generateType
                     type: object
@@ -111,6 +113,8 @@ spec:
                       data:
                         type: string
                       generateType:
+                        type: string
+                      talosVersion:
                         type: string
                     required:
                     - generateType
