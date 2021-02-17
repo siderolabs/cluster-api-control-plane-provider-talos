@@ -1,10 +1,22 @@
 
+<a name="v0.1.0-alpha.11"></a>
+## [v0.1.0-alpha.11](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2021-02-17)
+
+### Feat
+
+* support talosVersion in TalosControlPlane CRD
+
+
 <a name="v0.1.0-alpha.10"></a>
 ## [v0.1.0-alpha.10](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2020-12-10)
 
 ### Fix
 
 * update initialization for CAPI v0.3.11
+
+### Release
+
+* **v0.1.0-alpha.10:** prepare release
 
 
 <a name="v0.1.0-alpha.9"></a>
