@@ -355,14 +355,14 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 			r.Log.Info("Machine is in process of deletion", "machine", machine.Name)
 
-			node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
+			node, err := clientset.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
 
 			r.Log.Info("Deleting node", "machine", machine.Name, "node", node.Name)
 
-			err = clientset.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+			err = clientset.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
@@ -381,7 +381,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	var address string
 
-	node, err := clientset.CoreV1().Nodes().Get(ctx, oldest.Status.NodeRef.Name, metav1.GetOptions{})
+	node, err := clientset.CoreV1().Nodes().Get(oldest.Status.NodeRef.Name, metav1.GetOptions{})
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -480,7 +480,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Deleting node", "machine", oldest.Name, "node", node.Name)
 
-	err = clientset.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+	err = clientset.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -695,10 +695,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 					return fmt.Errorf("machine %q does not have a noderef", ownedMachine.Name)
 				}
 
-				ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-				defer cancel()
-
-				node, err := clientset.CoreV1().Nodes().Get(ctx, ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
+				node, err := clientset.CoreV1().Nodes().Get(ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
 				if err != nil {
 					return fmt.Errorf("failed to get node %q: %w", node.Name, err)
 				}
@@ -739,7 +736,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	// We consider ourselves "initialized" if the workload cluster returns any number of nodes.
 	// We also do not return client list errors (just log them) as it's expected that it will fail
 	// for a while until the cluster is up.
-	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodeList, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err == nil {
 		if len(nodeList.Items) > 0 {
 			tcp.Status.Initialized = true
