@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/pkg/errors"
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
@@ -432,27 +431,23 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Verifying etcd status", "machine", oldest.Name, "node", node.Name, "address", address)
 
-	svcs, err := c.MachineClient.ServiceList(ctx, &empty.Empty{})
+	svcs, err := c.ServiceInfo(ctx, "etcd")
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	for _, svc := range svcs.Messages[0].Services {
-		if svc.Id != "etcd" {
-			continue
-		}
-
-		if svc.State != "Finished" {
+	for _, svc := range svcs {
+		if svc.Service.State != "Finished" {
 			r.Log.Info("Forfeiting leadership", "machine", oldest.Status.NodeRef.Name)
 
-			_, err = c.MachineClient.EtcdForfeitLeadership(ctx, &machine.EtcdForfeitLeadershipRequest{})
+			_, err = c.EtcdForfeitLeadership(ctx, &machine.EtcdForfeitLeadershipRequest{})
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
 
 			r.Log.Info("Leaving etcd", "machine", oldest.Name, "node", node.Name, "address", address)
 
-			_, err = c.MachineClient.EtcdLeaveCluster(ctx, &machine.EtcdLeaveClusterRequest{})
+			err = c.EtcdLeaveCluster(ctx, &machine.EtcdLeaveClusterRequest{})
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
@@ -473,7 +468,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 	// at this point etcd has been stopped.
 	r.Log.Info("Shutting down node", "machine", oldest.Name, "node", node.Name, "address", address)
 
-	_, err = c.MachineClient.Shutdown(ctx, &empty.Empty{})
+	err = c.Shutdown(ctx)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
