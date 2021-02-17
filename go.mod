@@ -5,12 +5,11 @@ go 1.13
 require (
 	cloud.google.com/go v0.47.0 // indirect
 	github.com/go-logr/logr v0.1.0
-	github.com/golang/protobuf v1.4.3
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1
 	github.com/pkg/errors v0.9.1
 	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0-alpha.10
-	github.com/talos-systems/talos/pkg/machinery v0.0.0-20210216142802-8d7a36cc0cc2
+	github.com/talos-systems/talos/pkg/machinery v0.0.0-20210218160848-32d25885288f
 	k8s.io/api v0.17.9
 	k8s.io/apimachinery v0.17.9
 	k8s.io/apiserver v0.17.9

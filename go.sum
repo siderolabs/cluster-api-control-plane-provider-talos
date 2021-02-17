@@ -468,8 +468,12 @@ github.com/talos-systems/net v0.2.1-0.20210121122956-005a94f8b36b h1:y3mBkTJdW7c
 github.com/talos-systems/net v0.2.1-0.20210121122956-005a94f8b36b/go.mod h1:VreSAyRmxMtqussAHSKMKkJQa1YwBTSVfkmE4Jydam4=
 github.com/talos-systems/os-runtime v0.0.0-20210126185717-734f1e1cee9e h1:HrAdgwnXhVr9LlWjpc+kejkLVUpTRKbNTAJe7H+kRXM=
 github.com/talos-systems/os-runtime v0.0.0-20210126185717-734f1e1cee9e/go.mod h1:+E9CUVoYpReh0nhOEvFpy7pwLiyq0700WF03I06giyk=
+github.com/talos-systems/os-runtime v0.0.0-20210216141502-28dd9aaf98d6 h1:a3QXMKocLKRDRYn8iBX02wMZGQBH2XgE3EBhYHF4xws=
+github.com/talos-systems/os-runtime v0.0.0-20210216141502-28dd9aaf98d6/go.mod h1:+E9CUVoYpReh0nhOEvFpy7pwLiyq0700WF03I06giyk=
 github.com/talos-systems/talos/pkg/machinery v0.0.0-20210216142802-8d7a36cc0cc2 h1:eA3i2v1ZGK59z+MZoaWu51zNRIrm4CNEY4XENOP+qYQ=
 github.com/talos-systems/talos/pkg/machinery v0.0.0-20210216142802-8d7a36cc0cc2/go.mod h1:hhWsbfLrP53M03VRmJ5j92yimTHx0NBwngaXnvKkPE0=
+github.com/talos-systems/talos/pkg/machinery v0.0.0-20210218160848-32d25885288f h1:tvKfcJWXxUSNeuVoHWW4qwYz4k4JuzySpFfe+Rt15mI=
+github.com/talos-systems/talos/pkg/machinery v0.0.0-20210218160848-32d25885288f/go.mod h1:7xqrV27kGtf2On8mrFjhv6dlNBRvtYsr+1npSZXJDlc=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
@@ -572,6 +576,7 @@ golang.org/x/sync v0.0.0-20181108010431-42b317875d0f/go.mod h1:RxMgew5VJxzue5/jJ
 golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sync v0.0.0-20190227155943-e225da77a7e6/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e h1:vcxGaoTs7kV8m5Np9uUNQin4BrLOthgV7252N8V+FwY=
 golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sys v0.0.0-20170830134202-bb24a47a89ea/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
