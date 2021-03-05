@@ -1,10 +1,23 @@
 
+<a name="v0.1.0-alpha.12"></a>
+## [v0.1.0-alpha.12](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2021-02-18)
+
+### Fix
+
+* update resources for deployment
+* use Talos API client correctly (wrapped version)
+
+
 <a name="v0.1.0-alpha.11"></a>
 ## [v0.1.0-alpha.11](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2021-02-17)
 
 ### Feat
 
 * support talosVersion in TalosControlPlane CRD
+
+### Release
+
+* **v0.1.0-alpha.11:** prepare release
 
 
 <a name="v0.1.0-alpha.10"></a>
@@ -136,4 +149,3 @@
 ### Release
 
 * **v0.1.0-alpha.1:** prepare release
-
