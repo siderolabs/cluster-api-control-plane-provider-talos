@@ -4,7 +4,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.2.8
+    controller-gen.kubebuilder.io/version: v0.5.0
   creationTimestamp: null
   name: taloscontrolplanes.controlplane.cluster.x-k8s.io
 spec:
@@ -25,13 +25,11 @@ spec:
       jsonPath: .status.ready
       name: Ready
       type: boolean
-    - description: This denotes whether or not the control plane has the uploaded
-        talos-config configmap
+    - description: This denotes whether or not the control plane has the uploaded talos-config configmap
       jsonPath: .status.initialized
       name: Initialized
       type: boolean
-    - description: Total number of non-terminated machines targeted by this control
-        plane
+    - description: Total number of non-terminated machines targeted by this control plane
       jsonPath: .status.replicas
       name: Replicas
       type: integer
@@ -49,14 +47,10 @@ spec:
         description: TalosControlPlane is the Schema for the taloscontrolplanes API
         properties:
           apiVersion:
-            description: 'APIVersion defines the versioned schema of this representation
-              of an object. Servers should convert recognized schemas to the latest
-              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
             type: string
           kind:
-            description: 'Kind is a string value representing the REST resource this
-              object represents. Servers may infer this from the endpoint the client
-              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
             type: string
           metadata:
             type: object
@@ -64,8 +58,7 @@ spec:
             description: TalosControlPlaneSpec defines the desired state of TalosControlPlane
             properties:
               controlPlaneConfig:
-                description: ControlPlaneConfig is a two TalosConfigSpecs to use for
-                  initializing and joining machines to the control plane.
+                description: ControlPlaneConfig is a two TalosConfigSpecs to use for initializing and joining machines to the control plane.
                 properties:
                   controlplane:
                     description: TalosConfigSpec defines the desired state of TalosConfig
@@ -124,24 +117,13 @@ spec:
                 - init
                 type: object
               infrastructureTemplate:
-                description: InfrastructureTemplate is a required reference to a custom
-                  resource offered by an infrastructure provider.
+                description: InfrastructureTemplate is a required reference to a custom resource offered by an infrastructure provider.
                 properties:
                   apiVersion:
                     description: API version of the referent.
                     type: string
                   fieldPath:
-                    description: 'If referring to a piece of an object instead of
-                      an entire object, this string should contain a valid JSON/Go
-                      field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within
-                      a pod, this would take on a value like: "spec.containers{name}"
-                      (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]"
-                      (container with index 2 in this pod). This syntax is chosen
-                      only to have some well-defined way of referencing a part of
-                      an object. TODO: this design is not final and this field is
-                      subject to change in the future.'
+                    description: 'If referring to a piece of an object instead of an entire object, this string should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2]. For example, if the object reference is to a container within a pod, this would take on a value like: "spec.containers{name}" (where "name" refers to the name of the container that triggered the event) or if no container name is specified "spec.containers[2]" (container with index 2 in this pod). This syntax is chosen only to have some well-defined way of referencing a part of an object. TODO: this design is not final and this field is subject to change in the future.'
                     type: string
                   kind:
                     description: 'Kind of the referent. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
@@ -153,17 +135,14 @@ spec:
                     description: 'Namespace of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/'
                     type: string
                   resourceVersion:
-                    description: 'Specific resourceVersion to which this reference
-                      is made, if any. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency'
+                    description: 'Specific resourceVersion to which this reference is made, if any. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency'
                     type: string
                   uid:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
               replicas:
-                description: Number of desired machines. Defaults to 1. When stacked
-                  etcd is used only odd numbers are permitted, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
-                  This is a pointer to distinguish between explicit zero and not specified.
+                description: Number of desired machines. Defaults to 1. When stacked etcd is used only odd numbers are permitted, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members). This is a pointer to distinguish between explicit zero and not specified.
                 format: int32
                 type: integer
               version:
@@ -180,45 +159,30 @@ spec:
             description: TalosControlPlaneStatus defines the observed state of TalosControlPlane
             properties:
               failureMessage:
-                description: ErrorMessage indicates that there is a terminal problem
-                  reconciling the state, and will be set to a descriptive error message.
+                description: ErrorMessage indicates that there is a terminal problem reconciling the state, and will be set to a descriptive error message.
                 type: string
               failureReason:
-                description: FailureReason indicates that there is a terminal problem
-                  reconciling the state, and will be set to a token value suitable
-                  for programmatic interpretation.
+                description: FailureReason indicates that there is a terminal problem reconciling the state, and will be set to a token value suitable for programmatic interpretation.
                 type: string
               initialized:
-                description: Initialized denotes whether or not the control plane
-                  has the uploaded talos-config configmap.
+                description: Initialized denotes whether or not the control plane has the uploaded talos-config configmap.
                 type: boolean
               ready:
-                description: Ready denotes that the TalosControlPlane API Server is
-                  ready to receive requests.
+                description: Ready denotes that the TalosControlPlane API Server is ready to receive requests.
                 type: boolean
               readyReplicas:
-                description: Total number of fully running and ready control plane
-                  machines.
+                description: Total number of fully running and ready control plane machines.
                 format: int32
                 type: integer
               replicas:
-                description: Total number of non-terminated machines targeted by this
-                  control plane (their labels match the selector).
+                description: Total number of non-terminated machines targeted by this control plane (their labels match the selector).
                 format: int32
                 type: integer
               selector:
-                description: 'Selector is the label selector in string format to avoid
-                  introspection by clients, and is used to provide the CRD-based integration
-                  for the scale subresource and additional integrations for things
-                  like kubectl describe.. The string will be in the same format as
-                  the query-param syntax. More info about label selectors: http://kubernetes.io/docs/user-guide/labels#label-selectors'
+                description: 'Selector is the label selector in string format to avoid introspection by clients, and is used to provide the CRD-based integration for the scale subresource and additional integrations for things like kubectl describe.. The string will be in the same format as the query-param syntax. More info about label selectors: http://kubernetes.io/docs/user-guide/labels#label-selectors'
                 type: string
               unavailableReplicas:
-                description: Total number of unavailable machines targeted by this
-                  control plane. This is the total number of machines that are still
-                  required for the deployment to have 100% available capacity. They
-                  may either be machines that are running but not yet ready or machines
-                  that still have not been created.
+                description: Total number of unavailable machines targeted by this control plane. This is the total number of machines that are still required for the deployment to have 100% available capacity. They may either be machines that are running but not yet ready or machines that still have not been created.
                 format: int32
                 type: integer
             type: object

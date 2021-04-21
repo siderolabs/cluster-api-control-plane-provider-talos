@@ -7,10 +7,7 @@ steps:
   - name: setup-ci
     image: autonomy/build-container:latest
     commands:
-      - git fetch --tags
-      - apk add coreutils
-      - docker buildx create --driver docker-container --platform linux/amd64 --buildkitd-flags "--allow-insecure-entitlement security.insecure" --name local --use unix:///var/outer-run/docker.sock
-      - docker buildx inspect --bootstrap
+      - setup-ci
     privileged: true
     volumes:
       - name: docker-socket
@@ -23,6 +20,8 @@ steps:
   - name: build-pull-request
     image: autonomy/build-container:latest
     pull: always
+    environment:
+      PLATFORM: linux/amd64,linux/arm64
     commands:
       - make
     when:
@@ -41,12 +40,13 @@ steps:
     image: autonomy/build-container:latest
     pull: always
     environment:
-      DOCKER_USERNAME:
-        from_secret: docker_username
-      DOCKER_PASSWORD:
-        from_secret: docker_password
+      GHCR_USERNAME:
+        from_secret: ghcr_username
+      GHCR_PASSWORD:
+        from_secret: ghcr_token
+      PLATFORM: linux/amd64,linux/arm64
     commands:
-      - docker login --username "$${DOCKER_USERNAME}" --password "$${DOCKER_PASSWORD}"
+      - docker login --username "$${GHCR_USERNAME}" --password "$${GHCR_PASSWORD}" ghcr.io
       - make PUSH=true
     when:
       event:
@@ -127,3 +127,8 @@ trigger:
 
 depends_on:
   - default
+---
+kind: signature
+hmac: e3d18401c2205988061491de11ad06b3336a5a0f6df49787832683e472b8d427
+
+...
