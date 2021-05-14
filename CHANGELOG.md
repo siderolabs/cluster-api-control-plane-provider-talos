@@ -1,4 +1,16 @@
 
+<a name="v0.1.0-alpha.13"></a>
+## [v0.1.0-alpha.13](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2021-05-14)
+
+### Chore
+
+* rework build, move to ghcr.io, build for arm64/amd64
+
+### Fix
+
+* back down resource requests
+
+
 <a name="v0.1.0-alpha.12"></a>
 ## [v0.1.0-alpha.12](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2021-02-18)
 
@@ -6,6 +18,10 @@
 
 * update resources for deployment
 * use Talos API client correctly (wrapped version)
+
+### Release
+
+* **v0.1.0-alpha.12:** prepare release
 
 
 <a name="v0.1.0-alpha.11"></a>
