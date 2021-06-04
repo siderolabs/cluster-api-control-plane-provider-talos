@@ -14,18 +14,12 @@ import (
 	"github.com/pkg/errors"
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
-	"github.com/talos-systems/talos/pkg/machinery/api/machine"
-	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
-	talosconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/storage/names"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/pointer"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -323,25 +317,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Found control plane machines", "machines", len(machines))
 
-	kubeconfigSecret := &corev1.Secret{}
-
-	err = r.Client.Get(ctx,
-		types.NamespacedName{
-			Namespace: cluster.Namespace,
-			Name:      cluster.Name + "-kubeconfig",
-		},
-		kubeconfigSecret,
-	)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigSecret.Data["value"])
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := r.kubeconfigForCluster(ctx, cluster)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -353,6 +329,11 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 			node, err := clientset.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
 			if err != nil {
+				// It's possible for the node to already be deleted in the workload cluster, so we just
+				// requeue if that's that case instead of throwing a scary error.
+				if apierrors.IsNotFound(err) {
+					return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
+				}
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
 
@@ -375,82 +356,16 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("%q machine does not have a nodeRef", oldest.Name)
 	}
 
-	var address string
+	node := oldest.Status.NodeRef
 
-	node, err := clientset.CoreV1().Nodes().Get(oldest.Status.NodeRef.Name, metav1.GetOptions{})
+	c, err := r.talosconfigForMachine(ctx, clientset, oldest)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
-			address = addr.Address
-			break
-		}
-	}
-
-	if address == "" {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("no address was found for node %q", node.Name)
-	}
-
-	var (
-		cfgs  cabptv1.TalosConfigList
-		found *cabptv1.TalosConfig
-	)
-
-	err = r.Client.List(ctx, &cfgs)
+	err = r.gracefulEtcdLeave(ctx, c, cluster, oldest)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	for _, cfg := range cfgs.Items {
-		for _, ref := range cfg.OwnerReferences {
-			if ref.Kind == "Machine" && ref.Name == oldest.Name {
-				found = &cfg
-				break
-			}
-		}
-	}
-
-	if found == nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("failed to find TalosConfig for %q", oldest.Name)
-	}
-
-	t, err := talosconfig.FromString(found.Status.TalosConfig)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	c, err := talosclient.New(ctx, talosclient.WithEndpoints(address), talosclient.WithConfig(t))
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	r.Log.Info("Verifying etcd status", "machine", oldest.Name, "node", node.Name, "address", address)
-
-	svcs, err := c.ServiceInfo(ctx, "etcd")
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	for _, svc := range svcs {
-		if svc.Service.State != "Finished" {
-			r.Log.Info("Forfeiting leadership", "machine", oldest.Status.NodeRef.Name)
-
-			_, err = c.EtcdForfeitLeadership(ctx, &machine.EtcdForfeitLeadershipRequest{})
-			if err != nil {
-				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-			}
-
-			r.Log.Info("Leaving etcd", "machine", oldest.Name, "node", node.Name, "address", address)
-
-			err = c.EtcdLeaveCluster(ctx, &machine.EtcdLeaveClusterRequest{})
-			if err != nil {
-				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-			}
-		}
-
-		break
+		return ctrl.Result{}, err
 	}
 
 	r.Log.Info("Deleting machine", "machine", oldest.Name, "node", node.Name)
@@ -463,7 +378,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 	// NB: We shutdown the node here so that a loadbalancer will drop the backend.
 	// The Kubernetes API server is configured to talk to etcd on localhost, but
 	// at this point etcd has been stopped.
-	r.Log.Info("Shutting down node", "machine", oldest.Name, "node", node.Name, "address", address)
+	r.Log.Info("Shutting down node", "machine", oldest.Name, "node", node.Name)
 
 	err = c.Shutdown(ctx)
 	if err != nil {
@@ -649,25 +564,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
-	kubeconfigSecret := &corev1.Secret{}
-
-	err = r.Client.Get(ctx,
-		types.NamespacedName{
-			Namespace: cluster.Namespace,
-			Name:      cluster.Name + "-kubeconfig",
-		},
-		kubeconfigSecret,
-	)
-	if err != nil {
-		return err
-	}
-
-	config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigSecret.Data["value"])
-	if err != nil {
-		return err
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return err
 	}
