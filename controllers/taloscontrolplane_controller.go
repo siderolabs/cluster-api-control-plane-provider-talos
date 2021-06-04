@@ -18,7 +18,6 @@ import (
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	talosconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,9 +27,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/pointer"
-	"sigs.k8s.io/cluster-api/api/v1alpha3"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
@@ -326,7 +323,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Found control plane machines", "machines", len(machines))
 
-	kubeconfigSecret := &v1.Secret{}
+	kubeconfigSecret := &corev1.Secret{}
 
 	err = r.Client.Get(ctx,
 		types.NamespacedName{
@@ -386,7 +383,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 	}
 
 	for _, addr := range node.Status.Addresses {
-		if addr.Type == v1.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP {
 			address = addr.Address
 			break
 		}
@@ -555,7 +552,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
 			Namespace: tcp.Namespace,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName:          cluster.ClusterName,
+				capiv1.ClusterLabelName:             cluster.ClusterName,
 				capiv1.MachineControlPlaneLabelName: "",
 			},
 			OwnerReferences: []metav1.OwnerReference{
@@ -652,7 +649,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
-	kubeconfigSecret := &v1.Secret{}
+	kubeconfigSecret := &corev1.Secret{}
 
 	err = r.Client.Get(ctx,
 		types.NamespacedName{
@@ -682,7 +679,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 		go func() {
 			e := func() error {
-				if v1alpha3.MachinePhase(ownedMachine.Status.Phase) == v1alpha3.MachinePhaseDeleting {
+				if capiv1.MachinePhase(ownedMachine.Status.Phase) == capiv1.MachinePhaseDeleting {
 					return fmt.Errorf("machine is deleting")
 				}
 
@@ -773,7 +770,7 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, ref v1.ObjectReference, cluster *capiv1.Cluster) error {
+func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, ref corev1.ObjectReference, cluster *capiv1.Cluster) error {
 	obj, err := external.Get(ctx, r.Client, &ref, cluster.Namespace)
 	if err != nil {
 		return err
@@ -785,7 +782,7 @@ func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, 
 	}
 
 	obj.SetOwnerReferences(util.EnsureOwnerRef(obj.GetOwnerReferences(), metav1.OwnerReference{
-		APIVersion: clusterv1.GroupVersion.String(),
+		APIVersion: capiv1.GroupVersion.String(),
 		Kind:       "Cluster",
 		Name:       cluster.Name,
 		UID:        cluster.UID,
