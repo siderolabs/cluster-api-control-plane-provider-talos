@@ -245,6 +245,12 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
+	// Audit the etcd member list to remove any nodes that no longer exist
+	if err := r.auditEtcd(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name); err != nil {
+		logger.Info("failed to check etcd membership list", "error", err)
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
