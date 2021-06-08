@@ -1,3 +1,19 @@
+<a name="v0.1.0-beta.0"></a>
+## [v0.1.0-beta.0](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.13...v0.1.0-beta.0) (2021-06-08)
+
+### Chore
+
+* breakout common functions
+* remove duplicate imports
+
+### Feat
+
+* audit and remove etcd members if machines no longer exist
+
+### Fix
+
+* protect metrics-addr by default
+
 
 <a name="v0.1.0-alpha.13"></a>
 ## [v0.1.0-alpha.13](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2021-05-14)
@@ -9,6 +25,10 @@
 ### Fix
 
 * back down resource requests
+
+### Release
+
+* **v0.1.0-alpha.13:** prepare release
 
 
 <a name="v0.1.0-alpha.12"></a>
