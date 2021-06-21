@@ -1,3 +1,11 @@
+<a name="v0.1.0"></a>
+## [v0.1.0](https://github.com/talos-systems/talos/compare/v0.1.0-beta.0...v0.1.0) (2021-06-21)
+
+### Chore
+
+* update bootstrap provider to stable release
+
+
 <a name="v0.1.0-beta.0"></a>
 ## [v0.1.0-beta.0](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.13...v0.1.0-beta.0) (2021-06-08)
 
@@ -13,6 +21,10 @@
 ### Fix
 
 * protect metrics-addr by default
+
+### Release
+
+* **v0.1.0-beta.0:** prepare release
 
 
 <a name="v0.1.0-alpha.13"></a>
