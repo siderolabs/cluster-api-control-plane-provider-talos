@@ -217,6 +217,16 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	numMachines := len(ownedMachines)
 	desiredReplicas := int(*tcp.Spec.Replicas)
 
+	requeue := false
+
+	// Audit the etcd member list to remove any nodes that no longer exist
+	if err := r.auditEtcd(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name); err != nil {
+		logger.Info("failed to check etcd membership list", "error", err)
+
+		// if audit failed, requeue the reconcile in any case
+		requeue = true
+	}
+
 	switch {
 	// We are creating the first replica
 	case numMachines < desiredReplicas && numMachines == 0:
@@ -232,11 +242,16 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	case numMachines > desiredReplicas:
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		res, err = r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name)
-		if err != nil && (res.Requeue || res.RequeueAfter > 0) {
-			logger.Info("Failed to scale down control plane", "error", err)
-			return res, nil
+		res, err = r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name, ownedMachines)
+		if err != nil {
+			if res.Requeue || res.RequeueAfter > 0 {
+				logger.Info("Failed to scale down control plane", "error", err)
+
+				return res, nil
+			}
 		}
+
+		return res, err
 	}
 
 	// Generate Cluster Kubeconfig if needed
@@ -245,13 +260,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	// Audit the etcd member list to remove any nodes that no longer exist
-	if err := r.auditEtcd(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name); err != nil {
-		logger.Info("failed to check etcd membership list", "error", err)
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: requeue}, nil
 }
 
 // ClusterToTalosControlPlane is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
@@ -311,12 +320,7 @@ func newControlPlane(cluster *capiv1.Cluster, tcp *controlplanev1.TalosControlPl
 	}
 }
 
-func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, cluster client.ObjectKey, cpName string) (ctrl.Result, error) {
-	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
+func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, cluster client.ObjectKey, cpName string, machines []capiv1.Machine) (ctrl.Result, error) {
 	if len(machines) == 0 {
 		return ctrl.Result{}, fmt.Errorf("no machines found")
 	}
