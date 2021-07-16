@@ -55,6 +55,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context,
 		return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
 	}
 
+	// grab all addresses as endpoints
 	node, err := clientset.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -62,7 +63,9 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context,
 
 	addrList := []string{}
 	for _, addr := range node.Status.Addresses {
-		addrList = append(addrList, addr.Address)
+		if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
+			addrList = append(addrList, addr.Address)
+		}
 	}
 
 	if len(addrList) == 0 {
@@ -74,7 +77,8 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context,
 		found *cabptv1.TalosConfig
 	)
 
-	err = r.Client.List(ctx, &cfgs)
+	// find talosconfig in the machine's namespace
+	err = r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
 	if err != nil {
 		return nil, err
 	}
@@ -97,10 +101,5 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context,
 		return nil, err
 	}
 
-	c, err := talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))
-	if err != nil {
-		return nil, err
-	}
-
-	return c, nil
+	return talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))
 }

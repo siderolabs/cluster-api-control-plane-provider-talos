@@ -41,8 +41,6 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 				return err
 			}
 		}
-
-		break
 	}
 
 	return nil
@@ -53,17 +51,12 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, memberName string) error {
 	r.Log.Info("Removing etcd member", "memberName", memberName)
 
-	err := c.EtcdRemoveMember(
+	return c.EtcdRemoveMember(
 		ctx,
 		&machine.EtcdRemoveMemberRequest{
 			Member: memberName,
 		},
 	)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // auditEtcd rolls through all etcd members to see if there's a matching controlplane machine
@@ -89,10 +82,17 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 	var designatedCPMachine capiv1.Machine
 
 	for _, machine := range machines {
-		if machine.ObjectMeta.DeletionTimestamp.IsZero() && machine.Status.NodeRef != nil {
-			designatedCPMachine = machine
-			break
+		if !machine.ObjectMeta.DeletionTimestamp.IsZero() || machine.Status.NodeRef == nil {
+			continue
 		}
+
+		designatedCPMachine = machine
+
+		break
+	}
+
+	if designatedCPMachine.Name == "" {
+		return fmt.Errorf("no CP machine which is not being deleted and has node ref")
 	}
 
 	clientset, err := r.kubeconfigForCluster(ctx, cluster)
@@ -105,22 +105,9 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		return err
 	}
 
-	// Save the first internal IP of the designated machine to use as our node target
-	// and setup the ctx to target it
-	var firstIntAddr string
-
-	for _, addr := range designatedCPMachine.Status.Addresses {
-		if addr.Type == capiv1.MachineInternalIP {
-			firstIntAddr = addr.Address
-			break
-		}
-	}
-
-	nodeCtx := talosclient.WithNodes(ctx, firstIntAddr)
-
-	response, err := c.EtcdMemberList(nodeCtx, &machine.EtcdMemberListRequest{})
+	response, err := c.EtcdMemberList(ctx, &machine.EtcdMemberListRequest{})
 	if err != nil {
-		return err
+		return fmt.Errorf("error getting etcd members via %q (endpoints %v): %w", designatedCPMachine.Name, c.GetConfigContext().Endpoints, err)
 	}
 
 	// Only querying one CP node, so only 1 message should return.
@@ -146,7 +133,9 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		if !present {
 			r.Log.Info("found etcd member that doesn't exist as controlplane machine", "member", member)
 
-			r.forceEtcdLeave(nodeCtx, c, cluster, member)
+			if err = r.forceEtcdLeave(ctx, c, cluster, member); err != nil {
+				return fmt.Errorf("error leaving etcd for member %q via machine %q", member, designatedCPMachine.Name)
+			}
 		}
 	}
 
