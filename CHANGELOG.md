@@ -1,9 +1,22 @@
+
+<a name="v0.1.1"></a>
+## [v0.1.1](https://github.com/talos-systems/talos/compare/v0.1.0...v0.1.1) (2021-07-16)
+
+### Fix
+
+* clean up couple small issues in the etcd member audit code
+
+
 <a name="v0.1.0"></a>
 ## [v0.1.0](https://github.com/talos-systems/talos/compare/v0.1.0-beta.0...v0.1.0) (2021-06-21)
 
 ### Chore
 
 * update bootstrap provider to stable release
+
+### Release
+
+* **v0.1.0:** prepare release
 
 
 <a name="v0.1.0-beta.0"></a>
@@ -44,7 +57,7 @@
 
 
 <a name="v0.1.0-alpha.12"></a>
-## [v0.1.0-alpha.12](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2021-02-18)
+## [v0.1.0-alpha.12](https://github.com/talos-systems/talos/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2021-03-05)
 
 ### Fix
 
