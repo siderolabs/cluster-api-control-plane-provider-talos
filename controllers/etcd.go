@@ -124,7 +124,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 			// break apart the noderef name in case it's an fqdn (like in AWS)
 			machineNodeNameExploded := strings.Split(machine.Status.NodeRef.Name, ".")
 
-			if machineNodeNameExploded[0] == member {
+			if machineNodeNameExploded[0] == member.Hostname {
 				present = true
 				break
 			}
@@ -133,7 +133,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		if !present {
 			r.Log.Info("found etcd member that doesn't exist as controlplane machine", "member", member)
 
-			if err = r.forceEtcdLeave(ctx, c, cluster, member); err != nil {
+			if err = r.forceEtcdLeave(ctx, c, cluster, member.Hostname); err != nil {
 				return fmt.Errorf("error leaving etcd for member %q via machine %q", member, designatedCPMachine.Name)
 			}
 		}
