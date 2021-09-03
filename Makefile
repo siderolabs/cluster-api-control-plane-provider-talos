@@ -106,3 +106,10 @@ run: install ## Run the controller locally. This is for testing purposes only.
 .PHONY: clean
 clean:
 	@rm -rf $(ARTIFACTS)
+
+integration-test-build:
+	@$(MAKE) local-integration-test DEST=./_out/ PLATFORM=linux/amd64
+
+.PHONY: integration-test
+integration-test: integration-test-build
+	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh

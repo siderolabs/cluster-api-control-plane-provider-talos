@@ -56,7 +56,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context,
 	}
 
 	// grab all addresses as endpoints
-	node, err := clientset.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
+	node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}

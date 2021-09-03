@@ -3,6 +3,15 @@ kind: pipeline
 name: default
 type: kubernetes
 
+services:
+  - name: docker
+    image: docker:20.10-dind
+    entrypoint: [dockerd]
+    privileged: true
+    volumes:
+      - name: docker-socket
+        path: /var/run
+
 steps:
   - name: setup-ci
     image: autonomy/build-container:latest
@@ -22,6 +31,8 @@ steps:
     pull: always
     environment:
       PLATFORM: linux/amd64,linux/arm64
+      PUSH: true
+      REGISTRY: registry.dev.talos-systems.io
     commands:
       - make
     when:
@@ -60,6 +71,25 @@ steps:
       - name: docker
         path: /root/.docker/buildx
 
+  - name: e2e-aws
+    image: autonomy/build-container:latest
+    pull: always
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: aws_access_key_id
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: aws_secret_access_key
+      CI: true
+      REGISTRY: registry.dev.talos-systems.io
+    commands:
+      - make integration-test
+    volumes:
+      - name: docker-socket
+        path: /var/run
+      - name: outerdockersock
+        path: /var/outer-run
+      - name: docker
+        path: /root/.docker/buildx
 
   - name: build-release
     image: autonomy/build-container:latest

@@ -71,6 +71,12 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/.cache GOOS=linux GOARCH=${TARGETARCH} go build -ldflags "-s -w" -o /manager
 RUN chmod +x /manager
 
+FROM build AS integration-test-build
+RUN --mount=type=cache,target=/.cache go test -v -c ./internal/integration
+
+FROM scratch AS integration-test
+COPY --from=integration-test-build /src/integration.test /integration.test
+
 FROM scratch AS container
 COPY --from=pkg-ca-certificates / /
 COPY --from=pkg-fhs / /
