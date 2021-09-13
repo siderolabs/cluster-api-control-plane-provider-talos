@@ -50,55 +50,66 @@ func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, 
 }
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
-func (r *TalosControlPlaneReconciler) talosconfigForMachine(ctx context.Context, clientset *kubernetes.Clientset, machine capiv1.Machine) (*talosclient.Client, error) {
-	if machine.Status.NodeRef == nil {
-		return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
-	}
-
-	// grab all addresses as endpoints
-	node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
+func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, clientset *kubernetes.Clientset, machines ...capiv1.Machine) (*talosclient.Client, error) {
+	if len(machines) == 0 {
+		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
 	addrList := []string{}
-	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
-			addrList = append(addrList, addr.Address)
+
+	var t *talosconfig.Config
+
+	for _, machine := range machines {
+		if machine.Status.NodeRef == nil {
+			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
 		}
-	}
 
-	if len(addrList) == 0 {
-		return nil, fmt.Errorf("no addresses were found for node %q", node.Name)
-	}
+		// grab all addresses as endpoints
+		node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
 
-	var (
-		cfgs  cabptv1.TalosConfigList
-		found *cabptv1.TalosConfig
-	)
-
-	// find talosconfig in the machine's namespace
-	err = r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
-	if err != nil {
-		return nil, err
-	}
-
-	for _, cfg := range cfgs.Items {
-		for _, ref := range cfg.OwnerReferences {
-			if ref.Kind == "Machine" && ref.Name == machine.Name {
-				found = &cfg
-				break
+		for _, addr := range node.Status.Addresses {
+			if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
+				addrList = append(addrList, addr.Address)
 			}
 		}
-	}
 
-	if found == nil {
-		return nil, fmt.Errorf("failed to find TalosConfig for %q", machine.Name)
-	}
+		if len(addrList) == 0 {
+			return nil, fmt.Errorf("no addresses were found for node %q", node.Name)
+		}
 
-	t, err := talosconfig.FromString(found.Status.TalosConfig)
-	if err != nil {
-		return nil, err
+		if t == nil {
+			var (
+				cfgs  cabptv1.TalosConfigList
+				found *cabptv1.TalosConfig
+			)
+
+			// find talosconfig in the machine's namespace
+			err = r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
+			if err != nil {
+				return nil, err
+			}
+
+			for _, cfg := range cfgs.Items {
+				for _, ref := range cfg.OwnerReferences {
+					if ref.Kind == "Machine" && ref.Name == machine.Name {
+						found = &cfg
+						break
+					}
+				}
+			}
+
+			if found == nil {
+				return nil, fmt.Errorf("failed to find TalosConfig for %q", machine.Name)
+			}
+
+			t, err = talosconfig.FromString(found.Status.TalosConfig)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))

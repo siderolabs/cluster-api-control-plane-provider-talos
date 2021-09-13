@@ -13,12 +13,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/stretchr/testify/suite"
 	"gopkg.in/yaml.v3"
 	capiv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 
 	"github.com/talos-systems/capi-utils/pkg/capi"
 	"github.com/talos-systems/capi-utils/pkg/capi/infrastructure"
+)
+
+var (
+	talosVersion *semver.Version
+	scaleVersion *semver.Version
 )
 
 type clusterctlConfig struct {
@@ -107,23 +113,71 @@ func (suite *IntegrationSuite) SetupSuite() {
 	suite.Require().NoError(err)
 
 	suite.cluster = cluster
+
+	suite.Require().NoError(suite.cluster.Health(suite.ctx))
 }
 
 func (suite *IntegrationSuite) TearDownSuite() {
 	suite.cancel()
 
 	if suite.cluster != nil {
-		err := suite.manager.DestroyCluster(context.Background(), suite.cluster.Name(), suite.cluster.Namespace(), suite.cluster.CAPIVersion())
+		err := suite.manager.DestroyCluster(context.Background(), suite.cluster.Name(), suite.cluster.Namespace())
 		suite.Require().NoError(err)
 	}
 }
 
-// TestIntegration runs integration tests.
-func (suite *IntegrationSuite) TestIntegrationAWS() {
-	suite.Require().NoError(suite.cluster.Health(suite.ctx))
+// TestScaleControlPlane scale control plane nodes.
+func (suite *IntegrationSuite) TestScaleControlPlane() {
+	err := suite.cluster.Scale(suite.ctx, 3, capi.ControlPlaneNodes)
+	suite.Require().NoError(err)
+
+	time.Sleep(2 * time.Second)
+
+	suite.Require().NoError(suite.cluster.Sync(suite.ctx))
+
+	if talosVersion.LessThan(*scaleVersion) {
+		suite.T().Skip("skip for Talos <= v0.12.2, scale down is unstable")
+	}
+
+	err = suite.cluster.Scale(suite.ctx, 1, capi.ControlPlaneNodes)
+	suite.Require().NoError(err)
+
+	time.Sleep(2 * time.Second)
+
+	suite.Require().NoError(suite.cluster.Sync(suite.ctx))
+}
+
+// TestScaleControlPlaneNoWait scale control plane nodes.
+func (suite *IntegrationSuite) TestScaleControlPlaneNoWait() {
+	if talosVersion.LessThan(*scaleVersion) {
+		suite.T().Skip("skip for Talos <= v0.12.2, scale down is unstable")
+	}
+
+	ctx, cancel := context.WithCancel(suite.ctx)
+	go func() {
+		time.Sleep(time.Second * 5)
+
+		cancel()
+	}()
+
+	suite.cluster.Scale(ctx, 3, capi.ControlPlaneNodes) //nolint:errcheck
+
+	err := suite.cluster.Scale(suite.ctx, 1, capi.ControlPlaneNodes)
+	suite.Require().NoError(err)
 }
 
 // TestIntegration runs integration tests.
 func TestIntegration(t *testing.T) {
+	version := os.Getenv("WORKLOAD_TALOS_VERSION")
+
+	var err error
+
+	talosVersion, err = semver.NewVersion(strings.TrimLeft(version, "v"))
+	if err != nil {
+		t.Fatalf("failed to get talos version %s", err)
+	}
+
+	scaleVersion, _ = semver.NewVersion("0.12.2") //nolint:errcheck
+
 	suite.Run(t, new(IntegrationSuite))
 }

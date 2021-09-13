@@ -8,12 +8,18 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
+	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +40,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
 type NodeType int
@@ -240,6 +248,18 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, controlplaneNode)
 	// We are scaling down
 	case numMachines > desiredReplicas:
+		if err := r.etcdHealthcheck(ctx, cluster, ownedMachines); err != nil {
+			logger.Info("Waiting for etcd to become healthy before scaling down", "error", err)
+
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		if err := r.ensureNodesBooted(ctx, cluster, ownedMachines); err != nil {
+			logger.Info("Waiting for all nodes to finish boot sequence", "error", err)
+
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
 		res, err = r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name, ownedMachines)
@@ -332,7 +352,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	oldest := machines[0]
+	deleteMachine := machines[0]
 	for _, machine := range machines {
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 			r.Log.Info("Machine is in process of deletion", "machine", machine.Name)
@@ -357,45 +377,70 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 			return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 		}
 
-		if machine.CreationTimestamp.Before(&oldest.CreationTimestamp) {
-			oldest = machine
+		// do not allow scaling down until all nodes have nodeRefs
+		if machine.Status.NodeRef == nil {
+			r.Log.Info("One of machines does not have NodeRef", "machine", machine.Name)
+
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		if machine.CreationTimestamp.Before(&deleteMachine.CreationTimestamp) {
+			deleteMachine = machine
 		}
 	}
 
-	if oldest.Status.NodeRef == nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("%q machine does not have a nodeRef", oldest.Name)
+	if deleteMachine.Status.NodeRef == nil {
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("%q machine does not have a nodeRef", deleteMachine.Name)
 	}
 
-	node := oldest.Status.NodeRef
+	node := deleteMachine.Status.NodeRef
 
-	c, err := r.talosconfigForMachine(ctx, clientset, oldest)
+	c, err := r.talosconfigForMachines(ctx, clientset, deleteMachine)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	err = r.gracefulEtcdLeave(ctx, c, cluster, oldest)
+	err = r.gracefulEtcdLeave(ctx, c, cluster, deleteMachine)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("Deleting machine", "machine", oldest.Name, "node", node.Name)
+	r.Log.Info("Deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
-	err = r.Client.Delete(ctx, &oldest)
+	err = r.Client.Delete(ctx, &deleteMachine)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// NB: We shutdown the node here so that a loadbalancer will drop the backend.
-	// The Kubernetes API server is configured to talk to etcd on localhost, but
-	// at this point etcd has been stopped.
-	r.Log.Info("Shutting down node", "machine", oldest.Name, "node", node.Name)
-
-	err = c.Shutdown(ctx)
+	// TODO: drop version check and shutdown when Talos < 0.12.2 reaches end of life
+	version, err := c.Version(ctx)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
+		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("Deleting node", "machine", oldest.Name, "node", node.Name)
+	fromVersion, _ := semver.NewVersion("0.12.2") //nolint:errcheck
+
+	nodeVersion, err := semver.NewVersion(
+		strings.TrimLeft(version.Messages[0].Version.Tag, "v"),
+	)
+
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if nodeVersion.LessThan(*fromVersion) {
+		// NB: We shutdown the node here so that a loadbalancer will drop the backend.
+		// The Kubernetes API server is configured to talk to etcd on localhost, but
+		// at this point etcd has been stopped.
+		r.Log.Info("Shutting down node", "machine", deleteMachine.Name, "node", node.Name)
+
+		err = c.Shutdown(ctx)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 20 * time.Second}, err
+		}
+	}
+
+	r.Log.Info("Deleting node", "machine", deleteMachine.Name, "node", node.Name)
 
 	err = clientset.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
 	if err != nil {
@@ -696,4 +741,79 @@ func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, 
 	}))
 
 	return objPatchHelper.Patch(ctx, obj)
+}
+
+func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, cluster *capiv1.Cluster, machines []capiv1.Machine) error {
+	clientset, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
+	if err != nil {
+		return err
+	}
+
+	client, err := r.talosconfigForMachines(ctx, clientset, machines...)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	nodesBootStarted := map[string]struct{}{}
+	nodesBootStopped := map[string]struct{}{}
+
+	err = client.EventsWatch(ctx, func(ch <-chan talosclient.Event) {
+		defer cancel()
+
+		for event := range ch {
+			if msg, ok := event.Payload.(*machineapi.SequenceEvent); ok {
+				if msg.GetSequence() == "boot" { // can't use runtime constants as they're in `internal/`
+					switch msg.GetAction() { //nolint:exhaustive
+					case machineapi.SequenceEvent_START:
+						nodesBootStarted[event.Node] = struct{}{}
+					case machineapi.SequenceEvent_STOP:
+						nodesBootStopped[event.Node] = struct{}{}
+					}
+				}
+			}
+		}
+	}, talosclient.WithTailEvents(-1))
+
+	if err != nil {
+		unwrappedErr := err
+
+		for {
+			if s, ok := status.FromError(unwrappedErr); ok && s.Code() == codes.DeadlineExceeded {
+				// ignore deadline exceeded as we've just exhausted events list
+				err = nil
+
+				break
+			}
+
+			unwrappedErr = errors.Unwrap(unwrappedErr)
+			if unwrappedErr == nil {
+				break
+			}
+		}
+	}
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+
+	nodesNotFinishedBooting := []string{}
+
+	// check for nodes which have Boot/Start event, but no Boot/Stop even
+	// if the node is up long enough, Boot/Start even might get out of the window,
+	// so we can't check such nodes reliably
+	for node := range nodesBootStarted {
+		if _, ok := nodesBootStopped[node]; !ok {
+			nodesNotFinishedBooting = append(nodesNotFinishedBooting, node)
+		}
+	}
+
+	sort.Strings(nodesNotFinishedBooting)
+
+	if len(nodesNotFinishedBooting) > 0 {
+		return fmt.Errorf("nodes %q are still in boot sequence", nodesNotFinishedBooting)
+	}
+
+	return nil
 }

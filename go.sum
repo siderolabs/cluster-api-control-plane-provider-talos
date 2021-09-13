@@ -120,6 +120,7 @@ github.com/coreos/etcd v3.3.13+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc
 github.com/coreos/go-etcd v2.0.0+incompatible/go.mod h1:Jez6KQU2B/sWsbdaef3ED8NzMklzPG4d5KIOhIy30Tk=
 github.com/coreos/go-oidc v2.1.0+incompatible/go.mod h1:CgnwVTmzoESiwO9qyAFEMiHoZ1nMCKZlZ9V6mm3/LKc=
 github.com/coreos/go-semver v0.2.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
+github.com/coreos/go-semver v0.3.0 h1:wkHLiw0WNATZnSG7epLsujiMCgPAc9xhjJ4tgnAxmfM=
 github.com/coreos/go-semver v0.3.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
 github.com/coreos/go-systemd v0.0.0-20180511133405-39ca1b05acc7/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
@@ -596,8 +597,8 @@ github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5Cc
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/subosito/gotenv v1.2.0 h1:Slr1R9HxAlEKefgq5jn9U+DnETlIUa6HfgEzj0g5d7s=
 github.com/subosito/gotenv v1.2.0/go.mod h1:N0PQaV/YGNqwC0u51sEeR/aUtSLEXKX9iv69rRypqCw=
-github.com/talos-systems/capi-utils v0.0.0-20210906195159-c20b1a80b427 h1:oVMP3FQN/tiKyWm7uqVeX8BoPUXekUeslSBzFSiyXc0=
-github.com/talos-systems/capi-utils v0.0.0-20210906195159-c20b1a80b427/go.mod h1:2tv16Wyfosr2iwk5jL+uQg6KQmtpHpByvShmet4TIs8=
+github.com/talos-systems/capi-utils v0.0.0-20210910152701-028c7d3c0257 h1:cg+bUXpiGxBq+zaysXeg0j2DD5dYnkSs4DbwFNa4fiQ=
+github.com/talos-systems/capi-utils v0.0.0-20210910152701-028c7d3c0257/go.mod h1:2tv16Wyfosr2iwk5jL+uQg6KQmtpHpByvShmet4TIs8=
 github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0 h1:neYRQZWXYI2b0s9XVUfL4teOZQ1d+CTgvBLgKo5QhzE=
 github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.2.0/go.mod h1:lzie3WxFNZZVMGsCDInNvE8N1ZJuE5X8D+pKTxZ+uKc=
 github.com/talos-systems/crypto v0.2.1-0.20210427105118-4f80b976b640/go.mod h1:OXCK52Q0dzm88YRG4VdTBdidkPUtqrCxCyW7bUs4DAw=

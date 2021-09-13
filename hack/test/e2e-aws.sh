@@ -22,7 +22,7 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v0.12.0}"
+TALOS_VERSION="${TALOS_DEFAULT:-v0.12.1}"
 K8S_VERSION="${K8S_VERSION:-v1.21.3}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
@@ -41,6 +41,7 @@ cleanup() {
       curl -Lo kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/${PLATFORM}/amd64/kubectl"
       chmod +x kubectl
 
+      ./kubectl delete cluster --all || true
       ./kubectl logs -n capa-system deployment/capa-controller-manager manager || true
       ./kubectl logs -n cacppt-system deployment/cacppt-controller-manager || true
     fi
@@ -133,6 +134,7 @@ aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" | base64 -w0)
 }
 
 function tests {
+  export WORKLOAD_TALOS_VERSION=${TALOS_VERSION}
   ./_out/integration.test -test.v
 }
 

@@ -12,8 +12,91 @@ import (
 	"github.com/talos-systems/talos/pkg/machinery/api/machine"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, cluster *capiv1.Cluster, ownedMachines []capiv1.Machine) error {
+	clientset, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
+	if err != nil {
+		return err
+	}
+
+	machines := []capiv1.Machine{}
+
+	for _, machine := range ownedMachines {
+		if machine.ObjectMeta.DeletionTimestamp.IsZero() {
+			machines = append(machines, machine)
+		}
+	}
+
+	c, err := r.talosconfigForMachines(ctx, clientset, machines...)
+	if err != nil {
+		return err
+	}
+
+	service := "etcd"
+
+	params := make([]interface{}, 0, len(machines)*2)
+	for _, machine := range machines {
+		params = append(params, "node", machine.Name)
+	}
+
+	r.Log.Info("Verifying etcd health on all nodes", params...)
+
+	svcs, err := c.ServiceInfo(ctx, service)
+	if err != nil {
+		return err
+	}
+
+	// check that etcd service is healthy on all nodes
+	for _, svc := range svcs {
+		node := svc.Metadata.GetHostname()
+
+		if len(svc.Service.Events.Events) == 0 {
+			return fmt.Errorf("%s: no events recorded yet for service %q", node, service)
+		}
+
+		lastEvent := svc.Service.Events.Events[len(svc.Service.Events.Events)-1]
+		if lastEvent.State != "Running" {
+			return fmt.Errorf("%s: service %q not in expected state %q: current state [%s] %s", node, service, "Running", lastEvent.State, lastEvent.Msg)
+		}
+
+		if !svc.Service.GetHealth().GetHealthy() {
+			return fmt.Errorf("%s: service is not healthy: %s", node, service)
+		}
+	}
+
+	resp, err := c.EtcdMemberList(ctx, &machine.EtcdMemberListRequest{})
+	if err != nil {
+		return err
+	}
+
+	members := map[string]struct{}{}
+
+	for i, message := range resp.Messages {
+		actualMembers := len(message.Members)
+		expectedMembers := len(machines)
+
+		node := message.Metadata.GetHostname()
+
+		// check that the count of members is the same on all nodes
+		if actualMembers != expectedMembers {
+			return fmt.Errorf("%s: expected to have %d members, got %d", node, expectedMembers, actualMembers)
+		}
+
+		// check that member list is the same on all nodes
+		for _, member := range message.Members {
+			if _, found := members[member.Hostname]; i > 0 && !found {
+				return fmt.Errorf("%s: found extra etcd member %s", node, member.Hostname)
+			}
+
+			members[member.Hostname] = struct{}{}
+		}
+	}
+
+	return nil
+}
 
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
@@ -100,7 +183,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		return err
 	}
 
-	c, err := r.talosconfigForMachine(ctx, clientset, designatedCPMachine)
+	c, err := r.talosconfigForMachines(ctx, clientset, designatedCPMachine)
 	if err != nil {
 		return err
 	}
