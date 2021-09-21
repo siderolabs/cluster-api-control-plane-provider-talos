@@ -95,7 +95,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	options := capi.Options{
 		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v0.3.19"),
-		BootstrapProviders:      []string{"talos:v0.3.0-alpha.0"},
+		BootstrapProviders:      []string{"talos:v0.3.0-alpha.1"},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 	}
