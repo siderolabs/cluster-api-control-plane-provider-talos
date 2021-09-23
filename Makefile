@@ -8,8 +8,8 @@ NAME := cluster-api-control-plane-talos-controller
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/talos-systems/tools:v0.5.0
-PKGS ?= v0.5.0
+TOOLS ?= ghcr.io/talos-systems/tools:v0.8.0-alpha.0-3-g2790b55
+PKGS ?= v0.8.0-alpha.0-3-gdb90f93
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
