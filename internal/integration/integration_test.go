@@ -197,7 +197,7 @@ func (suite *IntegrationSuite) Test02ReconcileMachine() {
 	suite.Require().NoError(
 		retry.Constant(15*time.Minute, retry.WithUnits(4*time.Second), retry.WithErrorLogging(true)).Retry(func() error {
 			if e := suite.cluster.Sync(suite.ctx); e != nil {
-				return e
+				return retry.ExpectedError(e)
 			}
 
 			etcdMembers, e := getEtcdMembers()
