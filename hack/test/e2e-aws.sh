@@ -80,7 +80,8 @@ function config {
   curl -Lo ${TMP}/kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.0/kustomize_v4.1.0_${PLATFORM}_amd64.tar.gz
   tar -xf ${TMP}/kustomize.tar.gz -C ${TMP} && rm ${TMP}/kustomize.tar.gz
 
-  export INFRASTRUCTURE_COMPONENTS_PATH=${TMP}/control-plane-talos/${TAG}/components.yaml
+  # always use fake version tag here
+  export INFRASTRUCTURE_COMPONENTS_PATH=${TMP}/control-plane-talos/v0.1.0/components.yaml
   mkdir -p $(dirname ${INFRASTRUCTURE_COMPONENTS_PATH})
 
   cd config/manager
