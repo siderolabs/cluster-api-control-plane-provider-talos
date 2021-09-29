@@ -22,17 +22,18 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v0.12.2}"
-K8S_VERSION="${K8S_VERSION:-v1.21.3}"
+TALOS_VERSION="${TALOS_DEFAULT:-v0.12.3}"
+K8S_VERSION="${K8S_VERSION:-v1.22.2}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
-PROVIDER=aws:v0.6.7
+export PROVIDER=aws:v0.7.0
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
 TALOSCTL="${TALOSCTL_PATH} --talosconfig=${TMP}/talosconfig"
 KUSTOMIZE="${TMP}/kustomize"
+TEARDOWN_CLUSTER=${TEARDOWN_CLUSTER:-true}
 
 cleanup() {
   if [ "$1" != "0" ]; then
@@ -48,13 +49,15 @@ cleanup() {
   fi
 
   # delete deployed cluster
-  if [[ ! -z ${CREATED_CLUSTER} ]]; then
+  if [[ ! -z ${CREATED_CLUSTER} ]] && [ "${TEARDOWN_CLUSTER}" = true ]; then
     echo "destroying deployed cluster"
     rm -rf ~/.talos/clusters/${CREATED_CLUSTER}
     ${TALOSCTL} cluster destroy --name=${CREATED_CLUSTER} || true
   fi
 
-  rm -rf ${TMP}
+  if [ "${TEARDOWN_CLUSTER}" = true ]; then
+    rm -rf ${TMP}
+  fi
   trap - EXIT
 }
 
@@ -81,15 +84,16 @@ function config {
   tar -xf ${TMP}/kustomize.tar.gz -C ${TMP} && rm ${TMP}/kustomize.tar.gz
 
   # always use fake version tag here
-  export INFRASTRUCTURE_COMPONENTS_PATH=${TMP}/control-plane-talos/v0.1.0/components.yaml
-  mkdir -p $(dirname ${INFRASTRUCTURE_COMPONENTS_PATH})
+  export CONTROL_PLANE_PROVIDER_COMPONENTS=${TMP}/control-plane-talos/v0.3.0/control-plane-components.yaml
+  mkdir -p $(dirname ${CONTROL_PLANE_PROVIDER_COMPONENTS})
 
   cp -rf config ${TMP}/config
 
   cd ${TMP}/config/manager
   ${KUSTOMIZE} edit set image controller=${REGISTRY_AND_USERNAME}/${NAME}:${TAG}
   cd -
-  ${KUSTOMIZE} build ${TMP}/config >${INFRASTRUCTURE_COMPONENTS_PATH}
+  ${KUSTOMIZE} build ${TMP}/config/default >${CONTROL_PLANE_PROVIDER_COMPONENTS}
+  cp ${TMP}/config/metadata/metadata.yaml ${TMP}/control-plane-talos/v0.3.0/
 }
 
 function cluster {
@@ -98,13 +102,17 @@ function cluster {
   chmod +x ${TALOSCTL_PATH}
 
   CREATED_CLUSTER="cacppt-test"
-  TAG="${TALOS_VERSION}" ${TALOSCTL} cluster create \
-		--name=${CREATED_CLUSTER} \
-		--kubernetes-version=${K8S_VERSION} \
-    ${REGISTRY_MIRROR_FLAGS} \
-    --crashdump
-  ${TALOSCTL} config nodes 10.5.0.2
-  ${TALOSCTL} kubeconfig -f ${TMP}/kubeconfig
+
+  if [[ ! -f "${TMP}/kubeconfig" ]]; then
+    TAG="${TALOS_VERSION}" ${TALOSCTL} cluster create \
+      --name=${CREATED_CLUSTER} \
+      --kubernetes-version=${K8S_VERSION} \
+      ${REGISTRY_MIRROR_FLAGS} \
+      --crashdump
+
+    ${TALOSCTL} config nodes 10.5.0.2
+    ${TALOSCTL} kubeconfig -f ${TMP}/kubeconfig
+  fi
 
   export KUBECONFIG=${TMP}/kubeconfig
 }

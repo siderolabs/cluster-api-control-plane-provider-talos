@@ -59,7 +59,7 @@ ARG TAG
 RUN cd config/manager \
   && kustomize edit set image controller=${REGISTRY_AND_USERNAME}/${NAME}:${TAG} \
   && cd - \
-  && kustomize build config >/control-plane-components.yaml \
+  && kustomize build config/default >/control-plane-components.yaml \
   && cp config/metadata/metadata.yaml /metadata.yaml
 
 FROM scratch AS release

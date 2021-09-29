@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	capiv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
+	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/talos-systems/capi-utils/pkg/capi"
@@ -35,10 +36,10 @@ var (
 )
 
 type clusterctlConfig struct {
-	Providers []controlplaneProvider `yaml:"providers"`
+	Providers []providerConfig `yaml:"providers"`
 }
 
-type controlplaneProvider struct {
+type providerConfig struct {
 	Name         string              `yaml:"name"`
 	Url          string              `yaml:"url"`
 	ProviderType capiv1.ProviderType `yaml:"type"`
@@ -55,6 +56,8 @@ type IntegrationSuite struct {
 
 func (suite *IntegrationSuite) SetupSuite() {
 	suite.ctx, suite.cancel = context.WithTimeout(context.Background(), 1*time.Hour)
+	verbosity := 6
+	logf.SetLogger(logf.NewLogger(logf.WithThreshold(&verbosity)))
 
 	env := func(key, def string) string {
 		val := os.Getenv(key)
@@ -70,10 +73,40 @@ func (suite *IntegrationSuite) SetupSuite() {
 	provider, err := infrastructure.NewProvider(providerType)
 	suite.Require().NoError(err)
 
-	var clusterctlConfigPath string
+	var (
+		clusterctlConfigPath string
+		clusterctlConfigs    *clusterctlConfig = &clusterctlConfig{}
+	)
 
-	customInfra := os.Getenv("INFRASTRUCTURE_COMPONENTS_PATH")
-	if customInfra != "" {
+	for _, config := range []struct {
+		env          string
+		providerType capiv1.ProviderType
+	}{
+		{
+			env:          "CONTROL_PLANE_PROVIDER_COMPONENTS",
+			providerType: capiv1.ControlPlaneProviderType,
+		},
+		{
+			env:          "BOOTSTRAP_PROVIDER_COMPONENTS",
+			providerType: capiv1.BootstrapProviderType,
+		},
+	} {
+		customConfig := os.Getenv(config.env)
+
+		if customConfig != "" {
+			if clusterctlConfigs.Providers == nil {
+				clusterctlConfigs.Providers = []providerConfig{}
+			}
+
+			clusterctlConfigs.Providers = append(clusterctlConfigs.Providers, providerConfig{
+				Name:         "talos",
+				Url:          fmt.Sprintf("file://%s", customConfig),
+				ProviderType: config.providerType,
+			})
+		}
+	}
+
+	if clusterctlConfigs.Providers != nil {
 		config, err := os.CreateTemp("", "clusterctlConfig*.yaml")
 		suite.Require().NoError(err)
 		defer os.Remove(config.Name())
@@ -81,21 +114,13 @@ func (suite *IntegrationSuite) SetupSuite() {
 		clusterctlConfigPath = config.Name()
 
 		encoder := yaml.NewEncoder(config)
-		suite.Require().NoError(encoder.Encode(&clusterctlConfig{
-			Providers: []controlplaneProvider{
-				{
-					Name:         "talos",
-					Url:          fmt.Sprintf("file://%s", customInfra),
-					ProviderType: capiv1.ControlPlaneProviderType,
-				},
-			},
-		}))
+		suite.Require().NoError(encoder.Encode(clusterctlConfigs))
 		suite.Require().NoError(encoder.Close())
 	}
 
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v0.3.19"),
-		BootstrapProviders:      []string{"talos"},
+		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v0.4.3"),
+		BootstrapProviders:      []string{"talos:v0.4.0-alpha.0"}, //TODO: remove version pinning when 0.4.0 is out
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 	}

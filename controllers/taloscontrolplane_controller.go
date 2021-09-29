@@ -27,10 +27,10 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/utils/pointer"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/secret"
@@ -74,7 +74,7 @@ func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options
 		Owns(&capiv1.Machine{}).
 		Watches(
 			&source.Kind{Type: &capiv1.Cluster{}},
-			&handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(r.ClusterToTalosControlPlane)},
+			handler.EnqueueRequestsFromMapFunc(r.ClusterToTalosControlPlane),
 		).
 		WithOptions(options).
 		Complete(r)
@@ -89,9 +89,8 @@ func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machines/status,verbs=get;list;watch;create;update;patch;delete
 
-func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Result, reterr error) {
+func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, reterr error) {
 	logger := r.Log.WithValues("namespace", req.Namespace, "talosControlPlane", req.Name)
-	ctx := context.Background()
 
 	// Fetch the TalosControlPlane instance.
 	tcp := &controlplanev1.TalosControlPlane{}
@@ -120,7 +119,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	}
 	logger = logger.WithValues("cluster", cluster.Name)
 
-	if util.IsPaused(cluster, tcp) {
+	if annotations.IsPaused(cluster, tcp) {
 		logger.Info("Reconciliation is paused for this object")
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -168,13 +167,6 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 
 	defer func() {
 		r.Log.Info("Attempting to set control plane status")
-
-		if requeueErr, ok := errors.Cause(reterr).(capierrors.HasRequeueAfterError); ok {
-			if res.RequeueAfter == 0 {
-				res.RequeueAfter = requeueErr.GetRequeueAfter()
-				reterr = nil
-			}
-		}
 
 		// Always attempt to update status.
 		if err := r.updateStatus(ctx, tcp, cluster); err != nil {
@@ -275,9 +267,9 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 	}
 
 	// Generate Cluster Kubeconfig if needed
-	if err := r.reconcileKubeconfig(ctx, util.ObjectKey(cluster), cluster.Spec.ControlPlaneEndpoint, tcp); err != nil {
+	if result, err := r.reconcileKubeconfig(ctx, util.ObjectKey(cluster), cluster.Spec.ControlPlaneEndpoint, tcp); !result.IsZero() || err != nil {
 		logger.Error(err, "failed to reconcile Kubeconfig")
-		return ctrl.Result{}, err
+		return result, err
 	}
 
 	return ctrl.Result{Requeue: requeue}, nil
@@ -285,10 +277,10 @@ func (r *TalosControlPlaneReconciler) Reconcile(req ctrl.Request) (res ctrl.Resu
 
 // ClusterToTalosControlPlane is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
 // for TalosControlPlane based on updates to a Cluster.
-func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(o handler.MapObject) []ctrl.Request {
-	c, ok := o.Object.(*capiv1.Cluster)
+func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(o client.Object) []ctrl.Request {
+	c, ok := o.(*capiv1.Cluster)
 	if !ok {
-		r.Log.Error(nil, fmt.Sprintf("Expected a Cluster but got a %T", o.Object))
+		r.Log.Error(nil, fmt.Sprintf("Expected a Cluster but got a %T", o))
 		return nil
 	}
 
@@ -357,7 +349,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 			r.Log.Info("Machine is in process of deletion", "machine", machine.Name)
 
-			node, err := clientset.CoreV1().Nodes().Get(machine.Status.NodeRef.Name, metav1.GetOptions{})
+			node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
 			if err != nil {
 				// It's possible for the node to already be deleted in the workload cluster, so we just
 				// requeue if that's that case instead of throwing a scary error.
@@ -369,7 +361,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 			r.Log.Info("Deleting node", "machine", machine.Name, "node", node.Name)
 
-			err = clientset.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
+			err = clientset.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
@@ -442,7 +434,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Deleting node", "machine", deleteMachine.Name, "node", node.Name)
 
-	err = clientset.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
+	err = clientset.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -639,7 +631,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 					return fmt.Errorf("machine %q does not have a noderef", ownedMachine.Name)
 				}
 
-				node, err := clientset.CoreV1().Nodes().Get(ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
+				node, err := clientset.CoreV1().Nodes().Get(ctx, ownedMachine.Status.NodeRef.Name, metav1.GetOptions{})
 				if err != nil {
 					return fmt.Errorf("failed to get node %q: %w", node.Name, err)
 				}
@@ -680,7 +672,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	// We consider ourselves "initialized" if the workload cluster returns any number of nodes.
 	// We also do not return client list errors (just log them) as it's expected that it will fail
 	// for a while until the cluster is up.
-	nodeList, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
+	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err == nil {
 		if len(nodeList.Items) > 0 {
 			tcp.Status.Initialized = true
@@ -692,9 +684,9 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, clusterName client.ObjectKey, endpoint capiv1.APIEndpoint, kcp *controlplanev1.TalosControlPlane) error {
+func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, clusterName client.ObjectKey, endpoint capiv1.APIEndpoint, kcp *controlplanev1.TalosControlPlane) (ctrl.Result, error) {
 	if endpoint.IsZero() {
-		return nil
+		return ctrl.Result{}, nil
 	}
 
 	_, err := secret.GetFromNamespacedName(ctx, r.Client, clusterName, secret.Kubeconfig)
@@ -708,18 +700,19 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 			*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
 		)
 		if createErr != nil {
-			if createErr == kubeconfig.ErrDependentCertificateNotFound {
-				return errors.Wrapf(&capierrors.RequeueAfterError{RequeueAfter: 30 * time.Second},
-					"could not find secret %q for Cluster %q in namespace %q, requeuing",
-					secret.ClusterCA, clusterName.Name, clusterName.Namespace)
+			if errors.Is(createErr, kubeconfig.ErrDependentCertificateNotFound) {
+				r.Log.Info("Could not find secret", "secret", secret.ClusterCA, "cluster", clusterName.Name, "namespace", clusterName.Namespace)
+
+				return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 			}
-			return createErr
+
+			return ctrl.Result{}, createErr
 		}
 	case err != nil:
-		return errors.Wrapf(err, "failed to retrieve kubeconfig Secret for Cluster %q in namespace %q", clusterName.Name, clusterName.Namespace)
+		return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve kubeconfig Secret for Cluster %q in namespace %q", clusterName.Name, clusterName.Namespace)
 	}
 
-	return nil
+	return ctrl.Result{}, nil
 }
 
 func (r *TalosControlPlaneReconciler) addClusterOwnerToObj(ctx context.Context, ref corev1.ObjectReference, cluster *capiv1.Cluster) error {
