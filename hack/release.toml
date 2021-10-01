@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.1.1"
+previous = "v0.2.0"
 
 pre_release = true
 
@@ -16,14 +16,7 @@ preface = """\
 [notes]
 
     [notes.capi]
-        title = "CAPI v1alpha3"
+        title = "CAPI v1alpha4"
         description = """\
-This release of CACPPT is compatible with CAPI v1alpha3 (v0.3.x).
-Next release of CACPPT will bring compatibility with CAPI v1alpha4 (v0.4.x).
-"""
-
-    [notes.scaling]
-        title = "Scaling Fixes"
-        description = """\
-Control plane scaling up and down now runs slower but is more reliable.
+This release of CACPPT brings compatibility with CAPI v1alpha4.
 """

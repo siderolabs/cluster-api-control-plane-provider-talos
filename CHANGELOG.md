@@ -1,3 +1,78 @@
+## [CAPI Control Plane Provider Talos 0.3.0-alpha.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.3.0-alpha.0) (2021-10-01)
+
+Welcome to the v0.3.0-alpha.0 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### CAPI v1alpha4
+
+This release of CACPPT brings compatibility with CAPI v1alpha4.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Artem Chernyshev
+* Gerard de Leeuw
+* Spencer Smith
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`48d834b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/48d834b5dfb364b8e9ae2269771e41a2dc646692) feat: support CAPI v1alpha4
+</p>
+</details>
+
+### Changes since v0.3.0
+<details><summary>1 commit</summary>
+<p>
+
+* [`48d834b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/48d834b5dfb364b8e9ae2269771e41a2dc646692) feat: support CAPI v1alpha4
+</p>
+</details>
+
+### Changes from talos-systems/capi-utils
+<details><summary>2 commits</summary>
+<p>
+
+* [`b2f8f83`](https://github.com/talos-systems/capi-utils/commit/b2f8f83d3df6a7cd0308ae724d7423280c6924a8) feat: update cluster API library to the latest version
+* [`f2a34fd`](https://github.com/talos-systems/capi-utils/commit/f2a34fdddec066097e346c144bb8660398a5e69d) chore: do not rely on ENV variables to configure CAPI client
+</p>
+</details>
+
+### Changes from talos-systems/cluster-api-bootstrap-provider-talos
+<details><summary>5 commits</summary>
+<p>
+
+* [`548b7fb`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/548b7fbd38b89b9790a0daa2380fddb34157cdd5) release(v0.4.0-alpha.0): prepare release
+* [`442ee41`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/442ee41bafb2a912e49928c5d61f52c4c61a2593) test: don't set the talosconfig owner ref to the machine
+* [`8c7fec8`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/8c7fec8e373bd12609f6274d79ca07d187212d91) fix: don't write incomplete `<cluster>-ca` secret for configtype none
+* [`f46c83d`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/f46c83d328ee44db2ccb5eef67b366cc73c13319) feat: bump Talos machinery to 0.12.3
+* [`7b760cf`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/7b760cf69ecab93200821dded931171657a5dedc) feat: support CAPI v1alpha4
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/onsi/gomega**                                         v1.14.0 -> v1.15.0
+* **github.com/talos-systems/capi-utils**                            9587089e8425 -> b2f8f83d3df6
+* **github.com/talos-systems/cluster-api-bootstrap-provider-talos**  v0.3.0 -> v0.4.0-alpha.0
+* **github.com/talos-systems/talos/pkg/machinery**                   7e63e43eb399 -> v0.12.3
+* **k8s.io/api**                                                     v0.17.9 -> v0.21.4
+* **k8s.io/apimachinery**                                            v0.17.9 -> v0.21.4
+* **k8s.io/apiserver**                                               v0.17.9 -> v0.21.4
+* **k8s.io/client-go**                                               v0.17.9 -> v0.21.4
+* **k8s.io/utils**                                                   6e3d28b6ed19 -> bdf08cb9a70a
+* **sigs.k8s.io/cluster-api**                                        v0.3.23 -> v0.4.3
+* **sigs.k8s.io/controller-runtime**                                 v0.5.14 -> v0.9.7
+
+Previous release can be found at [v0.2.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.2.0)
+
 ## [CAPI Control Plane Provider Talos 0.2.0-alpha.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.2.0-alpha.0) (2021-09-23)
 
 Welcome to the v0.2.0-alpha.0 release of CAPI Control Plane Provider Talos!  
