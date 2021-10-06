@@ -8,6 +8,7 @@ import (
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 )
 
 const (
@@ -88,6 +89,14 @@ type TalosControlPlaneStatus struct {
 	// state, and will be set to a descriptive error message.
 	// +optional
 	FailureMessage *string `json:"failureMessage,omitempty"`
+
+	// ObservedGeneration is the latest generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions defines current service state of the KubeadmControlPlane.
+	// +optional
+	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -108,6 +117,16 @@ type TalosControlPlane struct {
 
 	Spec   TalosControlPlaneSpec   `json:"spec,omitempty"`
 	Status TalosControlPlaneStatus `json:"status,omitempty"`
+}
+
+// GetConditions returns the set of conditions for this object.
+func (in *TalosControlPlane) GetConditions() clusterv1.Conditions {
+	return in.Status.Conditions
+}
+
+// SetConditions sets the conditions on this object.
+func (in *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+	in.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true
