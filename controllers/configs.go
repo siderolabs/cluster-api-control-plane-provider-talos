@@ -7,6 +7,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net"
+	"time"
 
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
@@ -16,13 +18,31 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/connrotation"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type kubernetesClient struct {
+	*kubernetes.Clientset
+
+	dialer *connrotation.Dialer
+}
+
+// Close kubernetes client.
+func (k *kubernetesClient) Close() error {
+	k.dialer.CloseAll()
+
+	return nil
+}
+
+func newDialer() *connrotation.Dialer {
+	return connrotation.NewDialer((&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext)
+}
+
 // kubeconfigForCluster will fetch a kubeconfig secret based on cluster name/namespace,
 // use it to create a clientset, and return it.
-func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, cluster client.ObjectKey) (*kubernetes.Clientset, error) {
+func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, cluster client.ObjectKey) (*kubernetesClient, error) {
 	kubeconfigSecret := &corev1.Secret{}
 
 	err := r.Client.Get(ctx,
@@ -41,12 +61,18 @@ func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, 
 		return nil, err
 	}
 
+	dialer := newDialer()
+	config.Dial = dialer.DialContext
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
 	}
 
-	return clientset, nil
+	return &kubernetesClient{
+		Clientset: clientset,
+		dialer:    dialer,
+	}, nil
 }
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.

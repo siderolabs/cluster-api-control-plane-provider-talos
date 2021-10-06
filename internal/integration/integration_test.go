@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	capiv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -40,9 +40,9 @@ type clusterctlConfig struct {
 }
 
 type providerConfig struct {
-	Name         string              `yaml:"name"`
-	Url          string              `yaml:"url"`
-	ProviderType capiv1.ProviderType `yaml:"type"`
+	Name         string                 `yaml:"name"`
+	Url          string                 `yaml:"url"`
+	ProviderType clusterv1.ProviderType `yaml:"type"`
 }
 
 type IntegrationSuite struct {
@@ -80,15 +80,15 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	for _, config := range []struct {
 		env          string
-		providerType capiv1.ProviderType
+		providerType clusterv1.ProviderType
 	}{
 		{
 			env:          "CONTROL_PLANE_PROVIDER_COMPONENTS",
-			providerType: capiv1.ControlPlaneProviderType,
+			providerType: clusterv1.ControlPlaneProviderType,
 		},
 		{
 			env:          "BOOTSTRAP_PROVIDER_COMPONENTS",
-			providerType: capiv1.BootstrapProviderType,
+			providerType: clusterv1.BootstrapProviderType,
 		},
 	} {
 		customConfig := os.Getenv(config.env)

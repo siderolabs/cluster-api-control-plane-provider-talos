@@ -17,10 +17,12 @@ import (
 )
 
 func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, cluster *capiv1.Cluster, ownedMachines []capiv1.Machine) error {
-	clientset, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
+	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return err
 	}
+
+	defer kubeclient.Close() //nolint:errcheck
 
 	machines := []capiv1.Machine{}
 
@@ -30,10 +32,12 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 		}
 	}
 
-	c, err := r.talosconfigForMachines(ctx, clientset, machines...)
+	c, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, machines...)
 	if err != nil {
 		return err
 	}
+
+	defer c.Close() //nolint:errcheck
 
 	service := "etcd"
 
@@ -178,15 +182,19 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		return fmt.Errorf("no CP machine which is not being deleted and has node ref")
 	}
 
-	clientset, err := r.kubeconfigForCluster(ctx, cluster)
+	kubeclient, err := r.kubeconfigForCluster(ctx, cluster)
 	if err != nil {
 		return err
 	}
 
-	c, err := r.talosconfigForMachines(ctx, clientset, designatedCPMachine)
+	defer kubeclient.Close() //nolint:errcheck
+
+	c, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, designatedCPMachine)
 	if err != nil {
 		return err
 	}
+
+	defer c.Close() //nolint:errcheck
 
 	response, err := c.EtcdMemberList(ctx, &machine.EtcdMemberListRequest{})
 	if err != nil {
