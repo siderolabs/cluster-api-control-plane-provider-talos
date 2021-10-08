@@ -5,7 +5,7 @@ policies:
       dco: true
       gpg: false
       imperative: true
-      maximumOfOneCommit: true
+      maximumOfOneCommit: false
       requireCommitBody: true
       conventional:
         types:
