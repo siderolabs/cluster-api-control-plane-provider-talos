@@ -81,6 +81,8 @@ steps:
         from_secret: aws_secret_access_key
       CI: true
       REGISTRY: registry.dev.talos-systems.io
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
       - make integration-test
     volumes:

@@ -32,7 +32,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 		}
 	}
 
-	c, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, machines...)
+	c, err := r.talosconfigForMachines(ctx, machines...)
 	if err != nil {
 		return err
 	}
@@ -182,14 +182,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		return fmt.Errorf("no CP machine which is not being deleted and has node ref")
 	}
 
-	kubeclient, err := r.kubeconfigForCluster(ctx, cluster)
-	if err != nil {
-		return err
-	}
-
-	defer kubeclient.Close() //nolint:errcheck
-
-	c, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, designatedCPMachine)
+	c, err := r.talosconfigForMachines(ctx, designatedCPMachine)
 	if err != nil {
 		return err
 	}

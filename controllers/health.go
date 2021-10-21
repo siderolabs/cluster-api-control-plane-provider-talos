@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
 )
 
 type errServiceUnhealthy struct {
@@ -29,14 +28,7 @@ func (e *errServiceUnhealthy) Error() string {
 }
 
 func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
-	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
-	if err != nil {
-		return err
-	}
-
-	defer kubeclient.Close() //nolint:errcheck
-
-	client, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, machines...)
+	client, err := r.talosconfigForMachines(ctx, machines...)
 	if err != nil {
 		return err
 	}
@@ -63,14 +55,7 @@ func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, clus
 }
 
 func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
-	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
-	if err != nil {
-		return err
-	}
-
-	defer kubeclient.Close() //nolint:errcheck
-
-	client, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, machines...)
+	client, err := r.talosconfigForMachines(ctx, machines...)
 	if err != nil {
 		return err
 	}

@@ -11,8 +11,8 @@ require (
 	github.com/onsi/gomega v1.16.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.7.0
-	github.com/talos-systems/capi-utils v0.0.0-20211101220445-144451cdef39
-	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.5.0-alpha.0
+	github.com/talos-systems/capi-utils v0.0.0-20211126110629-e8c3bf93e75f
+	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.5.0
 	github.com/talos-systems/go-retry v0.3.1
 	github.com/talos-systems/talos/pkg/machinery v0.13.0
 	google.golang.org/grpc v1.41.0

@@ -23,7 +23,7 @@ REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
 TALOS_VERSION="${TALOS_DEFAULT:-v0.13.1}"
-K8S_VERSION="${K8S_VERSION:-v1.22.2}"
+K8S_VERSION="${K8S_VERSION:-v1.22.3}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}

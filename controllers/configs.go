@@ -14,7 +14,6 @@ import (
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	talosconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -76,7 +75,7 @@ func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, 
 }
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
-func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, clientset *kubernetes.Clientset, machines ...clusterv1.Machine) (*talosclient.Client, error) {
+func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, machines ...clusterv1.Machine) (*talosclient.Client, error) {
 	if len(machines) == 0 {
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
@@ -86,24 +85,14 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	var t *talosconfig.Config
 
 	for _, machine := range machines {
-		if machine.Status.NodeRef == nil {
-			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
-		}
-
-		// grab all addresses as endpoints
-		node, err := clientset.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
-
-		for _, addr := range node.Status.Addresses {
-			if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
+		for _, addr := range machine.Status.Addresses {
+			if addr.Type == clusterv1.MachineExternalIP || addr.Type == clusterv1.MachineInternalIP {
 				addrList = append(addrList, addr.Address)
 			}
 		}
 
 		if len(addrList) == 0 {
-			return nil, fmt.Errorf("no addresses were found for node %q", node.Name)
+			return nil, fmt.Errorf("no addresses were found for node %q", machine.Name)
 		}
 
 		if t == nil {
@@ -113,7 +102,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 			)
 
 			// find talosconfig in the machine's namespace
-			err = r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
+			err := r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
 			if err != nil {
 				return nil, err
 			}

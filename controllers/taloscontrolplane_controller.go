@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,10 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
+	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,13 +44,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
-)
-
-type NodeType int
-
-const (
-	initNode NodeType = iota
-	controlplaneNode
 )
 
 const requeueDuration = 30 * time.Second
@@ -243,15 +242,21 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		conditions.MarkTrue(tcp, controlplanev1.ControlPlaneComponentsHealthyCondition)
 	}
 
+	if !conditions.Has(tcp, controlplanev1.AvailableCondition) {
+		conditions.MarkFalse(tcp, controlplanev1.AvailableCondition, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, "")
+	}
+
+	if !conditions.Has(tcp, controlplanev1.MachinesBootstrapped) {
+		conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForMachinesReason, clusterv1.ConditionSeverityInfo, "")
+	}
+
 	switch {
 	// We are creating the first replica
 	case numMachines < desiredReplicas && numMachines == 0:
 		// Create new Machine w/ init
 		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		conditions.MarkFalse(tcp, controlplanev1.AvailableCondition, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, "")
-
-		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, initNode)
+		return r.bootControlPlane(ctx, cluster, tcp, controlPlane)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingUpReason, clusterv1.ConditionSeverityWarning,
@@ -261,7 +266,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Create a new Machine w/ join
 		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, controlplaneNode)
+		return r.bootControlPlane(ctx, cluster, tcp, controlPlane)
 	// We are scaling down
 	case numMachines > desiredReplicas:
 		conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingDownReason, clusterv1.ConditionSeverityWarning,
@@ -293,6 +298,26 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 		return res, err
 	default:
+		if !tcp.Status.Bootstrapped {
+			if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
+				reason := "spec.controlPlaneConfig.init config is deprecated, to fix it keep controlplane config only"
+
+				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.InvalidControlPlaneConfigReason, clusterv1.ConditionSeverityError, reason)
+
+				return ctrl.Result{}, fmt.Errorf(reason)
+			}
+
+			if err := r.bootstrapCluster(ctx, cluster, ownedMachines); err != nil {
+				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, err.Error())
+
+				return ctrl.Result{}, err
+			}
+
+			conditions.MarkTrue(tcp, controlplanev1.MachinesBootstrapped)
+
+			tcp.Status.Bootstrapped = true
+		}
+
 		if conditions.Has(tcp, controlplanev1.MachinesReadyCondition) {
 			conditions.MarkTrue(tcp, controlplanev1.ResizedCondition)
 		}
@@ -424,7 +449,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	node := deleteMachine.Status.NodeRef
 
-	c, err := r.talosconfigForMachines(ctx, kubeclient.Clientset, deleteMachine)
+	c, err := r.talosconfigForMachines(ctx, deleteMachine)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -515,7 +540,7 @@ func (r *TalosControlPlaneReconciler) getFailureDomain(ctx context.Context, clus
 	return retList
 }
 
-func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane, nodeType NodeType) (ctrl.Result, error) {
+func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane) (ctrl.Result, error) {
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
 	// OwnerReference here without the Controller field set
 	infraCloneOwner := &metav1.OwnerReference{
@@ -540,10 +565,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, err
 	}
 
-	bootstrapConfig := &tcp.Spec.ControlPlaneConfig.InitConfig
-	if nodeType == controlplaneNode {
-		bootstrapConfig = &tcp.Spec.ControlPlaneConfig.ControlPlaneConfig
-	}
+	bootstrapConfig := &tcp.Spec.ControlPlaneConfig.ControlPlaneConfig
 
 	// Clone the bootstrap configuration
 	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, cluster, bootstrapConfig)
@@ -589,6 +611,44 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	return ctrl.Result{Requeue: true}, nil
+}
+
+func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	c, err := r.talosconfigForMachines(ctx, machines...)
+	if err != nil {
+		return err
+	}
+
+	defer c.Close() //nolint:errcheck
+
+	addresses := []string{}
+	for _, machine := range machines {
+		if len(machine.Status.Addresses) == 0 {
+			continue
+		}
+
+		for _, addr := range machine.Status.Addresses {
+			if addr.Type == clusterv1.MachineInternalIP {
+				addresses = append(addresses, addr.Address)
+
+				break
+			}
+		}
+	}
+
+	if len(addresses) == 0 {
+		return fmt.Errorf("no machine addresses to use for bootstrap")
+	}
+
+	sort.Strings(addresses)
+
+	if err := c.Bootstrap(talosclient.WithNodes(ctx, addresses[0]), &machineapi.BootstrapRequest{}); err != nil {
+		if status.Code(err) != codes.AlreadyExists {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, spec *cabptv1.TalosConfigSpec) (*corev1.ObjectReference, error) {
@@ -804,6 +864,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 			controlplanev1.ResizedCondition,
 			controlplanev1.MachinesReadyCondition,
 			controlplanev1.AvailableCondition,
+			controlplanev1.MachinesBootstrapped,
 		),
 	)
 
@@ -814,6 +875,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 			controlplanev1.ResizedCondition,
 			controlplanev1.MachinesReadyCondition,
 			controlplanev1.AvailableCondition,
+			controlplanev1.MachinesBootstrapped,
 		}},
 	)
 

@@ -16,6 +16,9 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/talos-systems/capi-utils/pkg/capi"
+	"github.com/talos-systems/capi-utils/pkg/capi/infrastructure"
+	"github.com/talos-systems/go-retry/retry"
 	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -24,10 +27,6 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/talos-systems/capi-utils/pkg/capi"
-	"github.com/talos-systems/capi-utils/pkg/capi/infrastructure"
-	"github.com/talos-systems/go-retry/retry"
 )
 
 var (
@@ -41,7 +40,7 @@ type clusterctlConfig struct {
 
 type providerConfig struct {
 	Name         string                 `yaml:"name"`
-	Url          string                 `yaml:"url"`
+	URL          string                 `yaml:"url"`
 	ProviderType clusterv1.ProviderType `yaml:"type"`
 }
 
@@ -75,7 +74,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	var (
 		clusterctlConfigPath string
-		clusterctlConfigs    *clusterctlConfig = &clusterctlConfig{}
+		clusterctlConfigs    = &clusterctlConfig{}
 	)
 
 	for _, config := range []struct {
@@ -100,16 +99,18 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 			clusterctlConfigs.Providers = append(clusterctlConfigs.Providers, providerConfig{
 				Name:         "talos",
-				Url:          fmt.Sprintf("file://%s", customConfig),
+				URL:          fmt.Sprintf("file://%s", customConfig),
 				ProviderType: config.providerType,
 			})
 		}
 	}
 
 	if clusterctlConfigs.Providers != nil {
-		config, err := os.CreateTemp("", "clusterctlConfig*.yaml")
-		suite.Require().NoError(err)
-		defer os.Remove(config.Name())
+		config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
+
+		suite.Require().NoError(configError)
+
+		defer os.Remove(config.Name()) //nolint:errcheck
 
 		clusterctlConfigPath = config.Name()
 
@@ -123,6 +124,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 		BootstrapProviders:      []string{"talos:v0.5.0-alpha.0"},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
+		WaitProviderTimeout:     time.Minute,
 	}
 
 	if clusterctlConfigPath != "" {
@@ -144,7 +146,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/talos-systems/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
+		capi.WithTemplateFile("https://github.com/Unix4ever/cluster-api-templates/blob/drop-init-configs/aws/standard/standard.yaml"),
 	)
 	suite.Require().NoError(err)
 
@@ -193,14 +195,14 @@ func (suite *IntegrationSuite) Test02ReconcileMachine() {
 	getEtcdMembers := func() (map[uint64]struct{}, error) {
 		members := map[uint64]struct{}{}
 
-		talosclient, e := suite.cluster.TalosClient(suite.ctx)
-		if e != nil {
-			return nil, e
+		talosclient, etcdErr := suite.cluster.TalosClient(suite.ctx)
+		if etcdErr != nil {
+			return nil, etcdErr
 		}
 
-		resp, e := talosclient.EtcdMemberList(suite.ctx, &machineapi.EtcdMemberListRequest{})
-		if e != nil {
-			return nil, e
+		resp, etcdErr := talosclient.EtcdMemberList(suite.ctx, &machineapi.EtcdMemberListRequest{})
+		if etcdErr != nil {
+			return nil, etcdErr
 		}
 
 		for _, m := range resp.Messages[0].Members {
@@ -271,6 +273,7 @@ func (suite *IntegrationSuite) Test03ScaleDown() {
 // Test04ScaleControlPlaneNoWait scale control plane nodes up and down without waiting.
 func (suite *IntegrationSuite) Test04ScaleControlPlaneNoWait() {
 	ctx, cancel := context.WithCancel(suite.ctx)
+
 	go func() {
 		time.Sleep(time.Second * 5)
 

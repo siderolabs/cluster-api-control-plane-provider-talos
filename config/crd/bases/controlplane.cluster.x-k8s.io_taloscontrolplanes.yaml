@@ -87,7 +87,7 @@ spec:
                     - generateType
                     type: object
                   init:
-                    description: TalosConfigSpec defines the desired state of TalosConfig
+                    description: 'Deprecated: starting from cacppt v0.4.0 provider doesn''t use init configs.'
                     properties:
                       configPatches:
                         items:
@@ -114,7 +114,6 @@ spec:
                     type: object
                 required:
                 - controlplane
-                - init
                 type: object
               infrastructureTemplate:
                 description: InfrastructureTemplate is a required reference to a custom resource offered by an infrastructure provider.
@@ -158,6 +157,9 @@ spec:
           status:
             description: TalosControlPlaneStatus defines the observed state of TalosControlPlane
             properties:
+              bootstrapped:
+                description: Bootstrapped denotes wheither any nodes recieved bootstrap request which is required to start etcd and Kubernetes components in Talos.
+                type: boolean
               conditions:
                 description: Conditions defines current service state of the KubeadmControlPlane.
                 items:

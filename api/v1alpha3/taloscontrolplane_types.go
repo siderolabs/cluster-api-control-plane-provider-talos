@@ -16,7 +16,8 @@ const (
 )
 
 type ControlPlaneConfig struct {
-	InitConfig         cabptv1.TalosConfigSpec `json:"init"`
+	// Deprecated: starting from cacppt v0.4.0 provider doesn't use init configs.
+	InitConfig         cabptv1.TalosConfigSpec `json:"init,omitempty"`
 	ControlPlaneConfig cabptv1.TalosConfigSpec `json:"controlplane"`
 }
 
@@ -78,6 +79,11 @@ type TalosControlPlaneStatus struct {
 	// receive requests.
 	// +optional
 	Ready bool `json:"ready"`
+
+	// Bootstrapped denotes whether any nodes received bootstrap request
+	// which is required to start etcd and Kubernetes components in Talos.
+	// +optional
+	Bootstrapped bool `json:"bootstrapped,omitempty"`
 
 	// FailureReason indicates that there is a terminal problem reconciling the
 	// state, and will be set to a token value suitable for

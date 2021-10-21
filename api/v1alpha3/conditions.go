@@ -16,6 +16,15 @@ const (
 )
 
 const (
+	// MachinesBootstrapped is tracking control planes bootstrap status.
+	MachinesBootstrapped clusterv1.ConditionType = "MachinesBootstrapped"
+
+	// WaitingForMachinesReason (Severity=Info) documents a TalosControlPlane bootstrap is waiting
+	// for all control plane nodes to be created.
+	WaitingForMachinesReason = "WaitingForMachines"
+)
+
+const (
 	// AvailableCondition documents that the first control plane instance has completed Talos boot sequence
 	// and so the control plane is available and an API server instance is ready for processing requests.
 	AvailableCondition clusterv1.ConditionType = "Available"
@@ -23,6 +32,10 @@ const (
 	// WaitingForTalosBootReason (Severity=Info) documents a TalosControlPlane object waiting for the first
 	// control plane instance to complete Talos boot sequence.
 	WaitingForTalosBootReason = "WaitingForTalosBoot"
+
+	// InvalidControlPlaneConfigReason (Severity=Error) documents that controlplane config is invalid and the provider
+	// can not proceed with the bootstrap.
+	InvalidControlPlaneConfigReason = "InvalidControlPlaneConfig"
 )
 
 const (
