@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/connrotation"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -76,7 +76,7 @@ func (r *TalosControlPlaneReconciler) kubeconfigForCluster(ctx context.Context, 
 }
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
-func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, clientset *kubernetes.Clientset, machines ...capiv1.Machine) (*talosclient.Client, error) {
+func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, clientset *kubernetes.Clientset, machines ...clusterv1.Machine) (*talosclient.Client, error) {
 	if len(machines) == 0 {
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}

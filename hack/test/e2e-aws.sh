@@ -22,12 +22,12 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v0.12.3}"
+TALOS_VERSION="${TALOS_DEFAULT:-v0.13.1}"
 K8S_VERSION="${K8S_VERSION:-v1.22.2}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
-export PROVIDER=aws:v0.7.0
+export PROVIDER=aws:v1.0.0
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
@@ -84,7 +84,7 @@ function config {
   tar -xf ${TMP}/kustomize.tar.gz -C ${TMP} && rm ${TMP}/kustomize.tar.gz
 
   # always use fake version tag here
-  export CONTROL_PLANE_PROVIDER_COMPONENTS=${TMP}/control-plane-talos/v0.3.0/control-plane-components.yaml
+  export CONTROL_PLANE_PROVIDER_COMPONENTS=${TMP}/control-plane-talos/v0.4.0/control-plane-components.yaml
   mkdir -p $(dirname ${CONTROL_PLANE_PROVIDER_COMPONENTS})
 
   cp -rf config ${TMP}/config
@@ -93,7 +93,7 @@ function config {
   ${KUSTOMIZE} edit set image controller=${REGISTRY_AND_USERNAME}/${NAME}:${TAG}
   cd -
   ${KUSTOMIZE} build ${TMP}/config/default >${CONTROL_PLANE_PROVIDER_COMPONENTS}
-  cp ${TMP}/config/metadata/metadata.yaml ${TMP}/control-plane-talos/v0.3.0/
+  cp ${TMP}/config/metadata/metadata.yaml ${TMP}/control-plane-talos/v0.4.0/
 }
 
 function cluster {

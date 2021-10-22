@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.2.0"
+previous = "v0.3.0"
 
 pre_release = true
 
@@ -16,7 +16,7 @@ preface = """\
 [notes]
 
     [notes.capi]
-        title = "CAPI v1alpha4"
+        title = "CAPI v1beta1"
         description = """\
-This release of CACPPT brings compatibility with CAPI v1alpha4.
+This release of CACPPT brings compatibility with CAPI v1beta1.
 """

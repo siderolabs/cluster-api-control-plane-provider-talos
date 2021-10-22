@@ -15,8 +15,7 @@ import (
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
 )
 
@@ -29,7 +28,7 @@ func (e *errServiceUnhealthy) Error() string {
 	return fmt.Sprintf("Service %s is unhealthy: %s", e.service, e.reason)
 }
 
-func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, cluster *capiv1.Cluster, machines []capiv1.Machine) error {
+func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
 	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return err

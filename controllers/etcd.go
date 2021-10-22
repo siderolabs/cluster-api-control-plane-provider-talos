@@ -11,12 +11,12 @@ import (
 
 	"github.com/talos-systems/talos/pkg/machinery/api/machine"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, cluster *capiv1.Cluster, ownedMachines []capiv1.Machine) error {
+func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
 	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return err
@@ -24,7 +24,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 
 	defer kubeclient.Close() //nolint:errcheck
 
-	machines := []capiv1.Machine{}
+	machines := []clusterv1.Machine{}
 
 	for _, machine := range ownedMachines {
 		if machine.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -104,7 +104,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
-func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, machineToLeave capiv1.Machine) error {
+func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, machineToLeave clusterv1.Machine) error {
 	r.Log.Info("Verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
 
 	svcs, err := c.ServiceInfo(ctx, "etcd")
@@ -166,7 +166,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		}
 	}
 	// Select the first CP machine that's not being deleted and has a noderef
-	var designatedCPMachine capiv1.Machine
+	var designatedCPMachine clusterv1.Machine
 
 	for _, machine := range machines {
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() || machine.Status.NodeRef == nil {
