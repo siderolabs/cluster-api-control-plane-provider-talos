@@ -118,11 +118,12 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 				return nil, err
 			}
 
+		outer:
 			for _, cfg := range cfgs.Items {
 				for _, ref := range cfg.OwnerReferences {
 					if ref.Kind == "Machine" && ref.Name == machine.Name {
 						found = &cfg
-						break
+						break outer
 					}
 				}
 			}
