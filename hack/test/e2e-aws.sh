@@ -34,17 +34,18 @@ TALOSCTL_PATH="${TMP}/talosctl"
 TALOSCTL="${TALOSCTL_PATH} --talosconfig=${TMP}/talosconfig"
 KUSTOMIZE="${TMP}/kustomize"
 TEARDOWN_CLUSTER=${TEARDOWN_CLUSTER:-true}
+KUBECTL="${TMP}/kubectl"
+
+curl -Lo ${KUBECTL} "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/${PLATFORM}/amd64/kubectl"
+chmod +x ${KUBECTL}
 
 cleanup() {
   if [ "$1" != "0" ]; then
     # gather container logs
     if [[ ! -z ${KUBECONFIG} ]]; then
-      curl -Lo kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/${PLATFORM}/amd64/kubectl"
-      chmod +x kubectl
-
-      ./kubectl delete cluster --all || true
-      ./kubectl logs -n capa-system deployment/capa-controller-manager manager || true
-      ./kubectl logs -n cacppt-system deployment/cacppt-controller-manager || true
+      ${KUBECTL} delete cluster --all || true
+      ${KUBECTL} logs -n capa-system deployment/capa-controller-manager manager || true
+      ${KUBECTL} logs -n cacppt-system deployment/cacppt-controller-manager || true
     fi
   fi
 
@@ -101,16 +102,21 @@ function cluster {
 
   chmod +x ${TALOSCTL_PATH}
 
-  CREATED_CLUSTER="cacppt-test"
+  CREATED_CLUSTER="cacppt-test-$(echo $RANDOM | md5sum | head -c 10)"
 
   if [[ ! -f "${TMP}/kubeconfig" ]]; then
+    echo "creating cluster ${CREATED_CLUSTER}"
     TAG="${TALOS_VERSION}" ${TALOSCTL} cluster create \
       --name=${CREATED_CLUSTER} \
       --kubernetes-version=${K8S_VERSION} \
       ${REGISTRY_MIRROR_FLAGS} \
-      --crashdump
+      --crashdump \
+      --cidr 172.27.0.0/24 \
+      --workers=0
 
-    ${TALOSCTL} config nodes 10.5.0.2
+    ${KUBECTL} taint node ${CREATED_CLUSTER}-master-1 node-role.kubernetes.io/master=:NoSchedule-
+
+    ${TALOSCTL} config nodes 172.27.0.2
     ${TALOSCTL} kubeconfig -f ${TMP}/kubeconfig
   fi
 
