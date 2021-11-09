@@ -15,13 +15,13 @@ FROM ghcr.io/talos-systems/fhs:${PKGS} AS pkg-fhs
 
 FROM --platform=${BUILDPLATFORM} ${TOOLS} AS build
 SHELL ["/toolchain/bin/bash", "-c"]
+ARG CGO_ENABLED
 ENV PATH /toolchain/bin:/toolchain/go/bin:/go/bin
 RUN ["/toolchain/bin/mkdir", "/bin", "/tmp"]
 RUN ["/toolchain/bin/ln", "-svf", "/toolchain/bin/bash", "/bin/sh"]
 RUN ["/toolchain/bin/ln", "-svf", "/toolchain/etc/ssl", "/etc/ssl"]
 ENV GO111MODULE on
 ENV GOPROXY https://proxy.golang.org
-ENV CGO_ENABLED 0
 ENV GOCACHE /.cache/go-build
 ENV GOMODCACHE /.cache/mod
 RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.5.0
@@ -67,8 +67,10 @@ COPY --from=release-build /control-plane-components.yaml /control-plane-componen
 COPY --from=release-build /metadata.yaml /metadata.yaml
 
 FROM build AS binary
+ARG GO_BUILDFLAGS
+ARG GO_LDFLAGS
 ARG TARGETARCH
-RUN --mount=type=cache,target=/.cache GOOS=linux GOARCH=${TARGETARCH} go build -ldflags "-s -w" -o /manager
+RUN --mount=type=cache,target=/.cache GOOS=linux GOARCH=${TARGETARCH} go build ${GO_BUILDFLAGS} -ldflags "${GO_LDFLAGS}" -o /manager
 RUN chmod +x /manager
 
 FROM build AS integration-test-build

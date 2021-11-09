@@ -5,6 +5,16 @@ TAG ?= $(shell git describe --tag --always --dirty)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 REGISTRY_AND_USERNAME := $(REGISTRY)/$(USERNAME)
 NAME := cluster-api-control-plane-talos-controller
+WITH_RACE ?= false
+CGO_ENABLED = 0
+
+ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
+GO_BUILDFLAGS += -race
+CGO_ENABLED = 1
+GO_LDFLAGS += -linkmode=external -extldflags '-static'
+endif
+
+GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
@@ -23,6 +33,9 @@ COMMON_ARGS += --build-arg=NAME=$(NAME)
 COMMON_ARGS += --build-arg=TAG=$(TAG)
 COMMON_ARGS += --build-arg=PKGS=$(PKGS)
 COMMON_ARGS += --build-arg=TOOLS=$(TOOLS)
+COMMON_ARGS += --build-arg=GO_BUILDFLAGS="$(GO_BUILDFLAGS)"
+COMMON_ARGS += --build-arg=GO_LDFLAGS="$(GO_LDFLAGS)"
+COMMON_ARGS += --build-arg=CGO_ENABLED="$(CGO_ENABLED)"
 
 all: manifests container
 
