@@ -23,10 +23,14 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clusterv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
 var (
@@ -283,6 +287,43 @@ func (suite *IntegrationSuite) Test04ScaleControlPlaneNoWait() {
 	suite.cluster.Scale(ctx, 3, capi.ControlPlaneNodes) //nolint:errcheck
 
 	err := suite.cluster.Scale(suite.ctx, 1, capi.ControlPlaneNodes)
+	suite.Require().NoError(err)
+}
+
+// Test05ScaleControlPlaneToZero try to scale control plane to zero and check that it never does that.
+func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
+	ctx, cancel := context.WithCancel(suite.ctx)
+
+	go func() {
+		time.Sleep(time.Second * 5)
+
+		cancel()
+	}()
+
+	suite.cluster.Scale(ctx, 0, capi.ControlPlaneNodes) //nolint:errcheck
+
+	err := retry.Constant(time.Second*20, retry.WithUnits(time.Second)).Retry(func() error {
+		controlplane, err := suite.cluster.ControlPlanes(suite.ctx)
+		if err != nil {
+			return err
+		}
+
+		var tcp controlplanev1.TalosControlPlane
+
+		err = runtime.DefaultUnstructuredConverter.
+			FromUnstructured(controlplane.UnstructuredContent(), &tcp)
+		if err != nil {
+			return err
+		}
+
+		if !conditions.Has(&tcp, controlplanev1.ResizedCondition) &&
+			conditions.GetMessage(&tcp, controlplanev1.ResizedCondition) != "Cannot scale down control plane nodes to 0" {
+			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
+		}
+
+		return nil
+	})
+
 	suite.Require().NoError(err)
 }
 

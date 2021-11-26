@@ -273,6 +273,14 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			"Scaling down control plane to %d replicas (actual %d)",
 			desiredReplicas, numMachines)
 
+		if numMachines == 1 {
+			conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingDownReason, clusterv1.ConditionSeverityError,
+				"Cannot scale down control plane nodes to 0",
+				desiredReplicas, numMachines)
+
+			return res, nil
+		}
+
 		if err := r.ensureNodesBooted(ctx, cluster, ownedMachines); err != nil {
 			logger.Info("Waiting for all nodes to finish boot sequence", "error", err)
 
