@@ -83,6 +83,34 @@ steps:
       REGISTRY: registry.dev.talos-systems.io
       GITHUB_TOKEN:
         from_secret: github_token
+    when:
+      event:
+        include:
+          - pull_request
+    commands:
+      - make integration-test
+    volumes:
+      - name: docker-socket
+        path: /var/run
+      - name: outerdockersock
+        path: /var/outer-run
+      - name: docker
+        path: /root/.docker/buildx
+
+  - name: e2e-aws-release
+    image: autonomy/build-container:latest
+    pull: always
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: aws_access_key_id
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: aws_secret_access_key
+      CI: true
+      GITHUB_TOKEN:
+        from_secret: github_token
+    when:
+      event:
+        - tag
     commands:
       - make integration-test
     volumes:
