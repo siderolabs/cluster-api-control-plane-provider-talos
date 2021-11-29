@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.3.0"
+previous = "v0.3.1"
 
 pre_release = true
 
@@ -19,4 +19,12 @@ preface = """\
         title = "CAPI v1beta1"
         description = """\
 This release of CACPPT brings compatibility with CAPI v1beta1.
+"""
+
+    [notes.bootstrap]
+        title = "`init` nodes deprecation"
+        description = """\
+Starting from this release CACPPT no longer relies on init nodes to bootstrap the cluster.
+Instead, it is now issues bootstrap and keeps bootstrap status information in the `TalosControlPlane` resource.
+Bootstrap state can also be retrieved from the conditions.
 """
