@@ -158,7 +158,7 @@ spec:
             description: TalosControlPlaneStatus defines the observed state of TalosControlPlane
             properties:
               bootstrapped:
-                description: Bootstrapped denotes wheither any nodes recieved bootstrap request which is required to start etcd and Kubernetes components in Talos.
+                description: Bootstrapped denotes whether any nodes received bootstrap request which is required to start etcd and Kubernetes components in Talos.
                 type: boolean
               conditions:
                 description: Conditions defines current service state of the KubeadmControlPlane.
