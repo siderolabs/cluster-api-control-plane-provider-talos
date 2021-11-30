@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"reflect"
 	"sort"
@@ -256,7 +257,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Create new Machine w/ init
 		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		return r.bootControlPlane(ctx, cluster, tcp, controlPlane)
+		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, true)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingUpReason, clusterv1.ConditionSeverityWarning,
@@ -266,7 +267,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Create a new Machine w/ join
 		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		return r.bootControlPlane(ctx, cluster, tcp, controlPlane)
+		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, false)
 	// We are scaling down
 	case numMachines > desiredReplicas:
 		conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingDownReason, clusterv1.ConditionSeverityWarning,
@@ -306,15 +307,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 		return res, err
 	default:
-		if !tcp.Status.Bootstrapped {
-			if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
-				reason := "spec.controlPlaneConfig.init config is deprecated, to fix it keep controlplane config only"
-
-				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.InvalidControlPlaneConfigReason, clusterv1.ConditionSeverityError, reason)
-
-				return ctrl.Result{}, fmt.Errorf(reason)
-			}
-
+		if !tcp.Status.Bootstrapped && reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
 			if err := r.bootstrapCluster(ctx, cluster, ownedMachines); err != nil {
 				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, err.Error())
 
@@ -548,7 +541,7 @@ func (r *TalosControlPlaneReconciler) getFailureDomain(ctx context.Context, clus
 	return retList
 }
 
-func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane) (ctrl.Result, error) {
+func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane, first bool) (ctrl.Result, error) {
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
 	// OwnerReference here without the Controller field set
 	infraCloneOwner := &metav1.OwnerReference{
@@ -574,6 +567,9 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	bootstrapConfig := &tcp.Spec.ControlPlaneConfig.ControlPlaneConfig
+	if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() && first {
+		bootstrapConfig = &tcp.Spec.ControlPlaneConfig.InitConfig
+	}
 
 	// Clone the bootstrap configuration
 	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, cluster, bootstrapConfig)
@@ -646,6 +642,28 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, clus
 
 	if len(addresses) == 0 {
 		return fmt.Errorf("no machine addresses to use for bootstrap")
+	}
+
+	list, err := c.LS(talosclient.WithNodes(ctx, addresses...), &machineapi.ListRequest{Root: "/var/lib/etcd/member"})
+	if err != nil {
+		return err
+	}
+
+	for {
+		info, err := list.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || talosclient.StatusCode(err) == codes.Canceled {
+				break
+			}
+
+			return err
+		}
+
+		// if the directory exists at least on a single node it means that cluster
+		// was already bootstrapped
+		if info.Metadata.Error == "" {
+			return nil
+		}
 	}
 
 	sort.Strings(addresses)

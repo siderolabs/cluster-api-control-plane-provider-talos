@@ -151,6 +151,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
 		capi.WithTemplateFile("https://github.com/talos-systems/cluster-api-templates/blob/v1beta1/aws/standard/standard.yaml"),
+		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)
 
@@ -168,17 +169,8 @@ func (suite *IntegrationSuite) TearDownSuite() {
 	}
 }
 
-// Test01ScaleUp scale control plane nodes up.
-func (suite *IntegrationSuite) Test01ScaleUp() {
-	suite.cluster.Scale(suite.ctx, 3, capi.ControlPlaneNodes) //nolint:errcheck
-
-	suite.Require().NoError(suite.cluster.Health(suite.ctx))
-
-	time.Sleep(2 * time.Second)
-}
-
-// Test02ReconcileMachine remove a machine and wait until cluster gets healthy again.
-func (suite *IntegrationSuite) Test02ReconcileMachine() {
+// Test01ReconcileMachine remove a machine and wait until cluster gets healthy again.
+func (suite *IntegrationSuite) Test01ReconcileMachine() {
 	selector, err := labels.Parse("cluster.x-k8s.io/control-plane")
 	suite.Require().NoError(err)
 
@@ -262,7 +254,7 @@ func (suite *IntegrationSuite) Test02ReconcileMachine() {
 	)
 }
 
-// Test03ScaleDown scale control planes down.
+// Test02ScaleDown scale control planes down.
 func (suite *IntegrationSuite) Test03ScaleDown() {
 	suite.Require().NoError(suite.cluster.Sync(suite.ctx))
 
@@ -274,7 +266,7 @@ func (suite *IntegrationSuite) Test03ScaleDown() {
 	suite.Require().NoError(suite.cluster.Sync(suite.ctx))
 }
 
-// Test04ScaleControlPlaneNoWait scale control plane nodes up and down without waiting.
+// Test03ScaleControlPlaneNoWait scale control plane nodes up and down without waiting.
 func (suite *IntegrationSuite) Test04ScaleControlPlaneNoWait() {
 	ctx, cancel := context.WithCancel(suite.ctx)
 
@@ -290,7 +282,7 @@ func (suite *IntegrationSuite) Test04ScaleControlPlaneNoWait() {
 	suite.Require().NoError(err)
 }
 
-// Test05ScaleControlPlaneToZero try to scale control plane to zero and check that it never does that.
+// Test04ScaleControlPlaneToZero try to scale control plane to zero and check that it never does that.
 func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 	ctx, cancel := context.WithCancel(suite.ctx)
 
