@@ -71,7 +71,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 		return def
 	}
 
-	providerType := env("PROVIDER", "aws:v1.0.0")
+	providerType := env("PROVIDER", "aws:v1.1.0")
 
 	provider, err := infrastructure.NewProvider(providerType)
 	suite.Require().NoError(err)
@@ -124,8 +124,8 @@ func (suite *IntegrationSuite) SetupSuite() {
 	}
 
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.0.0"),
-		BootstrapProviders:      []string{"talos:v0.5.0-alpha.0"},
+		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.0.2"),
+		BootstrapProviders:      []string{"talos:v0.5.0"},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 		WaitProviderTimeout:     time.Minute,
@@ -150,7 +150,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/Unix4ever/cluster-api-templates/blob/drop-init-configs/aws/standard/standard.yaml"),
+		capi.WithTemplateFile("https://github.com/talos-systems/cluster-api-templates/blob/v1beta1/aws/standard/standard.yaml"),
 	)
 	suite.Require().NoError(err)
 
