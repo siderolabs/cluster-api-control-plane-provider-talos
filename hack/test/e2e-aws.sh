@@ -2,7 +2,7 @@
 
 set -eou pipefail
 
-TMP="/tmp/cacppt-e2e/"
+TMP="/tmp/cacppt-e2e"
 mkdir -p "${TMP}"
 
 AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
@@ -27,7 +27,7 @@ K8S_VERSION="${K8S_VERSION:-v1.22.3}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
-export PROVIDER=aws:v1.0.0
+export PROVIDER=aws:v1.1.0
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
@@ -135,6 +135,7 @@ function aws_setup {
   export AWS_SSH_KEY_NAME=${AWS_SSH_KEY_NAME:-talos-e2e}
   export AWS_VPC_ID=${AWS_VPC_ID:-vpc-ff5c5687}
   export AWS_SUBNET=${AWS_SUBNET:-subnet-c4e9b3a0}
+  export AWS_SUBNET_AZ=${AWS_SUBNET_AZ:-us-east-1a}
 
   ## Control plane vars
   export AWS_CONTROL_PLANE_AMI_ID=${AMI}
