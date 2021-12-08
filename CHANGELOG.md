@@ -1,3 +1,99 @@
+## [CAPI Control Plane Provider Talos 0.4.0-beta.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.0-beta.1) (2021-12-09)
+
+Welcome to the v0.4.0-beta.1 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### CAPI v1beta1
+
+This release of CACPPT brings compatibility with CAPI v1beta1.
+
+
+### Init Node Deprecation
+
+This release of CACPPT deprecates the `init` node that was used in previous Talos Linux designs. Specifying only a `controlplane` as part of the spec is now all that's required and the provider itself will handle automatic bootstrap of the first controlplane node.
+
+
+### Contributors
+
+* Artem Chernyshev
+* Andrey Smirnov
+* Spencer Smith
+
+### Changes
+<details><summary>9 commits</summary>
+<p>
+
+* [`5bdd45b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/5bdd45ba50b428898d7b679e61dedd28ad3a62c6) release(v0.4.0-beta.1): prepare release
+* [`e0041f6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/e0041f6567a61a388f5e69769fe28924e4f4fe7f) fix: ensure that bootstrap is called only a single time
+* [`65043b7`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/65043b7cf85407e9e4683dbda1d96083d9e1de45) test: update templates to v1beta1
+* [`80b24a0`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/80b24a0abb4a9176a9f1635891a236f299d7dc64) fix: introduce a separate step for release builds
+* [`a24dad3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/a24dad3328d52a3744f685ddde913d66dd17b176) fix: do not allow scaling down controlplane to zero
+* [`8a73e6a`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/8a73e6a26e52151b1dd4604c4d0737036f119c30) feat: get rid of init nodes and use bootstrap API to setup cluster
+* [`205f4be`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/205f4be2057b3ea81c4dcf47004db6864ff31801) release(v0.4.0-alpha.0): prepare release
+* [`b8db449`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/b8db4492d55f910e8a7d2a3b69ab08740963683e) fix: properly pick talos client configuration
+* [`61fb582`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/61fb5826391e4434b64619f0590683f7fa7b82b6) feat: support clusterapi v1beta1
+</p>
+</details>
+
+### Changes since v0.4.0-beta.0
+<details><summary>3 commits</summary>
+<p>
+
+* [`5bdd45b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/5bdd45ba50b428898d7b679e61dedd28ad3a62c6) release(v0.4.0-beta.1): prepare release
+* [`e0041f6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/e0041f6567a61a388f5e69769fe28924e4f4fe7f) fix: ensure that bootstrap is called only a single time
+* [`65043b7`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/65043b7cf85407e9e4683dbda1d96083d9e1de45) test: update templates to v1beta1
+</p>
+</details>
+
+### Changes from talos-systems/capi-utils
+<details><summary>6 commits</summary>
+<p>
+
+* [`e8c3bf9`](https://github.com/talos-systems/capi-utils/commit/e8c3bf93e75fd46232ed6ac7df2cc7d0ad3cc8b3) feat: pass through an option to wait for providers to be set up
+* [`144451c`](https://github.com/talos-systems/capi-utils/commit/144451cdef39bf6aed0cf1395ff69f9ce0496243) feat: switch to CAPI v1beta1
+* [`151aac2`](https://github.com/talos-systems/capi-utils/commit/151aac243655ecf5ac82fde99db1d11795f4c14c) fix: properly define calico version
+* [`658f48a`](https://github.com/talos-systems/capi-utils/commit/658f48a2034f991278ba7eeebccb3519dc1ee30a) feat: support getting cluster template files by http urls
+* [`e0cadf5`](https://github.com/talos-systems/capi-utils/commit/e0cadf51e3dec7f7af7acfc533233365e01860a1) feat: add method to fetch a k8s client
+* [`b018ea2`](https://github.com/talos-systems/capi-utils/commit/b018ea29c13a09ae2fdb2a071c5b7c8bd626bb50) feat: add ability to pass custom `Proxy` implementation in clusterapi
+</p>
+</details>
+
+### Changes from talos-systems/cluster-api-bootstrap-provider-talos
+<details><summary>8 commits</summary>
+<p>
+
+* [`6d27c57`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/6d27c57584b99ac9aab5313191c701ccd780bc5d) release(v0.5.0): prepare release
+* [`f6dc0a3`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/f6dc0a3372dba82306a4abc9b2a064f1e337421c) fix: regenerate manifests
+* [`2a4115f`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/2a4115f1211a20e5058a7b0430c4dc4081acfcfe) release(v0.5.0-alpha.0): prepare release
+* [`d124c07`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/d124c072c9db8d402b353a73646d2d197bae76a4) docs: update README with usage and compatibility matrix
+* [`20792f3`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/20792f345b7ff3c8ffa9d65c9ca8dcab1932f49e) feat: generate talosconfig as a secret with proper endpoints
+* [`abd206f`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/abd206fd8a98f5478f8ffd0f8686e32be3b7defe) feat: update to CAPI v1.0.x contract (v1beta1)
+* [`b7faf9e`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/b7faf9e730b7c9f50ffa94be194ddcf908708a2c) feat: update Talos machinery to 0.13.0
+* [`04742b9`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/04742b96bf757413c88d0f15bee91679644f0337) feat: import fixes/updates from kubeadm bootstrap provider
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/onsi/gomega**                                         v1.15.0 -> v1.16.0
+* **github.com/talos-systems/capi-utils**                            b2f8f83d3df6 -> e8c3bf93e75f
+* **github.com/talos-systems/cluster-api-bootstrap-provider-talos**  v0.4.0-alpha.0 -> v0.5.0
+* **google.golang.org/grpc**                                         v1.40.0 -> v1.41.0
+* **k8s.io/api**                                                     v0.22.1 -> v0.22.2
+* **k8s.io/apimachinery**                                            v0.22.1 -> v0.22.2
+* **k8s.io/apiserver**                                               v0.22.1 -> v0.22.2
+* **k8s.io/client-go**                                               v0.22.1 -> v0.22.2
+* **k8s.io/utils**                                                   bdf08cb9a70a -> cb0fa318a74b
+* **sigs.k8s.io/cluster-api**                                        v0.4.3 -> v1.0.0
+* **sigs.k8s.io/controller-runtime**                                 v0.9.7 -> v0.10.2
+
+Previous release can be found at [v0.3.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.3.0)
+
 ## [CAPI Control Plane Provider Talos 0.4.0-alpha.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.0-alpha.0) (2021-11-10)
 
 Welcome to the v0.4.0-alpha.0 release of CAPI Control Plane Provider Talos!  

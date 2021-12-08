@@ -20,3 +20,9 @@ preface = """\
         description = """\
 This release of CACPPT brings compatibility with CAPI v1beta1.
 """
+
+    [notes.init]
+        title = "Init Node Deprecation"
+        description = """\
+This release of CACPPT deprecates the `init` node that was used in previous Talos Linux designs. Specifying only a `controlplane` as part of the spec is now all that's required and the provider itself will handle automatic bootstrap of the first controlplane node.
+"""
