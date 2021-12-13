@@ -60,8 +60,9 @@ type ControlPlane struct {
 // TalosControlPlaneReconciler reconciles a TalosControlPlane object
 type TalosControlPlaneReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	APIReader client.Reader
+	Log       logr.Logger
+	Scheme    *runtime.Scheme
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -90,7 +91,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Fetch the TalosControlPlane instance.
 	tcp := &controlplanev1.TalosControlPlane{}
-	if err := r.Client.Get(ctx, req.NamespacedName, tcp); err != nil {
+	if err := r.APIReader.Get(ctx, req.NamespacedName, tcp); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -140,13 +141,8 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 		// patch and return right away instead of reusing the main defer,
 		// because the main defer may take too much time to get cluster status
-		// Patch ObservedGeneration only if the reconciliation completed successfully
-		patchOpts := []patch.Option{}
-		if reterr == nil {
-			patchOpts = append(patchOpts, patch.WithStatusObservedGeneration{})
-		}
 
-		if err := patchTalosControlPlane(ctx, patchHelper, tcp, patchOpts...); err != nil {
+		if err := patchTalosControlPlane(ctx, patchHelper, tcp, patch.WithStatusObservedGeneration{}); err != nil {
 			logger.Error(err, "Failed to add finalizer to TalosControlPlane")
 			return ctrl.Result{}, err
 		}
@@ -172,7 +168,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		// Always attempt to Patch the TalosControlPlane object and status after each reconciliation.
-		if err := r.Client.Status().Update(ctx, tcp); err != nil {
+		if err := patchTalosControlPlane(ctx, patchHelper, tcp, patch.WithStatusObservedGeneration{}); err != nil {
 			logger.Error(err, "Failed to patch TalosControlPlane")
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
@@ -627,16 +623,20 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, clus
 
 	addresses := []string{}
 	for _, machine := range machines {
-		if len(machine.Status.Addresses) == 0 {
-			continue
-		}
+		found := false
 
 		for _, addr := range machine.Status.Addresses {
 			if addr.Type == clusterv1.MachineInternalIP {
 				addresses = append(addresses, addr.Address)
 
+				found = true
+
 				break
 			}
+		}
+
+		if !found {
+			return fmt.Errorf("machine %q doesn't have an InternalIP address yet", machine.Name)
 		}
 	}
 
