@@ -102,7 +102,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	cluster, err := util.GetOwnerCluster(ctx, r.Client, tcp.ObjectMeta)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			logger.Error(err, "Failed to retrieve owner Cluster from the API Server")
+			logger.Error(err, "failed to retrieve owner Cluster from the API Server")
 
 			return ctrl.Result{}, err
 		}
@@ -111,19 +111,19 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	if cluster == nil {
-		logger.Info("Cluster Controller has not yet set OwnerRef")
+		logger.Info("cluster Controller has not yet set OwnerRef")
 		return ctrl.Result{Requeue: true}, nil
 	}
 	logger = logger.WithValues("cluster", cluster.Name)
 
 	if annotations.IsPaused(cluster, tcp) {
-		logger.Info("Reconciliation is paused for this object")
+		logger.Info("reconciliation is paused for this object")
 		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Wait for the cluster infrastructure to be ready before creating machines
 	if !cluster.Status.InfrastructureReady {
-		logger.Info("Cluster infra not ready")
+		logger.Info("cluster infra not ready")
 
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -131,7 +131,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Initialize the patch helper.
 	patchHelper, err := patch.NewHelper(tcp, r.Client)
 	if err != nil {
-		logger.Error(err, "Failed to configure the patch helper")
+		logger.Error(err, "failed to configure the patch helper")
 		return ctrl.Result{Requeue: true}, nil
 	}
 
@@ -143,7 +143,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// because the main defer may take too much time to get cluster status
 
 		if err := patchTalosControlPlane(ctx, patchHelper, tcp, patch.WithStatusObservedGeneration{}); err != nil {
-			logger.Error(err, "Failed to add finalizer to TalosControlPlane")
+			logger.Error(err, "failed to add finalizer to TalosControlPlane")
 			return ctrl.Result{}, err
 		}
 
@@ -158,18 +158,18 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	defer func() {
-		r.Log.Info("Attempting to set control plane status")
+		r.Log.Info("attempting to set control plane status")
 
 		// Always attempt to update status.
 		if err := r.updateStatus(ctx, tcp, cluster); err != nil {
-			logger.Error(err, "Failed to update TalosControlPlane Status")
+			logger.Error(err, "failed to update TalosControlPlane Status")
 
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 
 		// Always attempt to Patch the TalosControlPlane object and status after each reconciliation.
 		if err := patchTalosControlPlane(ctx, patchHelper, tcp, patch.WithStatusObservedGeneration{}); err != nil {
-			logger.Error(err, "Failed to patch TalosControlPlane")
+			logger.Error(err, "failed to patch TalosControlPlane")
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 
@@ -182,7 +182,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 		}
 
-		r.Log.Info("Successfully updated control plane status")
+		r.Log.Info("successfully updated control plane status")
 	}()
 
 	// Update ownerrefs on infra templates
@@ -192,7 +192,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// If ControlPlaneEndpoint is not set, return early
 	if cluster.Spec.ControlPlaneEndpoint.IsZero() {
-		logger.Info("Cluster does not yet have a ControlPlaneEndpoint defined")
+		logger.Info("cluster does not yet have a ControlPlaneEndpoint defined")
 		return ctrl.Result{}, nil
 	}
 
@@ -251,7 +251,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// We are creating the first replica
 	case numMachines < desiredReplicas && numMachines == 0:
 		// Create new Machine w/ init
-		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
+		logger.Info("initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
 		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, true)
 	// We are scaling up
@@ -261,7 +261,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			desiredReplicas, numMachines)
 
 		// Create a new Machine w/ join
-		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
+		logger.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
 		return r.bootControlPlane(ctx, cluster, tcp, controlPlane, false)
 	// We are scaling down
@@ -279,23 +279,23 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		if err := r.ensureNodesBooted(ctx, cluster, ownedMachines); err != nil {
-			logger.Info("Waiting for all nodes to finish boot sequence", "error", err)
+			logger.Info("waiting for all nodes to finish boot sequence", "error", err)
 
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
 		if !conditions.IsTrue(tcp, controlplanev1.EtcdClusterHealthyCondition) {
-			logger.Info("Waiting for etcd to become healthy before scaling down")
+			logger.Info("waiting for etcd to become healthy before scaling down")
 
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
-		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
+		logger.Info("scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
 		res, err = r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name, ownedMachines)
 		if err != nil {
 			if res.Requeue || res.RequeueAfter > 0 {
-				logger.Info("Failed to scale down control plane", "error", err)
+				logger.Info("failed to scale down control plane", "error", err)
 
 				return res, nil
 			}
@@ -307,7 +307,9 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if err := r.bootstrapCluster(ctx, cluster, ownedMachines); err != nil {
 				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, err.Error())
 
-				return ctrl.Result{}, err
+				logger.Info("bootstrap failed, retrying in 20 seconds", "error", err)
+
+				return ctrl.Result{RequeueAfter: time.Second * 20}, nil
 			}
 
 			conditions.MarkTrue(tcp, controlplanev1.MachinesBootstrapped)
@@ -336,7 +338,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(o client.Object) []ctrl.Request {
 	c, ok := o.(*clusterv1.Cluster)
 	if !ok {
-		r.Log.Error(nil, fmt.Sprintf("Expected a Cluster but got a %T", o))
+		r.Log.Error(nil, fmt.Sprintf("expected a Cluster but got a %T", o))
 		return nil
 	}
 
@@ -352,7 +354,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 	// Get list of all control plane machines
 	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster), tcp.Name)
 	if err != nil {
-		r.Log.Error(err, "Failed to retrieve control plane machines for cluster")
+		r.Log.Error(err, "failed to retrieve control plane machines for cluster")
 
 		return ctrl.Result{}, err
 	}
@@ -370,7 +372,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 		}
 		// Submit deletion request
 		if err := r.Client.Delete(ctx, &ownedMachine); err != nil && !apierrors.IsNotFound(err) {
-			r.Log.Error(err, "Failed to cleanup owned machine")
+			r.Log.Error(err, "failed to cleanup owned machine")
 			return ctrl.Result{}, err
 		}
 	}
@@ -822,7 +824,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 			conditions.MarkTrue(tcp, controlplanev1.AvailableCondition)
 		}
 	} else {
-		r.Log.Error(err, "Failed attempt to contact workload cluster")
+		r.Log.Error(err, "failed attempt to contact workload cluster")
 	}
 
 	conditions.SetAggregate(tcp, controlplanev1.MachinesReadyCondition, conditionGetters, conditions.AddSourceRef(), conditions.WithStepCounterIf(false))

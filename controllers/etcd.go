@@ -46,7 +46,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 		params = append(params, "node", machine.Name)
 	}
 
-	r.Log.Info("Verifying etcd health on all nodes", params...)
+	r.Log.Info("verifying etcd health on all nodes", params...)
 
 	svcs, err := c.ServiceInfo(ctx, service)
 	if err != nil {
@@ -105,7 +105,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
 func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, machineToLeave clusterv1.Machine) error {
-	r.Log.Info("Verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
+	r.Log.Info("verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
 
 	svcs, err := c.ServiceInfo(ctx, "etcd")
 	if err != nil {
@@ -114,14 +114,14 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 
 	for _, svc := range svcs {
 		if svc.Service.State != "Finished" {
-			r.Log.Info("Forfeiting leadership", "machine", machineToLeave.Status.NodeRef.Name)
+			r.Log.Info("forfeiting leadership", "machine", machineToLeave.Status.NodeRef.Name)
 
 			_, err = c.EtcdForfeitLeadership(ctx, &machine.EtcdForfeitLeadershipRequest{})
 			if err != nil {
 				return err
 			}
 
-			r.Log.Info("Leaving etcd", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
+			r.Log.Info("leaving etcd", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
 
 			err = c.EtcdLeaveCluster(ctx, &machine.EtcdLeaveClusterRequest{})
 			if err != nil {
@@ -136,7 +136,7 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.
 // This is used in times when the machine was deleted out from under us.
 func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, memberName string) error {
-	r.Log.Info("Removing etcd member", "memberName", memberName)
+	r.Log.Info("removing etcd member", "memberName", memberName)
 
 	return c.EtcdRemoveMember(
 		ctx,
