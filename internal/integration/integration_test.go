@@ -21,6 +21,7 @@ import (
 	"github.com/talos-systems/go-retry/retry"
 	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
 	"gopkg.in/yaml.v3"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -278,7 +279,18 @@ func (suite *IntegrationSuite) Test04ScaleControlPlaneNoWait() {
 
 	suite.cluster.Scale(ctx, 3, capi.ControlPlaneNodes) //nolint:errcheck
 
-	err := suite.cluster.Scale(suite.ctx, 1, capi.ControlPlaneNodes)
+	err := retry.Constant(time.Second*10, retry.WithUnits(time.Second)).Retry(func() error {
+		if err := suite.cluster.Scale(suite.ctx, 1, capi.ControlPlaneNodes); err != nil {
+			if apierrors.IsConflict(err) {
+				return retry.ExpectedError(err)
+			}
+
+			return err
+		}
+
+		return nil
+	})
+
 	suite.Require().NoError(err)
 }
 
