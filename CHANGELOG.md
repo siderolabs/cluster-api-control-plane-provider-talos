@@ -1,3 +1,52 @@
+## [CAPI Control Plane Provider Talos 0.4.2](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.2) (2022-01-04)
+
+Welcome to the v0.4.2 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### `init` nodes deprecation
+
+Starting from this release CACPPT no longer relies on init nodes to bootstrap the cluster.
+Instead, it issues bootstrap command and keeps bootstrap status information in the `TalosControlPlane` resource.
+Bootstrap state can also be retrieved from the conditions.
+
+
+### CAPI v1beta1
+
+This release of CACPPT brings compatibility with CAPI v1beta1.
+
+
+### Contributors
+
+* Artem Chernyshev
+
+### Changes
+<details><summary>3 commits</summary>
+<p>
+
+* [`a77ddde`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/a77ddde2607165396c254c292de4e726c2c29f38) refactor: change reconcile loop flow
+* [`ea7842f`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ea7842f6fabefa1775c0a2c7bd43e1a7e0615fe7) release(v0.4.1): prepare release
+* [`7f63ad0`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/7f63ad0a391dcf0901edf9009717fb57f503f652) fix: avoid long backoff when trying to bootstrap the cluster
+</p>
+</details>
+
+### Changes since v0.4.1
+<details><summary>1 commit</summary>
+<p>
+
+* [`a77ddde`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/a77ddde2607165396c254c292de4e726c2c29f38) refactor: change reconcile loop flow
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.4.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.1)
+
 ## [CAPI Control Plane Provider Talos 0.4.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.1) (2021-12-16)
 
 Welcome to the v0.4.1 release of CAPI Control Plane Provider Talos!
