@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	"github.com/talos-systems/talos/pkg/machinery/api/machine"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -16,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
+func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
 	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		return err
@@ -32,7 +33,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, clust
 		}
 	}
 
-	c, err := r.talosconfigForMachines(ctx, machines...)
+	c, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err
 	}
@@ -148,7 +149,7 @@ func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *tal
 
 // auditEtcd rolls through all etcd members to see if there's a matching controlplane machine
 // It uses the first controlplane node returned as the etcd endpoint
-func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster client.ObjectKey, cpName string) error {
+func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey, cpName string) error {
 	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
 	if err != nil {
 		return err
@@ -182,7 +183,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, cluster cli
 		return fmt.Errorf("no CP machine which is not being deleted and has node ref")
 	}
 
-	c, err := r.talosconfigForMachines(ctx, designatedCPMachine)
+	c, err := r.talosconfigForMachines(ctx, tcp, designatedCPMachine)
 	if err != nil {
 		return err
 	}
