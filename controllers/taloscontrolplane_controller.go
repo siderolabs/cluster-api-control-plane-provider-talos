@@ -302,7 +302,7 @@ func newControlPlane(cluster *clusterv1.Cluster, tcp *controlplanev1.TalosContro
 	}
 }
 
-func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, cluster client.ObjectKey, cpName string, machines []clusterv1.Machine) (ctrl.Result, error) {
+func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey, cpName string, machines []clusterv1.Machine) (ctrl.Result, error) {
 	if len(machines) == 0 {
 		return ctrl.Result{}, fmt.Errorf("no machines found")
 	}
@@ -359,7 +359,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	node := deleteMachine.Status.NodeRef
 
-	c, err := r.talosconfigForMachines(ctx, deleteMachine)
+	c, err := r.talosconfigForMachines(ctx, tcp, deleteMachine)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -525,8 +525,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
-	c, err := r.talosconfigForMachines(ctx, machines...)
+func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	c, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err
 	}
@@ -761,11 +761,11 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) (result ctrl.Result, err error) {
 	var errs error
 	// Audit the etcd member list to remove any nodes that no longer exist
-	if err := r.auditEtcd(ctx, util.ObjectKey(cluster), tcp.Name); err != nil {
+	if err := r.auditEtcd(ctx, tcp, util.ObjectKey(cluster), tcp.Name); err != nil {
 		errs = kerrors.NewAggregate([]error{errs, err})
 	}
 
-	if err := r.etcdHealthcheck(ctx, cluster, machines); err != nil {
+	if err := r.etcdHealthcheck(ctx, tcp, cluster, machines); err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.EtcdClusterHealthyCondition, controlplanev1.EtcdClusterUnhealthyReason,
 			clusterv1.ConditionSeverityWarning, err.Error())
 		errs = kerrors.NewAggregate([]error{errs, err})
@@ -781,7 +781,7 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 }
 
 func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) (result ctrl.Result, err error) {
-	if err := r.nodesHealthcheck(ctx, cluster, machines); err != nil {
+	if err := r.nodesHealthcheck(ctx, tcp, cluster, machines); err != nil {
 		reason := controlplanev1.ControlPlaneComponentsInspectionFailedReason
 
 		if errors.Is(err, &errServiceUnhealthy{}) {
@@ -851,7 +851,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			return res, nil
 		}
 
-		if err := r.ensureNodesBooted(ctx, cluster, machines); err != nil {
+		if err := r.ensureNodesBooted(ctx, controlPlane.TCP, cluster, machines); err != nil {
 			logger.Info("waiting for all nodes to finish boot sequence", "error", err)
 
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -865,7 +865,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		logger.Info("scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		res, err = r.scaleDownControlPlane(ctx, util.ObjectKey(cluster), controlPlane.TCP.Name, machines)
+		res, err = r.scaleDownControlPlane(ctx, tcp, util.ObjectKey(cluster), controlPlane.TCP.Name, machines)
 		if err != nil {
 			if res.Requeue || res.RequeueAfter > 0 {
 				logger.Info("failed to scale down control plane", "error", err)
@@ -876,8 +876,13 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		return res, err
 	default:
-		if !tcp.Status.Bootstrapped && reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
-			if err := r.bootstrapCluster(ctx, cluster, machines); err != nil {
+		if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
+			tcp.Status.Bootstrapped = true
+			conditions.MarkTrue(tcp, controlplanev1.MachinesBootstrapped)
+		}
+
+		if !tcp.Status.Bootstrapped {
+			if err := r.bootstrapCluster(ctx, tcp, cluster, machines); err != nil {
 				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, err.Error())
 
 				logger.Info("bootstrap failed, retrying in 20 seconds", "error", err)

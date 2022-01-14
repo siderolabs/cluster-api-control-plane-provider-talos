@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	"google.golang.org/grpc/codes"
@@ -27,8 +28,8 @@ func (e *errServiceUnhealthy) Error() string {
 	return fmt.Sprintf("Service %s is unhealthy: %s", e.service, e.reason)
 }
 
-func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
-	client, err := r.talosconfigForMachines(ctx, machines...)
+func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	client, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err
 	}
@@ -54,8 +55,8 @@ func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, clus
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
-	client, err := r.talosconfigForMachines(ctx, machines...)
+func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	client, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err
 	}
