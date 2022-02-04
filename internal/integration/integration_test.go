@@ -34,10 +34,7 @@ import (
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
-var (
-	talosVersion *semver.Version
-	scaleVersion *semver.Version
-)
+var talosVersion *semver.Version
 
 type clusterctlConfig struct {
 	Providers []providerConfig `yaml:"providers"`
@@ -125,8 +122,8 @@ func (suite *IntegrationSuite) SetupSuite() {
 	}
 
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.0.2"),
-		BootstrapProviders:      []string{"talos:v0.5.0"},
+		CoreProvider:            env("CORE_PROVIDER", "cluster-api"),
+		BootstrapProviders:      []string{"talos"},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 		WaitProviderTimeout:     time.Minute,
@@ -341,8 +338,6 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get talos version %s", err)
 	}
-
-	scaleVersion, _ = semver.NewVersion("0.12.2") //nolint:errcheck
 
 	suite.Run(t, new(IntegrationSuite))
 }

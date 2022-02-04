@@ -81,6 +81,13 @@ spec:
                         type: string
                       generateType:
                         type: string
+                      hostname:
+                        description: Set hostname in the machine configuration to some value.
+                        properties:
+                          source:
+                            description: "Source of the hostname. \n Allowed values: \"MachineName\" (use linked Machine's Name)."
+                            type: string
+                        type: object
                       talosVersion:
                         type: string
                     required:
@@ -107,6 +114,13 @@ spec:
                         type: string
                       generateType:
                         type: string
+                      hostname:
+                        description: Set hostname in the machine configuration to some value.
+                        properties:
+                          source:
+                            description: "Source of the hostname. \n Allowed values: \"MachineName\" (use linked Machine's Name)."
+                            type: string
+                        type: object
                       talosVersion:
                         type: string
                     required:
