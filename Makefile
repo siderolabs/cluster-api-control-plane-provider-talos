@@ -18,8 +18,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/talos-systems/tools:v0.8.0-alpha.0-3-g2790b55
-PKGS ?= v0.8.0-alpha.0-3-gdb90f93
+TOOLS ?= ghcr.io/talos-systems/tools:v0.9.0
+PKGS ?= v0.9.0
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
