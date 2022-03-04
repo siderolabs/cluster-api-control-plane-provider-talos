@@ -16,6 +16,7 @@ import (
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	talosconfig "github.com/talos-systems/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -83,13 +84,32 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
+	clusterName := tcp.GetLabels()["cluster.x-k8s.io/cluster-name"]
+
 	if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
-		return r.talosconfigFromWorkloadCluster(ctx, client.ObjectKey{Namespace: tcp.GetNamespace(), Name: tcp.GetLabels()["cluster.x-k8s.io/cluster-name"]}, machines...)
+		return r.talosconfigFromWorkloadCluster(ctx, client.ObjectKey{Namespace: tcp.GetNamespace(), Name: clusterName}, machines...)
 	}
 
 	addrList := []string{}
 
-	var t *talosconfig.Config
+	var (
+		talosconfigSecret v1.Secret
+	)
+
+	if err := r.Client.Get(ctx,
+		types.NamespacedName{
+			Namespace: tcp.GetNamespace(),
+			Name:      clusterName + "-talosconfig",
+		},
+		&talosconfigSecret,
+	); err != nil {
+		return nil, err
+	}
+
+	t, err := talosconfig.FromBytes(talosconfigSecret.Data["talosconfig"])
+	if err != nil {
+		return nil, err
+	}
 
 	for _, machine := range machines {
 		for _, addr := range machine.Status.Addresses {
@@ -100,38 +120,6 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 
 		if len(addrList) == 0 {
 			return nil, fmt.Errorf("no addresses were found for node %q", machine.Name)
-		}
-
-		if t == nil {
-			var (
-				cfgs  cabptv1.TalosConfigList
-				found *cabptv1.TalosConfig
-			)
-
-			// find talosconfig in the machine's namespace
-			err := r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
-			if err != nil {
-				return nil, err
-			}
-
-		outer:
-			for _, cfg := range cfgs.Items {
-				for _, ref := range cfg.OwnerReferences {
-					if ref.Kind == "Machine" && ref.Name == machine.Name {
-						found = &cfg
-						break outer
-					}
-				}
-			}
-
-			if found == nil {
-				return nil, fmt.Errorf("failed to find TalosConfig for %q", machine.Name)
-			}
-
-			t, err = talosconfig.FromString(found.Status.TalosConfig)
-			if err != nil {
-				return nil, err
-			}
 		}
 	}
 
