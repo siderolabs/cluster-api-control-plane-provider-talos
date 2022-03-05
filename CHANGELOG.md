@@ -1,3 +1,38 @@
+## [CAPI Control Plane Provider Talos 0.4.5](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.5) (2022-03-05)
+
+Welcome to the v0.4.5 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### CAPI v1beta1
+
+This release of CACPPT is compatible with CAPI v1beta1 (v1.x).
+
+
+### Contributors
+
+* Artem Chernyshev
+* Noel Georgi
+
+### Changes
+<details><summary>2 commits</summary>
+<p>
+
+* [`5f2b143`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/5f2b1431efa42e145c708cd6b7316fddbf4d19fd) fix: get talosconfig from secrets instead of talosconfig resources
+* [`61677f8`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/61677f8da6fa500b3844a532b8c6d532b127f6e9) chore: bump cert-manager to v1
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.4.4](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.4)
+
+
 ## [CAPI Control Plane Provider Talos 0.4.4](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.4) (2022-02-04)
 
 Welcome to the v0.4.4 release of CAPI Control Plane Provider Talos!
