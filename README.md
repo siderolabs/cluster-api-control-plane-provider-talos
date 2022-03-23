@@ -48,6 +48,29 @@ This control plane provider can be installed with clusterctl:
 clusterctl init -c talos -b talos -i <infra-provider-of-choice>
 ```
 
+If you encounter the following error, this is caused by a rename of our GitHub org from `talos-systems` to `siderolabs`.
+
+```bash
+$ clusterctl init -b talos -c talos -i sidero
+Fetching providers
+Error: failed to get provider components for the "talos" provider: target namespace can't be defaulted. Please specify a target namespace
+```
+
+This can be worked around by adding the following to `~/.cluster-api/clusterctl.yaml` and rerunning the init command:
+
+```yaml
+providers:
+  - name: "talos"
+    url: "https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml"
+    type: "BootstrapProvider"
+  - name: "talos"
+    url: "https://github.com/siderolabs/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml"
+    type: "ControlPlaneProvider"
+  - name: "sidero"
+    url: "https://github.com/siderolabs/sidero/releases/latest/infrastructure-components.yaml"
+    type: "InfrastructureProvider"
+```
+
 If you are going to use this provider as part of Sidero management plane, please refer to [Sidero Docs](https://www.sidero.dev/docs/v0.4/getting-started/install-clusterapi/)
 on how to install and configure it.
 
