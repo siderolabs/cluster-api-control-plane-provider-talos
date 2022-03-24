@@ -82,6 +82,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	for _, config := range []struct {
 		env          string
 		providerType clusterv1.ProviderType
+		url          string
 	}{
 		{
 			env:          "CONTROL_PLANE_PROVIDER_COMPONENTS",
@@ -90,18 +91,25 @@ func (suite *IntegrationSuite) SetupSuite() {
 		{
 			env:          "BOOTSTRAP_PROVIDER_COMPONENTS",
 			providerType: clusterv1.BootstrapProviderType,
+			url:          "https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml",
 		},
 	} {
 		customConfig := os.Getenv(config.env)
 
-		if customConfig != "" {
+		if customConfig != "" || config.url != "" {
 			if clusterctlConfigs.Providers == nil {
 				clusterctlConfigs.Providers = []providerConfig{}
 			}
 
+			url := fmt.Sprintf("file://%s", customConfig)
+
+			if config.url != "" {
+				url = config.url
+			}
+
 			clusterctlConfigs.Providers = append(clusterctlConfigs.Providers, providerConfig{
 				Name:         "talos",
-				URL:          fmt.Sprintf("file://%s", customConfig),
+				URL:          url,
 				ProviderType: config.providerType,
 			})
 		}

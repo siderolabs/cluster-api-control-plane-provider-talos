@@ -1,5 +1,5 @@
 domain: controlplane.cluster.x-k8s.io
-repo: github.com/talos-systems/cluster-api-control-plane-provider-talos
+repo: github.com/siderolabs/cluster-api-control-plane-provider-talos
 resources:
 - group: controlplane
   kind: TalosControlPlane

@@ -1,5 +1,5 @@
 REGISTRY ?= ghcr.io
-USERNAME ?= talos-systems
+USERNAME ?= siderolabs
 SHA ?= $(shell git describe --match=none --always --abbrev=8 --dirty)
 TAG ?= $(shell git describe --tag --always --dirty)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
@@ -18,8 +18,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/talos-systems/tools:v0.9.0
-PKGS ?= v0.9.0
+TOOLS ?= ghcr.io/siderolabs/tools:v1.0.0
+PKGS ?= v1.0.0
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
