@@ -17,7 +17,7 @@ There are a few corequisites and assumptions that go into using this project:
 
 This provider's versions are compatible with the following versions of Cluster API:
 
-|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.0) |
+|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.x) |
 | -------------------------------------------- | --------------- | --------------- | -------------- |
 | Control Plane Provider Talos v1alpha3 (v0.2) | ✓               |                 |                |
 | Control Plane Provider Talos v1alpha3 (v0.3) |                 | ✓               |                |
@@ -26,19 +26,19 @@ This provider's versions are compatible with the following versions of Cluster A
 
 This provider's versions are able to install and manage the following versions of Kubernetes:
 
-|                                              | v1.16 | v 1.17 | v1.18 | v1.19 | v1.20 | v1.21 | v1.22 |
-| -------------------------------------------  | ----- | ------ | ----- | ----- | ----- | ----- | ----- |
-| Control Plane Provider Talos v1alpha3 (v0.2) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.4) |       |        |       | ✓     | ✓     | ✓     | ✓     |
+|                                              | v1.16 | v 1.17 | v1.18 | v1.19 | v1.20 | v1.21 | v1.22 | v1.23 |
+| -------------------------------------------  | ----- | ------ | ----- | ----- | ----- | ----- | ----- | ----- |
+| Control Plane Provider Talos v1alpha3 (v0.2) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |       |
+| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |       |
+| Control Plane Provider Talos v1alpha3 (v0.4) |       |        |       | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 This provider's versions are compatible with the following versions of Talos:
 
-|                                              | v0.11 | v 0.12 | v0.13 | v0.14 |
-| -------------------------------------------- | ----- | ------ | ----- | ----- |
-| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      |       |       |
-| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.4) | ✓     | ✓      | ✓     | ✓     |
+|                                              | v0.11 | v 0.12 | v0.13 | v0.14 | v1.0  |
+| -------------------------------------------- | ----- | ------ | ----- | ----- | ----- |
+| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      |       |       |       |
+| Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     |       |       |
+| Control Plane Provider Talos v1alpha3 (v0.4) | ✓     | ✓      | ✓     | ✓     | ✓     |
 
 ## Building and Installing
 
