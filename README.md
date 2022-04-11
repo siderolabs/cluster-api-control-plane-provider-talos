@@ -80,7 +80,11 @@ If you wish, you can tweak settings by editing the release yaml.
 This file can then be installed into your management cluster with `kubectl apply -f _out/control-plane-components.yaml`.
 
 Note that CACPPT should be deployed as part of a set of controllers for Cluster API.
-You will need at least the upstream CAPI components, the Talos bootstrap provider, and an infrastructure provider for v1alpha3 CAPI capabilities.
+You will need at least the upstream CAPI components, the Talos bootstrap provider, and an infrastructure provider for v1beta1 CAPI capabilities.
+
+CACPPT plays the following role in the whole Cluster API architecture:
+
+![Cluster API CACPPT](/docs/images/cacppt.png)
 
 ## Usage
 
