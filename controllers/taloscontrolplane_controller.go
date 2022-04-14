@@ -24,16 +24,19 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -66,6 +69,7 @@ type TalosControlPlaneReconciler struct {
 	APIReader client.Reader
 	Log       logr.Logger
 	Scheme    *runtime.Scheme
+	Tracker   *remote.ClusterCacheTracker
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -309,19 +313,21 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("Found control plane machines", "machines", len(machines))
 
-	kubeclient, err := r.kubeconfigForCluster(ctx, cluster)
+	client, err := r.Tracker.GetClient(ctx, cluster)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
-
-	defer kubeclient.Close() //nolint:errcheck
 
 	deleteMachine := machines[0]
 	for _, machine := range machines {
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() {
 			r.Log.Info("machine is in process of deletion", "machine", machine.Name)
 
-			node, err := kubeclient.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
+			var node v1.Node
+
+			name := types.NamespacedName{Name: machine.Status.NodeRef.Name, Namespace: machine.Status.NodeRef.Namespace}
+
+			err := client.Get(ctx, name, &node)
 			if err != nil {
 				// It's possible for the node to already be deleted in the workload cluster, so we just
 				// requeue if that's that case instead of throwing a scary error.
@@ -333,7 +339,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 			r.Log.Info("Deleting node", "machine", machine.Name, "node", node.Name)
 
-			err = kubeclient.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+			err = client.Delete(ctx, &node)
 			if err != nil {
 				return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 			}
@@ -408,7 +414,11 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(ctx context.Context,
 
 	r.Log.Info("deleting node", "machine", deleteMachine.Name, "node", node.Name)
 
-	err = kubeclient.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+	n := &v1.Node{}
+	n.Name = node.Name
+	n.Namespace = node.Namespace
+
+	err = client.Delete(ctx, n)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
@@ -657,14 +667,12 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
-	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
+	c, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		r.Log.Info("failed to get kubeconfig for the cluster", "error", err)
 
 		return nil
 	}
-
-	defer kubeclient.Close() //nolint:errcheck
 
 	nodeSelector := labels.NewSelector()
 	req, err := labels.NewRequirement(constants.LabelNodeRoleMaster, selection.Exists, []string{})
@@ -672,8 +680,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return err
 	}
 
-	nodes, err := kubeclient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
-		LabelSelector: nodeSelector.Add(*req).String(),
+	var nodes v1.NodeList
+
+	err = c.List(ctx, &nodes, &client.ListOptions{
+		LabelSelector: nodeSelector.Add(*req),
 	})
 
 	if err != nil {
