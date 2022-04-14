@@ -13,18 +13,10 @@ import (
 	"github.com/talos-systems/talos/pkg/machinery/api/machine"
 	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
-	kubeclient, err := r.kubeconfigForCluster(ctx, util.ObjectKey(cluster))
-	if err != nil {
-		return err
-	}
-
-	defer kubeclient.Close() //nolint:errcheck
-
 	machines := []clusterv1.Machine{}
 
 	for _, machine := range ownedMachines {
