@@ -86,6 +86,11 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 		}
 	}
 
+	// we don't need to set endpoints in general here, as endpoints were already pre-populated by the CABPT controller
+	// but we use the `machines` to _limit_ access to a specific machine in some places, and we need to be compatible
+	// with talosconfigFromWorkloadCluster which doesn't rely on Machine's Addresses
+	//
+	// once we're done with Sidero and `init` nodes, we can switch to use `WithNodes` and proper Machine IPs
 	return talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))
 }
 

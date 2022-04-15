@@ -190,12 +190,12 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	// Only querying one CP node, so only 1 message should return.
 	memberList := response.Messages[0]
 
-	if len(memberList.Members) == 0 {
-		return nil
-	}
-
 	// For each etcd member, look through the list of machines and see if noderef matches
 	for _, member := range memberList.Members {
+		if member.Hostname == "" {
+			return fmt.Errorf("discovered etcd member with empty hostname: %s", member)
+		}
+
 		present := false
 		for _, machine := range machines {
 			// break apart the noderef name in case it's an fqdn (like in AWS)
