@@ -39,6 +39,16 @@ const (
 )
 
 const (
+	// MachinesSpecUpToDateCondition documents that the spec of the machines controlled by the TalosControlPlane
+	// is up to date. When this condition is false, the TalosControlPlane is executing a rolling upgrade.
+	MachinesSpecUpToDateCondition clusterv1.ConditionType = "MachinesSpecUpToDate"
+
+	// RollingUpdateInProgressReason (Severity=Warning) documents a TalosControlPlane object executing a
+	// rolling upgrade for aligning the machines spec to the desired state.
+	RollingUpdateInProgressReason = "RollingUpdateInProgress"
+)
+
+const (
 	// ResizedCondition documents a TalosControlPlane that is resizing the set of controlled machines.
 	ResizedCondition clusterv1.ConditionType = "Resized"
 

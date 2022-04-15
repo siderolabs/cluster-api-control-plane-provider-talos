@@ -42,6 +42,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/containerd/go-cni v1.1.3 // indirect
 	github.com/containernetworking/cni v1.0.1 // indirect
+	github.com/coredns/caddy v1.1.0 // indirect
+	github.com/coredns/corefile-migration v1.0.14 // indirect
 	github.com/cosi-project/runtime v0.0.0-20211216175730-264f8fcd1a4f // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect

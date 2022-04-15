@@ -147,11 +147,11 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 		return err
 	}
 
-	if len(machines) == 0 {
+	if len(machines.Items) == 0 {
 		return nil
 	}
 
-	for _, machine := range machines {
+	for _, machine := range machines.Items {
 		// nb: we'll assume any machine that doesn't have a noderef is new and we can audit later because
 		//     otherwise a new etcd member can get removed before even getting the noderef set by the CAPI controllers.
 		if machine.Status.NodeRef == nil {
@@ -161,7 +161,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	// Select the first CP machine that's not being deleted and has a noderef
 	var designatedCPMachine clusterv1.Machine
 
-	for _, machine := range machines {
+	for _, machine := range machines.Items {
 		if !machine.ObjectMeta.DeletionTimestamp.IsZero() || machine.Status.NodeRef == nil {
 			continue
 		}
@@ -197,7 +197,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 		}
 
 		present := false
-		for _, machine := range machines {
+		for _, machine := range machines.Items {
 			// break apart the noderef name in case it's an fqdn (like in AWS)
 			machineNodeNameExploded := strings.Split(machine.Status.NodeRef.Name, ".")
 

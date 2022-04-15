@@ -8,6 +8,7 @@ import (
 	cabptv1 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -20,6 +21,15 @@ type ControlPlaneConfig struct {
 	InitConfig         cabptv1.TalosConfigSpec `json:"init,omitempty"`
 	ControlPlaneConfig cabptv1.TalosConfigSpec `json:"controlplane"`
 }
+
+// RolloutStrategyType defines the rollout strategies for a KubeadmControlPlane.
+type RolloutStrategyType string
+
+const (
+	// RollingUpdateStrategyType replaces the old control planes by new one using rolling update
+	// i.e. gradually scale up or down the old control planes and scale up or down the new one.
+	RollingUpdateStrategyType RolloutStrategyType = "RollingUpdate"
+)
 
 // TalosControlPlaneSpec defines the desired state of TalosControlPlane
 type TalosControlPlaneSpec struct {
@@ -41,6 +51,39 @@ type TalosControlPlaneSpec struct {
 	// ControlPlaneConfig is a two TalosConfigSpecs
 	// to use for initializing and joining machines to the control plane.
 	ControlPlaneConfig ControlPlaneConfig `json:"controlPlaneConfig"`
+
+	// The RolloutStrategy to use to replace control plane machines with
+	// new ones.
+	// +optional
+	// +kubebuilder:default={type: "RollingUpdate", rollingUpdate: {maxSurge: 1}}
+	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
+}
+
+// RolloutStrategy describes how to replace existing machines
+// with new ones.
+type RolloutStrategy struct {
+	// Rolling update config params. Present only if
+	// RolloutStrategyType = RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdate `json:"rollingUpdate,omitempty"`
+
+	// Type of rollout. Currently the only supported strategy is
+	// "RollingUpdate".
+	// Default is RollingUpdate.
+	// +optional
+	Type RolloutStrategyType `json:"type,omitempty"`
+}
+
+// RollingUpdate is used to control the desired behavior of rolling update.
+type RollingUpdate struct {
+	// The maximum number of control planes that can be scheduled above or under the
+	// desired number of control planes.
+	// Value can be an absolute number 1 or 0.
+	// Defaults to 1.
+	// Example: when this is set to 1, the control plane can be scaled
+	// up immediately when the rolling update starts.
+	// +optional
+	MaxSurge *intstr.IntOrString `json:"maxSurge,omitempty"`
 }
 
 // TalosControlPlaneStatus defines the observed state of TalosControlPlane
@@ -126,13 +169,13 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (in *TalosControlPlane) GetConditions() clusterv1.Conditions {
-	return in.Status.Conditions
+func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
+	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (in *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
-	in.Status.Conditions = conditions
+func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+	r.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

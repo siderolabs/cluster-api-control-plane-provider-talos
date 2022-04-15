@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.3.0"
+previous = "v0.4.0"
 
 pre_release = true
 
@@ -19,4 +19,12 @@ preface = """\
         title = "CAPI v1beta1"
         description = """\
 This release of CACPPT brings compatibility with CAPI v1beta1.
+"""
+  
+    [notes.rolling-update]
+        title = "Support Control Plane Rolling Updates"
+        description = """\
+The controller now reacts to `TalosControlPlane` spec changes
+and can do rolling updates of the control plane machines.
+This can be used to do a graceful upgrades of the workload clusters.
 """
