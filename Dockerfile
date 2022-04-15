@@ -40,8 +40,7 @@ ARG NAME
 RUN --mount=type=cache,target=/.cache controller-gen crd:crdVersions=v1 paths="./api/..." output:crd:dir=config/crd/bases output:webhook:dir=config/webhook webhook
 RUN --mount=type=cache,target=/.cache controller-gen rbac:roleName=manager-role paths="./controllers/..." output:rbac:dir=config/rbac
 FROM scratch AS manifests
-COPY --from=manifests-build /src/config/crd /config/crd
-COPY --from=manifests-build /src/config/rbac /config/rbac
+COPY --from=manifests-build /src/config /config
 
 FROM build AS generate-build
 RUN --mount=type=cache,target=/.cache controller-gen object:headerFile=./hack/boilerplate.go.txt paths="./..."

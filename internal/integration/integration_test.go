@@ -29,6 +29,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/patch"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
@@ -49,10 +50,11 @@ type providerConfig struct {
 type IntegrationSuite struct {
 	suite.Suite
 
-	manager *capi.Manager
-	cluster *capi.Cluster
-	ctx     context.Context
-	cancel  context.CancelFunc
+	manager         *capi.Manager
+	cluster         *capi.Cluster
+	ctx             context.Context
+	cancel          context.CancelFunc
+	finalK8sVersion string
 }
 
 func (suite *IntegrationSuite) SetupSuite() {
@@ -70,6 +72,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	}
 
 	providerType := env("PROVIDER", "aws:v1.1.0")
+	suite.finalK8sVersion = os.Getenv("UPGRADE_K8S_VERSION")
 
 	provider, err := infrastructure.NewProvider(providerType)
 	suite.Require().NoError(err)
@@ -258,6 +261,67 @@ func (suite *IntegrationSuite) Test01ReconcileMachine() {
 			return nil
 		}),
 	)
+}
+
+func (suite *IntegrationSuite) Test02UpgradeK8s() {
+	if suite.finalK8sVersion == "" {
+		suite.T().Skip("K8s upgrade version is not set")
+	}
+
+	client, err := suite.manager.GetClient(suite.ctx)
+	suite.Require().NoError(err)
+
+	controlplane, err := suite.cluster.ControlPlanes(suite.ctx)
+	suite.Require().NoError(err)
+
+	patchHelper, err := patch.NewHelper(controlplane, client)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(unstructured.SetNestedField(controlplane.Object, suite.finalK8sVersion, "spec", "version"))
+
+	suite.Require().NoError(patchHelper.Patch(suite.ctx, controlplane))
+
+	suite.Require().NoError(err)
+
+	selector, err := labels.Parse("cluster.x-k8s.io/control-plane")
+	suite.Require().NoError(err)
+
+	err = retry.Constant(time.Minute*20, retry.WithUnits(time.Second)).Retry(func() error {
+		machines := unstructured.UnstructuredList{}
+		machines.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "cluster.x-k8s.io",
+			Kind:    "Machine",
+			Version: suite.manager.Version(),
+		})
+
+		if err = client.List(suite.ctx, &machines, &runtimeclient.MatchingLabelsSelector{Selector: selector}); err != nil {
+			return err
+		}
+
+		for _, machine := range machines.Items {
+			var (
+				machineVersion string
+				found          bool
+			)
+
+			machineVersion, found, err = unstructured.NestedString(machine.Object, "spec", "version")
+			if err != nil {
+				return err
+			}
+
+			if !found {
+				return retry.ExpectedErrorf("version wasn't found for the machine")
+			}
+
+			if machineVersion != suite.finalK8sVersion {
+				return retry.ExpectedErrorf("one of the machines is still using an old Kubernetes version")
+			}
+		}
+
+		return nil
+	})
+
+	suite.Require().NoError(err)
 }
 
 // Test02ScaleDown scale control planes down.

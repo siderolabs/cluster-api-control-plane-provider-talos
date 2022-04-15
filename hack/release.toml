@@ -20,4 +20,11 @@ preface = """\
         description = """\
 This release of CACPPT is compatible with CAPI v1beta1 (v1.x).
 """
-
+  
+    [notes.rolling-update]
+        title = "Support Control Plane Rolling Updates"
+        description = """\
+The controller now reacts to `TalosControlPlane` spec changes
+and can do rolling updates of the control plane machines.
+This can be used to do a graceful upgrades of the workload clusters.
+"""
