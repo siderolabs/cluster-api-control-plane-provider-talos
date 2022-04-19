@@ -552,6 +552,11 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
+	// if we were able to fetch some resources via control plane endpoint,
+	// workload cluster control plane endpoint is available
+	tcp.Status.Initialized = true
+	conditions.MarkTrue(tcp, controlplanev1.AvailableCondition)
+
 	for _, node := range nodes.Items {
 		if util.IsNodeReady(&node) {
 			tcp.Status.ReadyReplicas++
@@ -559,11 +564,6 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	}
 
 	tcp.Status.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
-
-	if len(nodes.Items) > 0 {
-		tcp.Status.Initialized = true
-		conditions.MarkTrue(tcp, controlplanev1.AvailableCondition)
-	}
 
 	if tcp.Status.ReadyReplicas > 0 {
 		tcp.Status.Ready = true
