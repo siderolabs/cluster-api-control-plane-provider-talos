@@ -1,3 +1,103 @@
+## [CAPI Control Plane Provider Talos 0.4.6](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.6) (2022-04-20)
+
+Welcome to the v0.4.6 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### CAPI v1beta1
+
+This release of CACPPT is compatible with CAPI v1beta1 (v1.x).
+
+
+### Support Control Plane Rolling Updates
+
+The controller now reacts to `TalosControlPlane` spec changes
+and can do rolling updates of the control plane machines.
+This can be used to do a graceful upgrades of the workload clusters.
+
+
+### Contributors
+
+* Artem Chernyshev
+* Andrey Smirnov
+* Noel Georgi
+* Spencer Smith
+
+### Changes
+<details><summary>9 commits</summary>
+<p>
+
+* [`c402ff3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/c402ff31c7fe976776df0ae77ee8906a68b05aca) fix: mark control plane as initialized as soon as endpoints are ready
+* [`18fbeb6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/18fbeb64ff65ea6c82e7c97415cf97f9d67a3acc) feat: support `TalosControlPlane` rolling upgrade
+* [`28d3eab`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/28d3eab59915d7c0faed4259380c41e1676b220a) fix: skip nodes with empty hostname on etcd audit
+* [`377c408`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/377c408e1287245042900d3be881c2499be9b2ed) refactor: use cached client tracker in the provider
+* [`7716403`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/771640363b8c7b15ef879eb0d65ae6b889ea3a5a) feat: update for Talos 1.0
+* [`0a1eebd`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/0a1eebd0347be6f475c0d7def27c841ef7d56f0c) chore: rename github organization to siderolabs
+* [`d2575f4`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d2575f4990588565865182bce639a63cafc749a6) release(v0.4.5): prepare release
+* [`5f2b143`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/5f2b1431efa42e145c708cd6b7316fddbf4d19fd) fix: get talosconfig from secrets instead of talosconfig resources
+* [`61677f8`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/61677f8da6fa500b3844a532b8c6d532b127f6e9) chore: bump cert-manager to v1
+</p>
+</details>
+
+### Changes since v0.4.5
+<details><summary>6 commits</summary>
+<p>
+
+* [`c402ff3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/c402ff31c7fe976776df0ae77ee8906a68b05aca) fix: mark control plane as initialized as soon as endpoints are ready
+* [`18fbeb6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/18fbeb64ff65ea6c82e7c97415cf97f9d67a3acc) feat: support `TalosControlPlane` rolling upgrade
+* [`28d3eab`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/28d3eab59915d7c0faed4259380c41e1676b220a) fix: skip nodes with empty hostname on etcd audit
+* [`377c408`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/377c408e1287245042900d3be881c2499be9b2ed) refactor: use cached client tracker in the provider
+* [`7716403`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/771640363b8c7b15ef879eb0d65ae6b889ea3a5a) feat: update for Talos 1.0
+* [`0a1eebd`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/0a1eebd0347be6f475c0d7def27c841ef7d56f0c) chore: rename github organization to siderolabs
+</p>
+</details>
+
+### Changes from talos-systems/capi-utils
+<details><summary>4 commits</summary>
+<p>
+
+* [`2b207c1`](https://github.com/talos-systems/capi-utils/commit/2b207c1f0aff9fd8a11a1d9017d9153dc2ab2dcd) chore: bump CAPI core and Talos deps
+* [`e994250`](https://github.com/talos-systems/capi-utils/commit/e994250edede51ab1f1cac0d3f539fcaf6aae655) fix: use correct name for getting talosconfig secret
+* [`3a6f8ee`](https://github.com/talos-systems/capi-utils/commit/3a6f8ee7b753e120c965992fad91cc10e11f4f9a) feat: read talosconfig from secret instead of status
+* [`dc4a2f3`](https://github.com/talos-systems/capi-utils/commit/dc4a2f30b9e928961d0f69975f2dcaa5976dd048) chore: update libs, rekres, update Go version (#25)
+</p>
+</details>
+
+### Changes from talos-systems/cluster-api-bootstrap-provider-talos
+<details><summary>6 commits</summary>
+<p>
+
+* [`ef969cc`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/ef969cc64287ecf6210f07f020880743ec14b828) release(v0.5.3): prepare release
+* [`ff4501d`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/ff4501db32b635a2d4134f3fd786b4336f56402a) feat: update to Talos 1.0
+* [`47c85bd`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/47c85bd7ab4f431544f26fa678980e78833c7163) chore: update after org rename
+* [`7851b23`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/7851b23aeb1f1a20868e683a6872707f57fd1765) docs: add note for clusterctl rename bug
+* [`9fda598`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/9fda598da9c28ae432b1d37900f660b42f894604) chore: update GPG org
+* [`7dcf091`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/7dcf09177f8e0a7c269b426cad59f82505fc6e0f) chore: bump cert-manager to v1
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/go-logr/logr**                                        v0.4.0 -> v1.2.0
+* **github.com/onsi/ginkgo**                                         v1.16.4 -> v1.16.5
+* **github.com/onsi/gomega**                                         v1.16.0 -> v1.17.0
+* **github.com/stretchr/testify**                                    v1.7.0 -> v1.7.1
+* **github.com/talos-systems/capi-utils**                            e8c3bf93e75f -> 2b207c1f0aff
+* **github.com/talos-systems/cluster-api-bootstrap-provider-talos**  v0.5.2 -> v0.5.3
+* **google.golang.org/grpc**                                         v1.42.0 -> v1.44.0
+* **k8s.io/api**                                                     v0.22.2 -> v0.23.4
+* **k8s.io/apimachinery**                                            v0.22.2 -> v0.23.4
+* **k8s.io/apiserver**                                               v0.22.2 -> v0.23.0
+* **k8s.io/client-go**                                               v0.22.2 -> v0.23.4
+* **k8s.io/utils**                                                   cb0fa318a74b -> 6203023598ed
+* **sigs.k8s.io/cluster-api**                                        v1.0.4 -> v1.1.3
+* **sigs.k8s.io/controller-runtime**                                 v0.10.3 -> v0.11.1
+
+Previous release can be found at [v0.4.4](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.4)
+
 ## [CAPI Control Plane Provider Talos 0.4.5](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.5) (2022-03-05)
 
 Welcome to the v0.4.5 release of CAPI Control Plane Provider Talos!
