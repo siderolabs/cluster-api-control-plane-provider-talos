@@ -1,12 +1,21 @@
 policies:
   - type: commit
     spec:
-      headerLength: 89
       dco: true
-      gpg: false
-      imperative: true
+      gpg:
+        required: true
+        identity:
+          gitHubOrganization: siderolabs
+      spellcheck:
+        locale: US
       maximumOfOneCommit: true
-      requireCommitBody: true
+      header:
+        length: 89
+        imperative: true
+        case: lower
+        invalidLastCharacters: .
+      body:
+        required: true
       conventional:
         types:
           - chore
@@ -15,14 +24,29 @@ policies:
           - refactor
           - style
           - test
+          - release
         scopes:
-          - '*'
+          - apid
+          - machined
+          - networkd
+          - talosctl
+          - trustd
+          - talosctl
+          - kernel
+          - security
+          - ^v1.1
   - type: license
     spec:
       skipPaths:
         - .git/
       includeSuffixes:
         - .go
+      excludeSuffixes:
+        - .pb.go
+        - _string.go
+        - _enumer.go
+        - _string_linux.go
+        - zz_generated.deepcopy.go
       header: |
         // This Source Code Form is subject to the terms of the Mozilla Public
         // License, v. 2.0. If a copy of the MPL was not distributed with this
