@@ -18,8 +18,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/siderolabs/tools:v1.0.0
-PKGS ?= v1.0.0
+TOOLS ?= ghcr.io/siderolabs/tools:v1.1.0-1-g134974c
+PKGS ?= v1.1.0-8-gfa9a488
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64

@@ -94,7 +94,6 @@ func (suite *IntegrationSuite) SetupSuite() {
 		{
 			env:          "BOOTSTRAP_PROVIDER_COMPONENTS",
 			providerType: clusterv1.BootstrapProviderType,
-			url:          "https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml",
 		},
 	} {
 		customConfig := os.Getenv(config.env)
