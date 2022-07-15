@@ -407,6 +407,7 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 	for _, machine := range machines {
 		found := false
 
+		// Prefer finding an InternalIP address for the machine first.
 		for _, addr := range machine.Status.Addresses {
 			if addr.Type == clusterv1.MachineInternalIP {
 				addresses = append(addresses, addr.Address)
@@ -417,8 +418,24 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 			}
 		}
 
+		if found {
+			continue
+		}
+
+		// Fallback to finding an ExternalIP address for the machine
+		// if no InternalIP is found.
+		for _, addr := range machine.Status.Addresses {
+			if addr.Type == clusterv1.MachineExternalIP {
+				addresses = append(addresses, addr.Address)
+
+				found = true
+
+				break
+			}
+		}
+
 		if !found {
-			return fmt.Errorf("machine %q doesn't have an InternalIP address yet", machine.Name)
+			return fmt.Errorf("machine %q doesn't have an any InternalIP or ExternalIP address yet", machine.Name)
 		}
 	}
 
