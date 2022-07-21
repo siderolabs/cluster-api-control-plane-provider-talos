@@ -5,9 +5,14 @@
 package v1alpha3
 
 import (
+	"fmt"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
@@ -20,8 +25,12 @@ func (r *TalosControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 }
 
 // +kubebuilder:webhook:verbs=create;update,path=/mutate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplane,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1alpha3,name=default.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
+//+kubebuilder:webhook:verbs=create;update;delete,path=/validate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplane,mutating=false,failurePolicy=fail,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1alpha3,name=validate.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
 
-var _ webhook.Defaulter = &TalosControlPlane{}
+var (
+	_ webhook.Defaulter = &TalosControlPlane{}
+	_ webhook.Validator = &TalosControlPlane{}
+)
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type.
 func (r *TalosControlPlane) Default() {
@@ -62,4 +71,47 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 	}
 
 	return rolloutStrategy
+}
+
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (r *TalosControlPlane) ValidateCreate() error {
+	return r.validate()
+}
+
+// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
+func (r *TalosControlPlane) ValidateUpdate(old runtime.Object) error {
+	return r.validate()
+}
+
+// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
+func (r *TalosControlPlane) ValidateDelete() error {
+	return nil
+}
+
+func (r *TalosControlPlane) validate() error {
+	var allErrs field.ErrorList
+
+	if r.Spec.RolloutStrategy == nil {
+		return nil
+	}
+
+	switch r.Spec.RolloutStrategy.Type {
+	case "":
+	case RollingUpdateStrategyType:
+	case OnDeleteStrategyType:
+	default:
+		allErrs = append(allErrs,
+			field.Invalid(field.NewPath("spec").Child("rolloutStrategy"), r.Spec.RolloutStrategy.Type,
+				fmt.Sprintf("valid values are: %q", []RolloutStrategyType{RollingUpdateStrategyType, OnDeleteStrategyType}),
+			),
+		)
+	}
+
+	if len(allErrs) == 0 {
+		return nil
+	}
+
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: GroupVersion.Group, Kind: "TalosControlPlane"},
+		r.Name, allErrs)
 }

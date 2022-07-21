@@ -14,7 +14,7 @@ require (
 	github.com/talos-systems/capi-utils v0.0.0-20220330110254-2b207c1f0aff
 	github.com/talos-systems/cluster-api-bootstrap-provider-talos v0.5.4
 	github.com/talos-systems/go-retry v0.3.1
-	github.com/talos-systems/talos/pkg/machinery v1.1.0
+	github.com/talos-systems/talos/pkg/machinery v1.1.1
 	google.golang.org/grpc v1.46.2
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
 	k8s.io/api v0.23.5

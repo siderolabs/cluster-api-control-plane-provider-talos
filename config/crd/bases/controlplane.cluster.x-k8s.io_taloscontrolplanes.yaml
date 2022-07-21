@@ -207,8 +207,8 @@ spec:
                         x-kubernetes-int-or-string: true
                     type: object
                   type:
-                    description: Type of rollout. Currently the only supported strategy
-                      is "RollingUpdate". Default is RollingUpdate.
+                    description: "Change rollout strategy. \n Supported strategies:
+                      * \"RollingUpdate\". * \"OnDelete\" \n Default is RollingUpdate."
                     type: string
                 type: object
               version:
