@@ -39,6 +39,9 @@ func (r *TalosControlPlaneReconciler) upgradeControlPlane(
 		}
 
 		return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, machinesRequireUpgrade)
+	case controlplanev1.OnDeleteStrategyType:
+		// nothing to do, scale up handler will take care of creating machines with the new spec
+		return ctrl.Result{}, nil
 	default:
 		logger.Info("RolloutStrategy type is not set to RollingUpdateStrategyType, unable to determine the strategy for rolling out machines")
 		return ctrl.Result{}, nil

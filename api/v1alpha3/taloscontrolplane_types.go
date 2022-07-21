@@ -29,6 +29,9 @@ const (
 	// RollingUpdateStrategyType replaces the old control planes by new one using rolling update
 	// i.e. gradually scale up or down the old control planes and scale up or down the new one.
 	RollingUpdateStrategyType RolloutStrategyType = "RollingUpdate"
+	// OnDeleteStrategyType doesn't replace the nodes automatically, but if the machine is removed,
+	// new one will be created from the new spec.
+	OnDeleteStrategyType RolloutStrategyType = "OnDelete"
 )
 
 // TalosControlPlaneSpec defines the desired state of TalosControlPlane
@@ -67,8 +70,12 @@ type RolloutStrategy struct {
 	// +optional
 	RollingUpdate *RollingUpdate `json:"rollingUpdate,omitempty"`
 
-	// Type of rollout. Currently the only supported strategy is
-	// "RollingUpdate".
+	// Change rollout strategy.
+	//
+	// Supported strategies:
+	//  * "RollingUpdate".
+	//  * "OnDelete"
+	//
 	// Default is RollingUpdate.
 	// +optional
 	Type RolloutStrategyType `json:"type,omitempty"`
