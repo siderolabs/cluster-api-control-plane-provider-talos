@@ -580,6 +580,11 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		}
 	}
 
+	// fix the case then some Node objects are still visible which were deleted
+	if tcp.Status.ReadyReplicas > tcp.Status.Replicas {
+		tcp.Status.ReadyReplicas = tcp.Status.Replicas
+	}
+
 	tcp.Status.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
 
 	if tcp.Status.ReadyReplicas > 0 {
