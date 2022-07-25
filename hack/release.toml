@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.4.4"
+previous = "v0.4.6"
 
 pre_release = false
 
@@ -15,16 +15,23 @@ preface = """\
 
 [notes]
 
-    [notes.capi]
-        title = "CAPI v1beta1"
+    [notes.ondelete]
+        title = "OnDelete Rollout Strategy"
         description = """\
-This release of CACPPT is compatible with CAPI v1beta1 (v1.x).
+In addition to (default) `RollingUpdate` rollout strategy CACCPT now supports
+`OnDelete` rollout strategy which basically disables automatic rollout of updated
+control plane machines specification:
+
+```yaml
+spec:
+    rolloutStrategy: OnDelete
+```
 """
-  
-    [notes.rolling-update]
-        title = "Support Control Plane Rolling Updates"
+
+    [notes.externalip]
+        title = "Fallback to External IPs"
         description = """\
-The controller now reacts to `TalosControlPlane` spec changes
-and can do rolling updates of the control plane machines.
-This can be used to do a graceful upgrades of the workload clusters.
+The control plane provider now falls back to external IPs if the internal IPs are not available for Talos bootstrapping.
+
+This provides compatibility with some infrastructure providers that do not support internal IPs.
 """

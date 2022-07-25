@@ -1,3 +1,72 @@
+## [CAPI Control Plane Provider Talos 0.4.7](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.7) (2022-07-25)
+
+Welcome to the v0.4.7 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Fallback to External IPs
+
+The control plane provider now falls back to external IPs if the internal IPs are not available for Talos bootstrapping.
+
+This provides compatibility with some infrastructure providers that do not support internal IPs.
+
+
+### OnDelete Rollout Strategy
+
+In addition to (default) `RollingUpdate` rollout strategy CACCPT now supports
+`OnDelete` rollout strategy which basically disables automatic rollout of updated
+control plane machines specification:
+
+```yaml
+spec:
+    rolloutStrategy: OnDelete
+```
+
+
+### Contributors
+
+* Andrey Smirnov
+* Damiano Donati
+* i.kvasov
+
+### Changes
+<details><summary>6 commits</summary>
+<p>
+
+* [`eddb33f`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/eddb33f3b42919bf1a9c60a3a5e2fa25b1dbe70c) chore: disable one commit check for release branch
+* [`b5b75b5`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/b5b75b571f5b261eb34e772f86b083399d1b8780) fix: stop reporting negative unavailable replicas
+* [`0cc410e`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/0cc410e6e8af4c9a49fc52c11fe49e8dc0135495) feat: introduce 'OnDelete' rollout strategy type
+* [`8dd3361`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/8dd3361a1bcb319c13bb0d46873429390c28e0cb) fix: fallback to ExternalIP for boostrap if no InternalIP is found
+* [`86f043f`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/86f043f7239ebb55fa33bb883ba18f540e9e9cb5) feat: update CABPT to 0.5.4, Talos to 1.1.0
+* [`f0319d3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/f0319d3c14cf66a33a54f59816cd9c98f792d9a0) fix: tcp webhook resource name and version
+</p>
+</details>
+
+### Changes from talos-systems/cluster-api-bootstrap-provider-talos
+<details><summary>2 commits</summary>
+<p>
+
+* [`dbc4c34`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/dbc4c3403e0b1e373b1079235df5cb32e0d2ce3d) release(v0.5.4): prepare release
+* [`537a4ab`](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos/commit/537a4ab088eb3ede9ddfdfe6ca0c3dbe403cd009) feat: bump Talos to 1.1.0
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/talos-systems/cluster-api-bootstrap-provider-talos**  v0.5.3 -> v0.5.4
+* **google.golang.org/grpc**                                         v1.44.0 -> v1.46.2
+* **k8s.io/api**                                                     v0.23.4 -> v0.23.5
+* **k8s.io/apiserver**                                               v0.23.0 -> v0.23.5
+* **k8s.io/client-go**                                               v0.23.4 -> v0.23.5
+* **k8s.io/klog/v2**                                                 v2.30.0 **_new_**
+* **sigs.k8s.io/cluster-api**                                        v1.1.3 -> v1.1.4
+* **sigs.k8s.io/controller-runtime**                                 v0.11.1 -> v0.11.2
+
+Previous release can be found at [v0.4.6](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.6)
+
 ## [CAPI Control Plane Provider Talos 0.4.6](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.6) (2022-04-20)
 
 Welcome to the v0.4.6 release of CAPI Control Plane Provider Talos!
