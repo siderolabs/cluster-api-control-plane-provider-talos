@@ -1,3 +1,30 @@
+## [CAPI Control Plane Provider Talos 0.4.8](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.8) (2022-08-02)
+
+Welcome to the v0.4.8 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Contributors
+
+* Andrey Smirnov
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`06b21f8`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/06b21f8afaea2d8381bb18408af61fa10aebd8f3) fix: use 'control-plane' Kubernetes node label
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.4.7](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.7)
+
 ## [CAPI Control Plane Provider Talos 0.4.7](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.7) (2022-07-25)
 
 Welcome to the v0.4.7 release of CAPI Control Plane Provider Talos!
