@@ -552,7 +552,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	}
 
 	nodeSelector := labels.NewSelector()
-	req, err := labels.NewRequirement(constants.LabelNodeRoleMaster, selection.Exists, []string{})
+	req, err := labels.NewRequirement(constants.LabelNodeRoleControlPlane, selection.Exists, []string{})
 	if err != nil {
 		return err
 	}
