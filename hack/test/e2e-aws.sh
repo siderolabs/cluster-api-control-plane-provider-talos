@@ -22,14 +22,14 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v1.1.1}"
-K8S_VERSION="${K8S_VERSION:-v1.24.1}"
+TALOS_VERSION="${TALOS_DEFAULT:-v1.2.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
+K8S_VERSION="${K8S_VERSION:-v1.24.2}"
 export WORKLOAD_KUBERNETES_VERSION="${WORKLOAD_KUBERNETES_VERSION:-${K8S_VERSION}}"
-export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.24.2}"
+export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.25.0}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
-export PROVIDER=aws:v1.1.0
+export PROVIDER=aws:v1.5.0
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
@@ -116,7 +116,7 @@ function cluster {
       --cidr 172.27.0.0/24 \
       --workers=0
 
-    ${KUBECTL} taint node ${CREATED_CLUSTER}-master-1 node-role.kubernetes.io/master=:NoSchedule-
+    ${KUBECTL} taint node ${CREATED_CLUSTER}-controlplane-1 node-role.kubernetes.io/control-plane=:NoSchedule-
 
     ${TALOSCTL} config nodes 172.27.0.2
     ${TALOSCTL} kubeconfig -f ${TMP}/kubeconfig
