@@ -15,9 +15,9 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/uuid"
+	"github.com/siderolabs/capi-utils/pkg/capi"
+	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
 	"github.com/stretchr/testify/suite"
-	"github.com/talos-systems/capi-utils/pkg/capi"
-	"github.com/talos-systems/capi-utils/pkg/capi/infrastructure"
 	"github.com/talos-systems/go-retry/retry"
 	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
 	"gopkg.in/yaml.v3"
@@ -158,7 +158,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/talos-systems/cluster-api-templates/blob/v1beta1/aws/standard/standard.yaml"),
+		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)
