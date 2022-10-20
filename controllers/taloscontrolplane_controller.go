@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -75,7 +76,7 @@ func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options
 }
 
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;patch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;patch;update
 // +kubebuilder:rbac:groups=core,resources=configmaps,namespace=kube-system,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=rbac,resources=roles,namespace=kube-system,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=rbac,resources=rolebindings,namespace=kube-system,verbs=get;list;watch;create
@@ -624,7 +625,7 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 	}
 
 	clusterName := util.ObjectKey(cluster)
-	_, err := secret.GetFromNamespacedName(ctx, r.Client, clusterName, secret.Kubeconfig)
+	existingKubeconfig, err := secret.GetFromNamespacedName(ctx, r.Client, clusterName, secret.Kubeconfig)
 	switch {
 	case apierrors.IsNotFound(err):
 		createErr := kubeconfig.CreateSecretWithOwner(
@@ -644,7 +645,24 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 			return ctrl.Result{}, createErr
 		}
 	case err != nil:
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, errors.Wrapf(err, "failed to retrieve kubeconfig Secret for Cluster %q in namespace %q", clusterName.Name, clusterName.Namespace)
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, fmt.Errorf("failed to retrieve kubeconfig Secret for Cluster %q in namespace %q: %w", clusterName.Name, clusterName.Namespace, err)
+	default:
+		// kubeconfig is already generated
+		needsRotation, err := kubeconfig.NeedsClientCertRotation(existingKubeconfig, certs.ClientCertificateRenewalDuration)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to figure out if we need to regenerate cluster client cert: %w", err)
+		}
+
+		if !needsRotation {
+			return ctrl.Result{}, nil
+		}
+
+		r.Log.Info("kubeconfig certificate rotation", "secret", secret.Kubeconfig, "cluster", clusterName.Name, "namespace", clusterName.Namespace)
+
+		err = kubeconfig.RegenerateSecret(ctx, r.Client, existingKubeconfig)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to regenerate kubeconfig: %w", err)
+		}
 	}
 
 	return ctrl.Result{}, nil
