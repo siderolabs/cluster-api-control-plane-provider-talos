@@ -1,3 +1,30 @@
+## [CAPI Control Plane Provider Talos 0.4.10](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.10) (2022-10-20)
+
+Welcome to the v0.4.10 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Contributors
+
+* Andrey Smirnov
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`d85abe6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d85abe614209460b87d96880b0b7e6b540437b93) fix: regenerate kubeconfig on expiration
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.4.9](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.9)
+
 ## [CAPI Control Plane Provider Talos 0.4.9](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.4.9) (2022-09-02)
 
 Welcome to the v0.4.9 release of CAPI Control Plane Provider Talos!
