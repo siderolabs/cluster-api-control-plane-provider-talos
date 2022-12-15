@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
-	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
-	talosclient "github.com/talos-systems/talos/pkg/machinery/client"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"

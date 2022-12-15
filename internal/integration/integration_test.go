@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/siderolabs/capi-utils/pkg/capi"
 	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
+	"github.com/siderolabs/go-retry/retry"
+	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/stretchr/testify/suite"
-	"github.com/talos-systems/go-retry/retry"
-	machineapi "github.com/talos-systems/talos/pkg/machinery/api/machine"
 	"gopkg.in/yaml.v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/patch"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	controlplanev1 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
 var talosVersion *semver.Version

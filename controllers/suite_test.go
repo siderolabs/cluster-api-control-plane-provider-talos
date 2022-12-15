@@ -18,7 +18,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	controlplanev1alpha3 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	// +kubebuilder:scaffold:imports
 )
 
