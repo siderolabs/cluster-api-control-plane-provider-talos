@@ -11,9 +11,9 @@ import (
 	"os"
 	"time"
 
-	bootstrapv1alpha3 "github.com/talos-systems/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	controlplanev1alpha3 "github.com/talos-systems/cluster-api-control-plane-provider-talos/api/v1alpha3"
-	"github.com/talos-systems/cluster-api-control-plane-provider-talos/controllers"
+	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -80,7 +80,6 @@ func main() {
 
 	if err := (&remote.ClusterCacheReconciler{
 		Client:  mgr.GetClient(),
-		Log:     ctrl.Log.WithName("remote").WithName("ClusterCacheReconciler"),
 		Tracker: tracker,
 	}).SetupWithManager(context.Background(), mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ClusterCacheReconciler")
