@@ -1,0 +1,17 @@
+{
+    "name": "talos-control-plane",
+    "config": {
+      "image": "ghcr.io/siderolabs/cluster-api-control-plane-talos-controller",
+      "live_reload_deps": [
+        "main.go",
+        "go.mod",
+        "go.sum",
+        "api",
+        "config",
+        "controllers",
+        "internal",
+        "pkg"
+      ],
+      "label": "CACPPT"
+    }
+}
