@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1/generate"
@@ -554,6 +555,31 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 	g.Expect(err).To(BeNil())
 	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	g.Eventually(func(g Gomega) {
+		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+
+		machines := getMachines()
+		for _, machine := range machines {
+			g.Expect(machine.Spec.Version).ToNot(BeNil())
+			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+		}
+	}, time.Minute).Should(Succeed())
+
+	for _, machine := range getMachines() {
+		talosconfig := &bootstrapv1alpha3.TalosConfig{}
+
+		fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)
+
+		patchHelper, err := patch.NewHelper(talosconfig, fakeClient)
+		talosconfig.Spec.TalosVersion = "v1.5.0"
+
+		g.Expect(err).To(BeNil())
+		g.Expect(patchHelper.Patch(suite.ctx, talosconfig)).To(Succeed())
+	}
 
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})

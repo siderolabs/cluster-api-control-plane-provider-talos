@@ -6,6 +6,9 @@ package controllers
 
 import (
 	"context"
+	"reflect"
+
+	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
@@ -30,6 +33,7 @@ type ControlPlane struct {
 	Machines collections.Machines
 
 	infraObjects map[string]*unstructured.Unstructured
+	talosConfigs map[string]*cabptv1.TalosConfig
 }
 
 // newControlPlane returns an instantiated ControlPlane.
@@ -39,11 +43,17 @@ func newControlPlane(ctx context.Context, client client.Client, cluster *cluster
 		return nil, err
 	}
 
+	talosConfigs, err := getTalosConfigs(ctx, client, machines)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ControlPlane{
 		TCP:          tcp,
 		Cluster:      cluster,
 		Machines:     machines,
 		infraObjects: infraObjects,
+		talosConfigs: talosConfigs,
 	}, nil
 }
 
@@ -76,6 +86,7 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 			collections.And(
 				collections.MatchesKubernetesVersion(c.TCP.Spec.Version),
 				MatchesTemplateClonedFrom(c.infraObjects, c.TCP),
+				MatchesControlPlaneConfig(c.talosConfigs, c.TCP),
 			),
 		),
 	)
@@ -94,6 +105,35 @@ func getInfraResources(ctx context.Context, cl client.Client, machines collectio
 		}
 		result[m.Name] = infraObj
 	}
+	return result, nil
+}
+
+// getTalosConfigs fetches the TalosConfigs for each machine in the collection and returns a map of machine.Name -> TalosConfig.
+func getTalosConfigs(ctx context.Context, cl client.Client, machines collections.Machines) (map[string]*cabptv1.TalosConfig, error) {
+	result := map[string]*cabptv1.TalosConfig{}
+
+	for _, m := range machines {
+		bootstrapRef := m.Spec.Bootstrap.ConfigRef
+		if bootstrapRef == nil {
+			continue
+		}
+
+		talosconfig := &cabptv1.TalosConfig{}
+
+		err := cl.Get(ctx, client.ObjectKey{
+			Namespace: m.Namespace,
+			Name:      bootstrapRef.Name,
+		}, talosconfig)
+		if err != nil {
+			if apierrors.IsNotFound(errors.Cause(err)) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "failed to retrieve talosconfig obj for machine %q", m.Name)
+		}
+
+		result[m.Name] = talosconfig
+	}
+
 	return result, nil
 }
 
@@ -125,5 +165,22 @@ func MatchesTemplateClonedFrom(infraConfigs map[string]*unstructured.Unstructure
 		}
 
 		return true
+	}
+}
+
+// MatchesControlPlaneConfig returns a filter to find all machines that match a given controlPaneConfig.
+func MatchesControlPlaneConfig(talosConfigs map[string]*cabptv1.TalosConfig, tcp *controlplanev1.TalosControlPlane) collections.Func {
+	return func(machine *clusterv1.Machine) bool {
+		if machine == nil {
+			return false
+		}
+
+		talosConfig, found := talosConfigs[machine.Name]
+		if !found {
+			// Return true here because failing to get talosconfig should not be considered as unmatching.
+			return true
+		}
+
+		return reflect.DeepEqual(tcp.Spec.ControlPlaneConfig.ControlPlaneConfig, talosConfig.Spec)
 	}
 }
