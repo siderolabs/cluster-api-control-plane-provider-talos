@@ -24,7 +24,11 @@ import (
 
 func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane) (ctrl.Result, error) {
 	numMachines := len(controlPlane.Machines)
-	desiredReplicas := tcp.Spec.Replicas
+	desiredReplicas := 0
+
+	if tcp.Spec.Replicas != nil {
+		desiredReplicas = int(*tcp.Spec.Replicas)
+	}
 
 	conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingUpReason, clusterv1.ConditionSeverityWarning,
 		"Scaling up control plane to %d replicas (actual %d)",
@@ -44,7 +48,11 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 	machinesRequireUpgrade collections.Machines) (ctrl.Result, error) {
 
 	numMachines := len(controlPlane.Machines)
-	desiredReplicas := tcp.Spec.Replicas
+	desiredReplicas := 0
+
+	if tcp.Spec.Replicas != nil {
+		desiredReplicas = int(*tcp.Spec.Replicas)
+	}
 
 	conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingDownReason, clusterv1.ConditionSeverityWarning,
 		"Scaling down control plane to %d replicas (actual %d)",
