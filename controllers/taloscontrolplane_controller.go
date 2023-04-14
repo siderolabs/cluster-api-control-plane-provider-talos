@@ -726,7 +726,11 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 	// If we've made it this far, we can assume that all ownedMachines are up to date
 	numMachines := len(machines.Items)
-	desiredReplicas := int(*tcp.Spec.Replicas)
+	desiredReplicas := 0
+
+	if tcp.Spec.Replicas != nil {
+		desiredReplicas = int(*tcp.Spec.Replicas)
+	}
 
 	controlPlane, err := newControlPlane(ctx, r.Client, cluster, tcp, collections.FromMachineList(machines))
 	if err != nil {
