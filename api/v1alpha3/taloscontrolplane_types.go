@@ -62,6 +62,16 @@ type TalosControlPlaneSpec struct {
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
 }
 
+// GetReplicas reads spec replicas in a safe way.
+// If replicas is nil it will return 0.
+func (s *TalosControlPlaneSpec) GetReplicas() int32 {
+	if s.Replicas == nil {
+		return 0
+	}
+
+	return *s.Replicas
+}
+
 // RolloutStrategy describes how to replace existing machines
 // with new ones.
 type RolloutStrategy struct {
