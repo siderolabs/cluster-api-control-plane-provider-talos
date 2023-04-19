@@ -11,12 +11,14 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/pkg/errors"
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/connrotation"
@@ -48,6 +50,27 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	}
 
 	clusterName := tcp.GetLabels()["cluster.x-k8s.io/cluster-name"]
+
+	for _, ref := range tcp.GetOwnerReferences() {
+		if ref.Kind != "Cluster" {
+			continue
+		}
+
+		gv, err := schema.ParseGroupVersion(ref.APIVersion)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+
+		if gv.Group == clusterv1.GroupVersion.Group {
+			clusterName = ref.Name
+
+			break
+		}
+	}
+
+	if clusterName == "" {
+		return nil, fmt.Errorf("failed to determine the cluster name of the control plane")
+	}
 
 	if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
 		return r.talosconfigFromWorkloadCluster(ctx, client.ObjectKey{Namespace: tcp.GetNamespace(), Name: clusterName}, machines...)

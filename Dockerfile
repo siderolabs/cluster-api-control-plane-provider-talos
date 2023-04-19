@@ -24,8 +24,10 @@ ENV GO111MODULE on
 ENV GOPROXY https://proxy.golang.org
 ENV GOCACHE /.cache/go-build
 ENV GOMODCACHE /.cache/mod
-RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.10.0
-RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@v0.25.0
+ARG CONTROLLER_GEN_VERSION
+ARG CONVERSION_GEN_VERSION
+RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION}
+RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@${CONVERSION_GEN_VERSION}
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
@@ -46,6 +48,14 @@ RUN --mount=type=cache,target=/.cache controller-gen object:headerFile=./hack/bo
 
 FROM scratch AS generate
 COPY --from=generate-build /src/api /api
+
+# runs unit-tests
+FROM build AS unit-tests-run
+ARG TESTPKGS
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg --mount=type=cache,target=/tmp go test -v -covermode=atomic -coverprofile=coverage.txt -coverpkg=${TESTPKGS} -count 1 ${TESTPKGS}
+
+FROM scratch AS unit-tests
+COPY --from=unit-tests-run /src/coverage.txt /coverage.txt
 
 FROM --platform=${BUILDPLATFORM} alpine:3.13 AS release-build
 ADD https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.0/kustomize_v4.1.0_linux_amd64.tar.gz .

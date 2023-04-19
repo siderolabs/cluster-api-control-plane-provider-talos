@@ -7,6 +7,9 @@ REGISTRY_AND_USERNAME := $(REGISTRY)/$(USERNAME)
 NAME := cluster-api-control-plane-talos-controller
 WITH_RACE ?= false
 CGO_ENABLED = 0
+TESTPKGS ?= ./controllers/...
+CONTROLLER_GEN_VERSION ?= v0.11.3
+CONVERSION_GEN_VERSION ?= v0.26.0
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
 GO_BUILDFLAGS += -race
@@ -18,8 +21,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/siderolabs/tools:v1.3.0-1-g712379c
-PKGS ?= v1.3.0
+TOOLS ?= ghcr.io/siderolabs/tools:v1.4.0-1-g955aabc
+PKGS ?= v1.4.1-5-ga333a84
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
@@ -36,6 +39,9 @@ COMMON_ARGS += --build-arg=TOOLS=$(TOOLS)
 COMMON_ARGS += --build-arg=GO_BUILDFLAGS="$(GO_BUILDFLAGS)"
 COMMON_ARGS += --build-arg=GO_LDFLAGS="$(GO_LDFLAGS)"
 COMMON_ARGS += --build-arg=CGO_ENABLED="$(CGO_ENABLED)"
+COMMON_ARGS += --build-arg=TESTPKGS="$(TESTPKGS)"
+COMMON_ARGS += --build-arg=CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION)
+COMMON_ARGS += --build-arg=CONVERSION_GEN_VERSION=$(CONVERSION_GEN_VERSION)
 
 all: manifests container
 
@@ -131,3 +137,7 @@ integration-test-build:
 .PHONY: integration-test
 integration-test: integration-test-build
 	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh
+
+.PHONY: unit-tests
+unit-tests:  ## Performs unit tests
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS)

@@ -52,8 +52,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	if numMachines == 1 {
 		conditions.MarkFalse(tcp, controlplanev1.ResizedCondition, controlplanev1.ScalingDownReason, clusterv1.ConditionSeverityError,
-			"Cannot scale down control plane nodes to 0",
-			desiredReplicas, numMachines)
+			"Cannot scale down control plane nodes to 0")
 
 		return ctrl.Result{}, nil
 	}

@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -196,6 +197,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	// If ControlPlaneEndpoint is not set, return early
 	if !cluster.Spec.ControlPlaneEndpoint.IsValid() {
 		logger.Info("cluster does not yet have a ControlPlaneEndpoint defined")
+
 		return ctrl.Result{}, nil
 	}
 
@@ -203,6 +205,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster), tcp.Name)
 	if err != nil {
 		logger.Error(err, "failed to retrieve control plane machines for cluster")
+
 		return ctrl.Result{}, err
 	}
 
@@ -290,8 +293,8 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 
 func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx context.Context, cluster client.ObjectKey, cpName string) (clusterv1.MachineList, error) {
 	selector := map[string]string{
-		clusterv1.ClusterLabelName:             cluster.Name,
-		clusterv1.MachineControlPlaneLabelName: "",
+		clusterv1.ClusterNameLabel:         cluster.Name,
+		clusterv1.MachineControlPlaneLabel: "",
 	}
 
 	machineList := clusterv1.MachineList{}
@@ -331,7 +334,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	// Clone the infrastructure template
-	infraRef, err := external.CloneTemplate(ctx, &external.CloneTemplateInput{
+	infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 		Client:      r.Client,
 		TemplateRef: &tcp.Spec.InfrastructureTemplate,
 		Namespace:   tcp.Namespace,
@@ -364,8 +367,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
 			Namespace: tcp.Namespace,
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName:             cluster.Name,
-				clusterv1.MachineControlPlaneLabelName: "",
+				clusterv1.ClusterNameLabel:         cluster.Name,
+				clusterv1.MachineControlPlaneLabel: "",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
@@ -513,8 +516,8 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster) error {
 	clusterSelector := &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			clusterv1.ClusterLabelName:             cluster.Name,
-			clusterv1.MachineControlPlaneLabelName: "",
+			clusterv1.ClusterNameLabel:         cluster.Name,
+			clusterv1.MachineControlPlaneLabel: "",
 		},
 	}
 
@@ -598,6 +601,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 }
 
 func (r *TalosControlPlaneReconciler) reconcileExternalReference(ctx context.Context, ref corev1.ObjectReference, cluster *clusterv1.Cluster) error {
+	if !strings.HasSuffix(ref.Kind, clusterv1.TemplateSuffix) {
+		return nil
+	}
+
 	obj, err := external.Get(ctx, r.Client, &ref, cluster.Namespace)
 	if err != nil {
 		return err
