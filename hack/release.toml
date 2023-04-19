@@ -12,19 +12,3 @@ pre_release = true
 
 preface = """\
 """
-
-[notes]
-
-    [notes.capi]
-        title = "CAPI v1beta1"
-        description = """\
-This release of CACPPT brings compatibility with CAPI v1beta1.
-"""
-  
-    [notes.rolling-update]
-        title = "Support Control Plane Rolling Updates"
-        description = """\
-The controller now reacts to `TalosControlPlane` spec changes
-and can do rolling updates of the control plane machines.
-This can be used to do a graceful upgrades of the workload clusters.
-"""

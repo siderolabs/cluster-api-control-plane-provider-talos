@@ -17,24 +17,8 @@ policies:
       body:
         required: true
       conventional:
-        types:
-          - chore
-          - docs
-          - perf
-          - refactor
-          - style
-          - test
-          - release
-        scopes:
-          - apid
-          - machined
-          - networkd
-          - talosctl
-          - trustd
-          - talosctl
-          - kernel
-          - security
-          - ^v1.1
+        types: ["chore","docs","perf","refactor","style","test","release"]
+        scopes: [".*"]
   - type: license
     spec:
       skipPaths:
