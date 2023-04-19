@@ -35,6 +35,7 @@ steps:
       REGISTRY: registry.dev.talos-systems.io
     commands:
       - make
+      - make check-dirty
     when:
       event:
         include:

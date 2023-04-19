@@ -1,6 +1,7 @@
-## [CAPI Control Plane Provider Talos 0.5.0-alpha.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0-alpha.0) (2023-04-19)
 
-Welcome to the v0.5.0-alpha.0 release of CAPI Control Plane Provider Talos!  
+## [CAPI Control Plane Provider Talos 0.5.0-alpha.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0-alpha.1) (2023-04-19)
+
+Welcome to the v0.5.0-alpha.1 release of CAPI Control Plane Provider Talos!  
 *This is a pre-release of CAPI Control Plane Provider Talos*
 
 

@@ -141,3 +141,6 @@ integration-test: integration-test-build
 .PHONY: unit-tests
 unit-tests:  ## Performs unit tests
 	@$(MAKE) local-$@ DEST=$(ARTIFACTS)
+
+check-dirty: ## Verifies that source tree is not dirty
+	@if test -n "`git status --porcelain`"; then echo "Source tree is dirty"; git status; exit 1 ; fi
