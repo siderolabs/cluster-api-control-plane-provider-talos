@@ -14,11 +14,13 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1/generate"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -34,11 +36,10 @@ import (
 type ControllersSuite struct {
 	suite.Suite
 
-	machineService *machineService
-	secretsBundle  *generate.SecretsBundle
-	machineAddress string
-	ctx            context.Context
-	cancel         context.CancelFunc
+	machineServices map[string]*machineService
+	secretsBundle   *generate.SecretsBundle
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 func (suite *ControllersSuite) SetupSuite() {
@@ -49,12 +50,20 @@ func (suite *ControllersSuite) SetupSuite() {
 	suite.secretsBundle, err = generate.NewSecretsBundle(generate.NewClock(), generate.WithEndpointList([]string{"127.0.0.1"}))
 	suite.Require().NoError(err)
 
-	suite.machineService, suite.machineAddress, err = startMachineServer(suite.ctx, suite.secretsBundle)
-	suite.Require().NoError(err)
+	suite.machineServices = map[string]*machineService{}
 }
 
 func (suite *ControllersSuite) TearDownSuite() {
 	suite.cancel()
+}
+
+func (suite *ControllersSuite) startMachineServer() (*machineService, string) {
+	machineService, machineAddress, err := startMachineServer(suite.ctx, suite.secretsBundle)
+	suite.Require().NoError(err)
+
+	suite.machineServices[machineAddress] = machineService
+
+	return machineService, machineAddress
 }
 
 func (suite *ControllersSuite) TestClusterToTalosControlPlane() {
@@ -239,9 +248,332 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 }
 
 func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
-	t := suite.T()
-
 	fakeClient := newFakeClient()
+
+	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-reconcile-init", nil)
+
+	g := NewWithT(suite.T())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	// this first requeue is to add finalizer
+	g.Expect(result).To(Equal(ctrl.Result{}))
+	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+	machineService, machineAddress := suite.startMachineServer()
+
+	m, n := createMachineNodePair("foo-machine1", cluster, tcp, true, machineAddress)
+	g.Expect(fakeClient.Create(suite.ctx, m)).To(Succeed())
+	g.Expect(fakeClient.Create(suite.ctx, n)).To(Succeed())
+
+	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, machineAddress))
+
+	// fake etcd service state running
+	machineService.setServiceListResponse(&machine.ServiceListResponse{
+		Messages: []*machine.ServiceList{
+			{
+				Metadata: &common.Metadata{
+					Hostname: "foo-machine1",
+				},
+				Services: []*machine.ServiceInfo{
+					{
+						Id:    "etcd",
+						State: "running",
+						Events: &machine.ServiceEvents{
+							Events: []*machine.ServiceEvent{
+								{
+									Msg:   "running",
+									State: "Running",
+								},
+							},
+						},
+						Health: &machine.ServiceHealth{
+							Healthy: true,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// fake etcd members list
+	machineService.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
+		Messages: []*machine.EtcdMembers{
+			{
+				Metadata: &common.Metadata{
+					Hostname: "foo-machine1",
+				},
+				Members: []*machine.EtcdMember{
+					{
+						Id:       0,
+						Hostname: "foo-machine1",
+					},
+				},
+			},
+		},
+	})
+
+	g.Eventually(func(g Gomega) {
+		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
+		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
+		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
+		g.Expect(infrastructureMachineTemplate.GetOwnerReferences()).To(ContainElement(metav1.OwnerReference{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Cluster",
+			Name:       cluster.Name,
+			UID:        cluster.UID,
+		}))
+
+		// Always expect that the Finalizer is set on the passed in resource
+		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
+		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
+
+		machineList := &clusterv1.MachineList{}
+		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+		g.Expect(machineList.Items).To(HaveLen(1))
+
+		machine := machineList.Items[0]
+		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
+	}, time.Second).Should(Succeed())
+}
+
+func (suite *ControllersSuite) TestRollingUpdate() {
+	fakeClient := newFakeClient()
+
+	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-rolling-update", pointer.Int32(2))
+
+	g := NewWithT(suite.T())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	// this first requeue is to add finalizer
+	g.Expect(result).To(Equal(ctrl.Result{}))
+	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+	setEtcdRunning := func(address string) {
+		ms, ok := suite.machineServices[address]
+		g.Expect(ok).To(BeTrue())
+
+		ms.setServiceListResponse(
+			&machine.ServiceListResponse{
+				Messages: []*machine.ServiceList{
+					{
+						Metadata: &common.Metadata{
+							Hostname: address,
+						},
+						Services: []*machine.ServiceInfo{
+							{
+								Id:    "etcd",
+								State: "running",
+								Events: &machine.ServiceEvents{
+									Events: []*machine.ServiceEvent{
+										{
+											Msg:   "running",
+											State: "Running",
+										},
+									},
+								},
+								Health: &machine.ServiceHealth{
+									Healthy: true,
+								},
+							},
+						},
+					},
+				},
+			})
+	}
+
+	getMachines := func() []clusterv1.Machine {
+		machineList := &clusterv1.MachineList{}
+		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+
+		return machineList.Items
+	}
+
+	updateEtcdMembers := func() {
+		machines := getMachines()
+
+		members := make([]*machine.EtcdMember, 0, len(machines))
+
+		for id, m := range machines {
+			members = append(members, &machine.EtcdMember{
+				Id:       uint64(id),
+				Hostname: m.Name,
+			})
+		}
+
+		for _, m := range machines {
+			if len(m.Status.Addresses) == 0 {
+				continue
+			}
+
+			ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+			g.Expect(ok).To(BeTrue())
+
+			ms.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
+				Messages: []*machine.EtcdMembers{
+					{
+						Metadata: &common.Metadata{
+							Hostname: m.Name,
+						},
+						Members: members,
+					},
+				},
+			})
+		}
+	}
+
+	addBootEvents := func() {
+		machines := getMachines()
+
+		bootDoneEvents := map[string][]*machine.SequenceEvent{}
+
+		for _, m := range machines {
+			bootDoneEvents[m.Name] = []*machine.SequenceEvent{
+				{
+					Sequence: "boot",
+					Action:   machine.SequenceEvent_START,
+				}, {
+					Sequence: "boot",
+					Action:   machine.SequenceEvent_STOP,
+				},
+			}
+		}
+
+		for _, m := range machines {
+			if len(m.Status.Addresses) == 0 {
+				continue
+			}
+
+			ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+			g.Expect(ok).To(BeTrue())
+
+			ms.resetSequenceEvents()
+
+			for name, events := range bootDoneEvents {
+				g.Expect(ms.addSequenceEvents(name, events...)).To(Succeed())
+			}
+		}
+	}
+
+	var eg errgroup.Group
+
+	ctx, cancel := context.WithTimeout(suite.ctx, time.Minute)
+	defer cancel()
+
+	// background loop that maintains the state of Talos API responses, adds node refs and addresses to the machine, creates node response
+	// it basically adjusts the state to be consistent for a running and healthy cluster
+	eg.Go(func() error {
+		ticker := time.NewTicker(time.Millisecond * 100)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+				machines := getMachines()
+				for _, machine := range machines {
+					if len(machine.Status.Addresses) == 0 {
+						_, address := suite.startMachineServer()
+
+						patchHelper, err := patch.NewHelper(&machine, fakeClient)
+						machine.Status.Addresses = []clusterv1.MachineAddress{
+							{
+								Address: address,
+								Type:    clusterv1.MachineInternalIP,
+							},
+						}
+						machine.Status.NodeRef = &corev1.ObjectReference{
+							Kind:       "Node",
+							APIVersion: corev1.SchemeGroupVersion.String(),
+							Name:       machine.Name,
+						}
+
+						g.Expect(err).To(BeNil())
+						g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
+
+						g.Expect(fakeClient.Create(ctx, createNode(&machine, true))).To(Succeed())
+
+						g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, address))
+					}
+
+					address := machine.Status.Addresses[0].Address
+
+					setEtcdRunning(address)
+					updateEtcdMembers()
+					addBootEvents()
+				}
+			}
+		}
+	})
+
+	g.Eventually(func(g Gomega) {
+		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
+		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
+		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
+		g.Expect(infrastructureMachineTemplate.GetOwnerReferences()).To(ContainElement(metav1.OwnerReference{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Cluster",
+			Name:       cluster.Name,
+			UID:        cluster.UID,
+		}))
+
+		// Always expect that the Finalizer is set on the passed in resource
+		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
+		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+
+		machineList := &clusterv1.MachineList{}
+		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+		g.Expect(machineList.Items).To(HaveLen(2))
+
+		machine := machineList.Items[0]
+		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
+	}, time.Second).Should(Succeed())
+
+	patchHelper, err := patch.NewHelper(tcp, fakeClient)
+	tcp.Spec.Version = "v1.25.4"
+
+	g.Expect(err).To(BeNil())
+	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	g.Eventually(func(g Gomega) {
+		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+
+		machines := getMachines()
+		for _, machine := range machines {
+			g.Expect(machine.Spec.Version).ToNot(BeNil())
+			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+		}
+	}, time.Minute).Should(Succeed())
+
+	cancel()
+	g.Expect(eg.Wait()).To(Succeed())
+}
+
+func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string, replicas *int32) (*clusterv1.Cluster, *controlplanev1.TalosControlPlane, *unstructured.Unstructured) {
+	t := suite.T()
 
 	setup := func(t *testing.T, g *WithT) *corev1.Namespace {
 		t.Helper()
@@ -254,7 +586,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 				Kind:       "Namespace",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-reconcile-initialize",
+				Name: ns,
 			},
 		}
 
@@ -263,16 +595,8 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		return ns
 	}
 
-	teardown := func(t *testing.T, g *WithT, ns *corev1.Namespace) {
-		t.Helper()
-
-		t.Log("Deleting the namespace")
-		g.Expect(fakeClient.Delete(suite.ctx, ns)).To(Succeed())
-	}
-
 	g := NewWithT(t)
 	namespace := setup(t, g)
-	defer teardown(t, g, namespace)
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: namespace.Name})
 	cluster.Spec = clusterv1.ClusterSpec{
@@ -320,7 +644,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 			},
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
-			Replicas: nil,
+			Replicas: replicas,
 			Version:  "v1.16.6",
 			InfrastructureTemplate: corev1.ObjectReference{
 				Kind:       genericInfrastructureMachineTemplate.GetKind(),
@@ -341,94 +665,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	}
 	g.Expect(fakeClient.Create(suite.ctx, tcp)).To(Succeed())
 
-	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
-
-	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
-	g.Expect(err).NotTo(HaveOccurred())
-	// this first requeue is to add finalizer
-	g.Expect(result).To(Equal(ctrl.Result{}))
-	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
-	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
-
-	m, n := createMachineNodePair("foo-machine1", cluster, tcp, true, suite.machineAddress)
-	g.Expect(fakeClient.Create(suite.ctx, m)).To(Succeed())
-	g.Expect(fakeClient.Create(suite.ctx, n)).To(Succeed())
-
-	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, suite.machineAddress))
-
-	// fake etcd service state running
-	suite.machineService.setServiceListResponse(&machine.ServiceListResponse{
-		Messages: []*machine.ServiceList{
-			{
-				Metadata: &common.Metadata{
-					Hostname: "foo-machine1",
-				},
-				Services: []*machine.ServiceInfo{
-					{
-						Id:    "etcd",
-						State: "running",
-						Events: &machine.ServiceEvents{
-							Events: []*machine.ServiceEvent{
-								{
-									Msg:   "running",
-									State: "Running",
-								},
-							},
-						},
-						Health: &machine.ServiceHealth{
-							Healthy: true,
-						},
-					},
-				},
-			},
-		},
-	})
-
-	// fake etcd members list
-	suite.machineService.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
-		Messages: []*machine.EtcdMembers{
-			{
-				Metadata: &common.Metadata{
-					Hostname: "foo-machine1",
-				},
-				Members: []*machine.EtcdMember{
-					{
-						Id:       0,
-						Hostname: "foo-machine1",
-					},
-				},
-			},
-		},
-	})
-
-	g.Eventually(func(g Gomega) {
-		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
-		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(genericInfrastructureMachineTemplate), genericInfrastructureMachineTemplate)).To(Succeed())
-		g.Expect(genericInfrastructureMachineTemplate.GetOwnerReferences()).To(ContainElement(metav1.OwnerReference{
-			APIVersion: clusterv1.GroupVersion.String(),
-			Kind:       "Cluster",
-			Name:       cluster.Name,
-			UID:        cluster.UID,
-		}))
-
-		// Always expect that the Finalizer is set on the passed in resource
-		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
-
-		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
-
-		machineList := &clusterv1.MachineList{}
-		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
-		g.Expect(machineList.Items).To(HaveLen(1))
-
-		machine := machineList.Items[0]
-		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
-	}, time.Second).Should(Succeed())
+	return cluster, tcp, genericInfrastructureMachineTemplate
 }
 
 func TestSuite(t *testing.T) {

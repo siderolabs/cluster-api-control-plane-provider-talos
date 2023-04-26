@@ -7,9 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"net"
 	"reflect"
-	"time"
 
 	"github.com/pkg/errors"
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
@@ -20,28 +18,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/util/connrotation"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-type kubernetesClient struct {
-	*kubernetes.Clientset
-
-	dialer *connrotation.Dialer
-}
-
-// Close kubernetes client.
-func (k *kubernetesClient) Close() error {
-	k.dialer.CloseAll()
-
-	return nil
-}
-
-func newDialer() *connrotation.Dialer {
-	return connrotation.NewDialer((&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext)
-}
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
 func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines ...clusterv1.Machine) (*talosclient.Client, error) {

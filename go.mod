@@ -17,6 +17,7 @@ require (
 	github.com/siderolabs/talos v1.3.5
 	github.com/siderolabs/talos/pkg/machinery v1.4.0
 	github.com/stretchr/testify v1.8.2
+	golang.org/x/sync v0.1.0
 	google.golang.org/grpc v1.54.0
 	google.golang.org/protobuf v1.30.0
 	gopkg.in/typ.v4 v4.2.0
@@ -129,7 +130,6 @@ require (
 	golang.org/x/crypto v0.3.0 // indirect
 	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/oauth2 v0.6.0 // indirect
-	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/sys v0.6.0 // indirect
 	golang.org/x/term v0.6.0 // indirect
 	golang.org/x/text v0.8.0 // indirect

@@ -18,17 +18,21 @@ import (
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
+	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/crypto/tls"
 	"github.com/siderolabs/crypto/x509"
 	"github.com/siderolabs/talos/pkg/grpc/gen"
+	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/api/storage"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1/generate"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
+	"github.com/siderolabs/talos/pkg/machinery/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"gopkg.in/typ.v4/slices"
 	appsv1 "k8s.io/api/apps/v1"
@@ -175,6 +179,7 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 				Name:       GenericInfrastructureMachineCRD.Name,
 				Namespace:  GenericInfrastructureMachineCRD.Namespace,
 			},
+			Version: pointer.String("v1.16.6"),
 		},
 		Status: clusterv1.MachineStatus{
 			NodeRef: &corev1.ObjectReference{
@@ -192,9 +197,13 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 	}
 	machine.Default()
 
+	return machine, createNode(machine, ready)
+}
+
+func createNode(machine *clusterv1.Machine, ready bool) *corev1.Node {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
+			Name:   machine.Name,
 			Labels: map[string]string{constants.LabelNodeRoleControlPlane: ""},
 		},
 	}
@@ -208,7 +217,8 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 			},
 		}
 	}
-	return machine, node
+
+	return node
 }
 
 // newCluster return a CAPI cluster object.
@@ -393,9 +403,41 @@ type machineService struct {
 	machine.UnimplementedMachineServiceServer
 	storage.UnimplementedStorageServiceServer
 
+	events              []*machine.Event
 	etcdMembers         *machine.EtcdMemberListResponse
 	serviceListResponse *machine.ServiceListResponse
 	resetChan           chan struct{}
+}
+
+func (ms *machineService) addSequenceEvents(node string, events ...*machine.SequenceEvent) error {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	for _, event := range events {
+		data, err := proto.Marshal(event)
+		if err != nil {
+			return err
+		}
+
+		ms.events = append(ms.events, &machine.Event{
+			Metadata: &common.Metadata{
+				Hostname: node,
+			},
+			Data: &anypb.Any{
+				TypeUrl: "talos/runtime/" + string(event.ProtoReflect().Descriptor().FullName()),
+				Value:   data,
+			},
+		})
+	}
+
+	return nil
+}
+
+func (ms *machineService) resetSequenceEvents() {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	ms.events = nil
 }
 
 func (ms *machineService) Bootstrap(ctx context.Context, req *machine.BootstrapRequest) (*machine.BootstrapResponse, error) {
@@ -407,10 +449,14 @@ func (ms *machineService) EtcdMemberList(ctx context.Context, req *machine.EtcdM
 	defer ms.lock.Unlock()
 
 	if ms.etcdMembers == nil {
-		return nil, status.Error(codes.Unavailable, "not available")
+		return nil, status.Error(codes.Internal, "etcd members response is not configured")
 	}
 
 	return ms.etcdMembers, nil
+}
+
+func (ms *machineService) List(req *machine.ListRequest, serv machine.MachineService_ListServer) error {
+	return nil
 }
 
 func (ms *machineService) ServiceList(context.Context, *emptypb.Empty) (*machine.ServiceListResponse, error) {
@@ -422,6 +468,35 @@ func (ms *machineService) ServiceList(context.Context, *emptypb.Empty) (*machine
 	}
 
 	return ms.serviceListResponse, nil
+}
+
+func (ms *machineService) Events(req *machine.EventsRequest, serv machine.MachineService_EventsServer) error {
+	ms.lock.Lock()
+
+	events := make(chan *machine.Event, len(ms.events))
+
+	for _, event := range ms.events {
+		events <- event
+	}
+
+	ms.lock.Unlock()
+
+	for {
+		select {
+		case <-serv.Context().Done():
+			return serv.Context().Err()
+		case e := <-events:
+			serv.Send(e)
+		}
+	}
+}
+
+func (ms *machineService) EtcdForfeitLeadership(ctx context.Context, req *machine.EtcdForfeitLeadershipRequest) (*machine.EtcdForfeitLeadershipResponse, error) {
+	return &machine.EtcdForfeitLeadershipResponse{}, nil
+}
+
+func (ms *machineService) EtcdLeaveCluster(ctx context.Context, req *machine.EtcdLeaveClusterRequest) (*machine.EtcdLeaveClusterResponse, error) {
+	return &machine.EtcdLeaveClusterResponse{}, nil
 }
 
 func (ms *machineService) setEtcdMembersResponse(resp *machine.EtcdMemberListResponse) {
@@ -444,4 +519,5 @@ func init() {
 	_ = controlplanev1.AddToScheme(fakeScheme)
 	_ = corev1.AddToScheme(fakeScheme)
 	_ = appsv1.AddToScheme(fakeScheme)
+	_ = bootstrapv1alpha3.AddToScheme(fakeScheme)
 }

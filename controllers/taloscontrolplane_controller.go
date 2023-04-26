@@ -239,6 +239,12 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		result = util.LowestNonZeroResult(result, phaseResult)
 	}
 
+	if result.RequeueAfter != 0 {
+		r.Log.Error(err, "reconcile failed", "requeue after", result.RequeueAfter.String())
+
+		return result, nil
+	}
+
 	return result, errs
 }
 
@@ -486,7 +492,7 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 		Kind:               "TalosControlPlane",
 		Name:               tcp.Name,
 		UID:                tcp.UID,
-		BlockOwnerDeletion: pointer.BoolPtr(true),
+		BlockOwnerDeletion: pointer.Bool(true),
 	}
 
 	bootstrapConfig := &cabptv1.TalosConfig{
@@ -633,6 +639,7 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 
 	clusterName := util.ObjectKey(cluster)
 	existingKubeconfig, err := secret.GetFromNamespacedName(ctx, r.Client, clusterName, secret.Kubeconfig)
+
 	switch {
 	case apierrors.IsNotFound(err):
 		createErr := kubeconfig.CreateSecretWithOwner(
