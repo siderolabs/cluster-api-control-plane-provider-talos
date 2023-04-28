@@ -1,3 +1,41 @@
+## [CAPI Control Plane Provider Talos 0.5.0-alpha.2](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0-alpha.2) (2023-04-28)
+
+Welcome to the v0.5.0-alpha.2 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Trigger Rolling Updates on Talos Config Changes
+
+The controller now reacts to `TalosConfig` spec changes
+and can do rolling updates of the control plane machines.
+
+
+### Contributors
+
+* Artem Chernyshev
+* Ströger Florian
+
+### Changes
+<details><summary>2 commits</summary>
+<p>
+
+* [`1401505`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1401505f2533e0d0bcdeca2c8f671f7c7b984bdf) feat: trigger rollout on controlPlaneConfig changes
+* [`6be6eec`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/6be6eec73e04a82f11f1cdbc945d708c05b415b3) fix: rewrite scale down code to be resilient to API calls failures
+</p>
+</details>
+
+### Dependency Changes
+
+* **golang.org/x/sync**  v0.1.0 **_new_**
+
+Previous release can be found at [v0.5.0-alpha.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0-alpha.1)
+
+
+
 
 ## [CAPI Control Plane Provider Talos 0.5.0-alpha.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0-alpha.1) (2023-04-19)
 
