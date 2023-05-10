@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
@@ -17,6 +18,10 @@ import (
 )
 
 func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	machines := []clusterv1.Machine{}
 
 	for _, machine := range ownedMachines {
@@ -98,6 +103,10 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
 func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, machineToLeave clusterv1.Machine) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	r.Log.Info("verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
 
 	svcs, err := c.ServiceInfo(ctx, "etcd")
@@ -129,6 +138,10 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.
 // This is used in times when the machine was deleted out from under us.
 func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, memberName string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	r.Log.Info("removing etcd member", "memberName", memberName)
 
 	return c.EtcdRemoveMember(
@@ -142,6 +155,10 @@ func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *tal
 // auditEtcd rolls through all etcd members to see if there's a matching controlplane machine
 // It uses the first controlplane node returned as the etcd endpoint
 func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey, cpName string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
 	if err != nil {
 		return err

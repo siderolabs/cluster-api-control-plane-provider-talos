@@ -408,6 +408,10 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 }
 
 func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	c, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err

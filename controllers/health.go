@@ -29,6 +29,10 @@ func (e *errServiceUnhealthy) Error() string {
 }
 
 func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, machines []clusterv1.Machine) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+
+	defer cancel()
+
 	client, err := r.talosconfigForMachines(ctx, tcp, machines...)
 	if err != nil {
 		return err
