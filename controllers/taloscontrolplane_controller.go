@@ -240,7 +240,9 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	}
 
 	if result.RequeueAfter != 0 {
-		r.Log.Error(err, "reconcile failed", "requeue after", result.RequeueAfter.String())
+		if err != nil {
+			r.Log.Error(err, "reconcile failed", "requeue after", result.RequeueAfter.String(), "error", err.Error())
+		}
 
 		return result, nil
 	}
