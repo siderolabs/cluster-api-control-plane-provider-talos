@@ -1,3 +1,38 @@
+## [CAPI Control Plane Provider Talos 0.5.1](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.1) (2023-05-11)
+
+Welcome to the v0.5.1 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Trigger Rolling Updates on Talos Config Changes
+
+The controller now reacts to `TalosConfig` spec changes
+and can do rolling updates of the control plane machines.
+
+
+### Contributors
+
+* Artem Chernyshev
+
+### Changes
+<details><summary>2 commits</summary>
+<p>
+
+* [`59c39a8`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/59c39a8e1d0f3062b2b5e9bb47a178b9dfe27bed) fix: introduce 5 second timeout for each Talos client call
+* [`d2f21be`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d2f21beb4c3f20e6ad1a406a04a694005e36922c) fix: log actual error message in the reconcile error
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.5.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0)
+
 ## [CAPI Control Plane Provider Talos 0.5.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.0) (2023-05-04)
 
 Welcome to the v0.5.0 release of CAPI Control Plane Provider Talos!  
