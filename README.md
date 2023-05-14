@@ -32,7 +32,7 @@ This provider's versions are able to install and manage the following versions o
 | Control Plane Provider Talos v1alpha3 (v0.2) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.4) |       |        |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.4) |       |        |       |       |       |       |       |       |       | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.5) |       |        |       |       |       |       |       |       |       | ✓     | ✓     | ✓     |
 
 This provider's versions are compatible with the following versions of Talos:
 
