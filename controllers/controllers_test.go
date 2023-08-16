@@ -13,7 +13,8 @@ import (
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
-	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1/generate"
+	"github.com/siderolabs/talos/pkg/machinery/config"
+	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
@@ -38,7 +39,7 @@ type ControllersSuite struct {
 	suite.Suite
 
 	machineServices map[string]*machineService
-	secretsBundle   *generate.SecretsBundle
+	secretsBundle   *secrets.Bundle
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -48,7 +49,7 @@ func (suite *ControllersSuite) SetupSuite() {
 
 	suite.ctx, suite.cancel = context.WithTimeout(context.Background(), time.Minute*10)
 
-	suite.secretsBundle, err = generate.NewSecretsBundle(generate.NewClock(), generate.WithEndpointList([]string{"127.0.0.1"}))
+	suite.secretsBundle, err = secrets.NewBundle(secrets.NewFixedClock(time.Now()), config.TalosVersionCurrent)
 	suite.Require().NoError(err)
 
 	suite.machineServices = map[string]*machineService{}
@@ -91,7 +92,7 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlane() {
 
 	r := newReconciler(fakeClient)
 
-	got := r.ClusterToTalosControlPlane(cluster)
+	got := r.ClusterToTalosControlPlane(context.Background(), cluster)
 	g.Expect(got).To(Equal(expectedResult))
 }
 
@@ -103,7 +104,7 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlaneNoControlPlane() {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 
-	got := r.ClusterToTalosControlPlane(cluster)
+	got := r.ClusterToTalosControlPlane(context.Background(), cluster)
 	g.Expect(got).To(BeNil())
 }
 
@@ -122,10 +123,11 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlaneOtherControlPlane()
 	}
 
 	r := &controllers.TalosControlPlaneReconciler{
-		Client: fakeClient,
+		Client:    fakeClient,
+		APIReader: fakeClient,
 	}
 
-	got := r.ClusterToTalosControlPlane(cluster)
+	got := r.ClusterToTalosControlPlane(context.Background(), cluster)
 	g.Expect(got).To(BeNil())
 }
 
@@ -154,11 +156,12 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 		},
 	}
 	tcp.Default()
-	g.Expect(tcp.ValidateCreate()).To(Succeed())
+	_, err := tcp.ValidateCreate()
+	g.Expect(err).To(Succeed())
 	fakeClient := newFakeClient(tcp.DeepCopy(), cluster.DeepCopy())
 	r := newReconciler(fakeClient)
 
-	_, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	machineList := &clusterv1.MachineList{}
@@ -203,7 +206,8 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	}
 
 	tcp.Default()
-	g.Expect(tcp.ValidateCreate()).To(Succeed())
+	_, err := tcp.ValidateCreate()
+	g.Expect(err).To(Succeed())
 
 	ca := corev1.Secret{
 		TypeMeta: metav1.TypeMeta{

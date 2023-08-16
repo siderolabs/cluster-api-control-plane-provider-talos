@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // SetupWebhookWithManager implements webhook methods.
@@ -74,25 +75,25 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 }
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateCreate() error {
+func (r *TalosControlPlane) ValidateCreate() (admission.Warnings, error) {
 	return r.validate()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateUpdate(old runtime.Object) error {
+func (r *TalosControlPlane) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	return r.validate()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateDelete() error {
-	return nil
+func (r *TalosControlPlane) ValidateDelete() (admission.Warnings, error) {
+	return nil, nil
 }
 
-func (r *TalosControlPlane) validate() error {
+func (r *TalosControlPlane) validate() (admission.Warnings, error) {
 	var allErrs field.ErrorList
 
 	if r.Spec.RolloutStrategy == nil {
-		return nil
+		return nil, nil
 	}
 
 	switch r.Spec.RolloutStrategy.Type {
@@ -108,10 +109,10 @@ func (r *TalosControlPlane) validate() error {
 	}
 
 	if len(allErrs) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	return apierrors.NewInvalid(
+	return nil, apierrors.NewInvalid(
 		schema.GroupKind{Group: GroupVersion.Group, Kind: "TalosControlPlane"},
 		r.Name, allErrs)
 }

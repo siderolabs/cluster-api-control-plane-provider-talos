@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+	runtimelog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
@@ -60,7 +61,9 @@ type IntegrationSuite struct {
 func (suite *IntegrationSuite) SetupSuite() {
 	suite.ctx, suite.cancel = context.WithTimeout(context.Background(), 1*time.Hour)
 	verbosity := 6
-	logf.SetLogger(logf.NewLogger(logf.WithThreshold(&verbosity)))
+	logger := logf.NewLogger(logf.WithThreshold(&verbosity))
+	logf.SetLogger(logger)
+	runtimelog.SetLogger(logger)
 
 	env := func(key, def string) string {
 		val := os.Getenv(key)

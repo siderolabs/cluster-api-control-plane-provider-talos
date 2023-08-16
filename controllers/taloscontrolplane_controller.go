@@ -48,7 +48,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
@@ -69,7 +68,7 @@ func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options
 		For(&controlplanev1.TalosControlPlane{}).
 		Owns(&clusterv1.Machine{}).
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(r.ClusterToTalosControlPlane),
 		).
 		WithOptions(options).
@@ -174,7 +173,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 		}
 
-		r.Log.Info("successfully updated control plane status")
+		logger.Info("successfully updated control plane status")
 	}()
 
 	if !tcp.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -252,7 +251,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 
 // ClusterToTalosControlPlane is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
 // for TalosControlPlane based on updates to a Cluster.
-func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(o client.Object) []ctrl.Request {
+func (r *TalosControlPlaneReconciler) ClusterToTalosControlPlane(_ context.Context, o client.Object) []ctrl.Request {
 	c, ok := o.(*clusterv1.Cluster)
 	if !ok {
 		r.Log.Error(nil, fmt.Sprintf("expected a Cluster but got a %T", o))

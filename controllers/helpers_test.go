@@ -14,18 +14,18 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/crypto/tls"
 	"github.com/siderolabs/crypto/x509"
-	"github.com/siderolabs/talos/pkg/grpc/gen"
+	"github.com/siderolabs/gen/slices"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/api/storage"
-	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1/generate"
+	"github.com/siderolabs/talos/pkg/machinery/config/generate"
+	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"github.com/siderolabs/talos/pkg/machinery/proto"
 	"google.golang.org/grpc"
@@ -34,7 +34,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"gopkg.in/typ.v4/slices"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -95,19 +94,18 @@ func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.
 }
 
 func newFakeClient(initObjs ...client.Object) client.Client {
-	return &fakeClient{
-		startTime: time.Now(),
-		Client:    fake.NewClientBuilder().WithObjects(initObjs...).WithScheme(fakeScheme).Build(),
-	}
+	return fake.NewClientBuilder().
+		WithObjects(initObjs...).
+		WithScheme(fakeScheme).
+		WithStatusSubresource(
+			&clusterv1.Cluster{},
+			&clusterv1.Machine{},
+			&controlplanev1.TalosControlPlane{},
+		).
+		Build()
 }
 
-type fakeClient struct {
-	startTime time.Time
-	mux       sync.Mutex
-	client.Client
-}
-
-func createSecrets(ctx context.Context, obj client.Client, cluster *clusterv1.Cluster, secretsBundle *generate.SecretsBundle, machineAddress string) error {
+func createSecrets(ctx context.Context, obj client.Client, cluster *clusterv1.Cluster, secretsBundle *secrets.Bundle, machineAddress string) error {
 	ca := &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Secret",
@@ -123,12 +121,12 @@ func createSecrets(ctx context.Context, obj client.Client, cluster *clusterv1.Cl
 		return err
 	}
 
-	input, err := generate.NewInput(cluster.Name, "https://localhost:6443", constants.DefaultKubernetesVersion, secretsBundle)
+	input, err := generate.NewInput(cluster.Name, "https://localhost:6443", constants.DefaultKubernetesVersion, generate.WithSecretsBundle(secretsBundle))
 	if err != nil {
 		return err
 	}
 
-	config, err := generate.Talosconfig(input)
+	config, err := input.Talosconfig()
 	if err != nil {
 		return err
 	}
@@ -330,7 +328,7 @@ func generateCRD(gvk schema.GroupVersionKind, properties map[string]apiextension
 	}
 }
 
-func startMachineServer(ctx context.Context, secretsBundle *generate.SecretsBundle) (*machineService, string, error) {
+func startMachineServer(ctx context.Context, secretsBundle *secrets.Bundle) (*machineService, string, error) {
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, "", err
@@ -344,7 +342,7 @@ func startMachineServer(ctx context.Context, secretsBundle *generate.SecretsBund
 
 	var generator tls.Generator
 
-	generator, err = gen.NewLocalGenerator(ca.Key, ca.Crt)
+	generator, err = NewLocalGenerator(ca.Key, ca.Crt)
 	if err != nil {
 		return nil, "", err
 	}

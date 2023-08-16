@@ -8,8 +8,9 @@ NAME := cluster-api-control-plane-talos-controller
 WITH_RACE ?= false
 CGO_ENABLED = 0
 TESTPKGS ?= ./controllers/...
-CONTROLLER_GEN_VERSION ?= v0.11.3
-CONVERSION_GEN_VERSION ?= v0.26.0
+
+CONTROLLER_GEN_VERSION ?= v0.12.0
+CONVERSION_GEN_VERSION ?= v0.27.2
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
 GO_BUILDFLAGS += -race
@@ -21,8 +22,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/siderolabs/tools:v1.4.0-1-g955aabc
-PKGS ?= v1.4.1-5-ga333a84
+TOOLS ?= ghcr.io/siderolabs/tools:v1.5.0
+PKGS ?= v1.5.0
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
