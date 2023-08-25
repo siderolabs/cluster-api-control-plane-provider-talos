@@ -120,13 +120,14 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
+	leaveErr := r.gracefulEtcdLeave(ctx, c, util.ObjectKey(cluster), *deleteMachine)
+
 	err = r.Client.Delete(ctx, deleteMachine)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.gracefulEtcdLeave(ctx, c, util.ObjectKey(cluster), *deleteMachine)
-	if err != nil {
+	if leaveErr != nil {
 		return ctrl.Result{}, err
 	}
 
