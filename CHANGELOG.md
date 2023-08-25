@@ -1,3 +1,31 @@
+## [CAPI Control Plane Provider Talos 0.5.3](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.3) (2023-08-25)
+
+Welcome to the v0.5.3 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Contributors
+
+* Andrey Smirnov
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`7f8e2be`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/7f8e2be69ef4a0274cf948962e59270e0db7e33e) fix: attempt etcd leave before deleting a Machine
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.5.2](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.2)
+
 ## [CAPI Control Plane Provider Talos 0.5.2](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.2) (2023-08-17)
 
 Welcome to the v0.5.2 release of CAPI Control Plane Provider Talos!  
