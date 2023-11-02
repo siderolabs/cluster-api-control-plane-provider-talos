@@ -19,11 +19,15 @@ spec:
         - command:
             - /manager
           args:
-            - --metrics-bind-addr=127.0.0.1:8080
+            - --metrics-bind-addr=0.0.0.0:8080
             - --enable-leader-election
           image: controller:latest
           imagePullPolicy: Always
           name: manager
+          ports:
+            - containerPort: 8080
+              name: metrics
+              protocol: TCP
           resources:
             limits:
               cpu: 1000m
