@@ -405,6 +405,18 @@ type machineService struct {
 	etcdMembers         *machine.EtcdMemberListResponse
 	serviceListResponse *machine.ServiceListResponse
 	resetChan           chan struct{}
+
+	requestsMu               sync.Mutex
+	etcdRemoveMemberRequests []*machine.EtcdRemoveMemberRequest
+}
+
+func (ms *machineService) getEtcdRemoveMemberRequests() map[string]any {
+	ms.requestsMu.Lock()
+	defer ms.requestsMu.Unlock()
+
+	return slices.ToMap(ms.etcdRemoveMemberRequests, func(item *machine.EtcdRemoveMemberRequest) (string, any) {
+		return item.Member, struct{}{}
+	})
 }
 
 func (ms *machineService) addSequenceEvents(node string, events ...*machine.SequenceEvent) error {
@@ -491,6 +503,15 @@ func (ms *machineService) Events(req *machine.EventsRequest, serv machine.Machin
 
 func (ms *machineService) EtcdForfeitLeadership(ctx context.Context, req *machine.EtcdForfeitLeadershipRequest) (*machine.EtcdForfeitLeadershipResponse, error) {
 	return &machine.EtcdForfeitLeadershipResponse{}, nil
+}
+
+func (ms *machineService) EtcdRemoveMember(ctx context.Context, req *machine.EtcdRemoveMemberRequest) (*machine.EtcdRemoveMemberResponse, error) {
+	ms.requestsMu.Lock()
+	defer ms.requestsMu.Unlock()
+
+	ms.etcdRemoveMemberRequests = append(ms.etcdRemoveMemberRequests, req)
+
+	return &machine.EtcdRemoveMemberResponse{}, nil
 }
 
 func (ms *machineService) EtcdLeaveCluster(ctx context.Context, req *machine.EtcdLeaveClusterRequest) (*machine.EtcdLeaveClusterResponse, error) {

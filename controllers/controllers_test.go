@@ -6,6 +6,7 @@ package controllers_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,112 +368,6 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
 	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
-	setEtcdRunning := func(address string) {
-		ms, ok := suite.machineServices[address]
-		g.Expect(ok).To(BeTrue())
-
-		ms.setServiceListResponse(
-			&machine.ServiceListResponse{
-				Messages: []*machine.ServiceList{
-					{
-						Metadata: &common.Metadata{
-							Hostname: address,
-						},
-						Services: []*machine.ServiceInfo{
-							{
-								Id:    "etcd",
-								State: "running",
-								Events: &machine.ServiceEvents{
-									Events: []*machine.ServiceEvent{
-										{
-											Msg:   "running",
-											State: "Running",
-										},
-									},
-								},
-								Health: &machine.ServiceHealth{
-									Healthy: true,
-								},
-							},
-						},
-					},
-				},
-			})
-	}
-
-	getMachines := func() []clusterv1.Machine {
-		machineList := &clusterv1.MachineList{}
-		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
-
-		return machineList.Items
-	}
-
-	updateEtcdMembers := func() {
-		machines := getMachines()
-
-		members := make([]*machine.EtcdMember, 0, len(machines))
-
-		for id, m := range machines {
-			members = append(members, &machine.EtcdMember{
-				Id:       uint64(id),
-				Hostname: m.Name,
-			})
-		}
-
-		for _, m := range machines {
-			if len(m.Status.Addresses) == 0 {
-				continue
-			}
-
-			ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
-			g.Expect(ok).To(BeTrue())
-
-			ms.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
-				Messages: []*machine.EtcdMembers{
-					{
-						Metadata: &common.Metadata{
-							Hostname: m.Name,
-						},
-						Members: members,
-					},
-				},
-			})
-		}
-	}
-
-	addBootEvents := func() {
-		machines := getMachines()
-
-		bootDoneEvents := map[string][]*machine.SequenceEvent{}
-
-		for _, m := range machines {
-			bootDoneEvents[m.Name] = []*machine.SequenceEvent{
-				{
-					Sequence: "boot",
-					Action:   machine.SequenceEvent_START,
-				}, {
-					Sequence: "boot",
-					Action:   machine.SequenceEvent_STOP,
-				},
-			}
-		}
-
-		for _, m := range machines {
-			if len(m.Status.Addresses) == 0 {
-				continue
-			}
-
-			ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
-			g.Expect(ok).To(BeTrue())
-
-			ms.resetSequenceEvents()
-
-			for name, events := range bootDoneEvents {
-				g.Expect(ms.addSequenceEvents(name, events...)).To(Succeed())
-			}
-		}
-	}
-
 	var eg errgroup.Group
 
 	ctx, cancel := context.WithTimeout(suite.ctx, time.Minute)
@@ -481,48 +376,9 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	// background loop that maintains the state of Talos API responses, adds node refs and addresses to the machine, creates node response
 	// it basically adjusts the state to be consistent for a running and healthy cluster
 	eg.Go(func() error {
-		ticker := time.NewTicker(time.Millisecond * 100)
-		defer ticker.Stop()
+		suite.runUpdater(ctx, fakeClient, cluster)
 
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-ticker.C:
-				machines := getMachines()
-				for _, machine := range machines {
-					if len(machine.Status.Addresses) == 0 {
-						_, address := suite.startMachineServer()
-
-						patchHelper, err := patch.NewHelper(&machine, fakeClient)
-						machine.Status.Addresses = []clusterv1.MachineAddress{
-							{
-								Address: address,
-								Type:    clusterv1.MachineInternalIP,
-							},
-						}
-						machine.Status.NodeRef = &corev1.ObjectReference{
-							Kind:       "Node",
-							APIVersion: corev1.SchemeGroupVersion.String(),
-							Name:       machine.Name,
-						}
-
-						g.Expect(err).To(BeNil())
-						g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
-
-						g.Expect(fakeClient.Create(ctx, createNode(&machine, true))).To(Succeed())
-
-						g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, address))
-					}
-
-					address := machine.Status.Addresses[0].Address
-
-					setEtcdRunning(address)
-					updateEtcdMembers()
-					addBootEvents()
-				}
-			}
-		}
+		return nil
 	})
 
 	g.Eventually(func(g Gomega) {
@@ -566,14 +422,14 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
-		machines := getMachines()
+		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
 			g.Expect(machine.Spec.Version).ToNot(BeNil())
 			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
 		}
 	}, time.Minute).Should(Succeed())
 
-	for _, machine := range getMachines() {
+	for _, machine := range suite.getMachines(fakeClient, cluster) {
 		talosconfig := &bootstrapv1alpha3.TalosConfig{}
 
 		fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)
@@ -591,7 +447,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
-		machines := getMachines()
+		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
 			g.Expect(machine.Spec.Version).ToNot(BeNil())
 			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
@@ -600,6 +456,245 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 	cancel()
 	g.Expect(eg.Wait()).To(Succeed())
+}
+
+func (suite *ControllersSuite) TestUppercaseHostnames() {
+	fakeClient := newFakeClient()
+
+	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-uppercase-hostnames", pointer.Int32(3))
+
+	g := NewWithT(suite.T())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	// this first requeue is to add finalizer
+	g.Expect(result).To(Equal(ctrl.Result{}))
+	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+	var eg errgroup.Group
+
+	ctx, cancel := context.WithTimeout(suite.ctx, time.Minute)
+	defer cancel()
+
+	// background loop that maintains the state of Talos API responses, adds node refs and addresses to the machine, creates node response
+	// it basically adjusts the state to be consistent for a running and healthy cluster
+	eg.Go(func() error {
+		suite.runUpdater(ctx, fakeClient, cluster)
+
+		return nil
+	})
+
+	g.Eventually(func(g Gomega) {
+		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
+		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
+		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
+		g.Expect(infrastructureMachineTemplate.GetOwnerReferences()).To(ContainElement(metav1.OwnerReference{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Cluster",
+			Name:       cluster.Name,
+			UID:        cluster.UID,
+		}))
+
+		// Always expect that the Finalizer is set on the passed in resource
+		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+
+		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
+		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
+
+		machineList := &clusterv1.MachineList{}
+		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+		g.Expect(machineList.Items).To(HaveLen(3))
+
+		machine := machineList.Items[0]
+		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
+	}, time.Second).Should(Succeed())
+
+	cancel()
+	g.Expect(eg.Wait()).To(Succeed())
+
+	time.Sleep(time.Second * 1)
+
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+
+	removedMachines := map[string]any{}
+
+	for _, m := range suite.getMachines(fakeClient, cluster) {
+		ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+		g.Expect(ok).To(BeTrue())
+
+		for k := range ms.getEtcdRemoveMemberRequests() {
+			removedMachines[k] = struct{}{}
+		}
+	}
+
+	g.Expect(len(removedMachines)).To(BeEquivalentTo(0), "unexpected etcd remove member requests count was called")
+}
+
+func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client.Client, cluster *clusterv1.Cluster) {
+	g := NewWithT(suite.T())
+
+	ticker := time.NewTicker(time.Millisecond * 100)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			machines := suite.getMachines(fakeClient, cluster)
+			for _, machine := range machines {
+				if len(machine.Status.Addresses) == 0 {
+					_, address := suite.startMachineServer()
+
+					patchHelper, err := patch.NewHelper(&machine, fakeClient)
+					machine.Status.Addresses = []clusterv1.MachineAddress{
+						{
+							Address: address,
+							Type:    clusterv1.MachineInternalIP,
+						},
+					}
+					machine.Status.NodeRef = &corev1.ObjectReference{
+						Kind:       "Node",
+						APIVersion: corev1.SchemeGroupVersion.String(),
+						Name:       machine.Name,
+					}
+
+					g.Expect(err).To(BeNil())
+					g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
+
+					g.Expect(fakeClient.Create(ctx, createNode(&machine, true))).To(Succeed())
+
+					g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, address))
+				}
+
+				address := machine.Status.Addresses[0].Address
+
+				suite.setEtcdRunning(address)
+				suite.updateEtcdMembers(fakeClient, cluster)
+				suite.addBootEvents(fakeClient, cluster)
+			}
+		}
+	}
+}
+
+func (suite *ControllersSuite) getMachines(fakeClient client.Client, cluster *clusterv1.Cluster) []clusterv1.Machine {
+	g := NewWithT(suite.T())
+	machineList := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+
+	return machineList.Items
+}
+
+func (suite *ControllersSuite) updateEtcdMembers(fakeClient client.Client, cluster *clusterv1.Cluster) {
+	g := NewWithT(suite.T())
+
+	machines := suite.getMachines(fakeClient, cluster)
+
+	members := make([]*machine.EtcdMember, 0, len(machines))
+
+	for id, m := range machines {
+		members = append(members, &machine.EtcdMember{
+			Id:       uint64(id),
+			Hostname: strings.ToUpper(m.Name),
+		})
+	}
+
+	for _, m := range machines {
+		if len(m.Status.Addresses) == 0 {
+			continue
+		}
+
+		ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+		g.Expect(ok).To(BeTrue())
+
+		ms.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
+			Messages: []*machine.EtcdMembers{
+				{
+					Metadata: &common.Metadata{
+						Hostname: m.Name,
+					},
+					Members: members,
+				},
+			},
+		})
+	}
+}
+
+func (suite *ControllersSuite) addBootEvents(fakeClient client.Client, cluster *clusterv1.Cluster) {
+	g := NewWithT(suite.T())
+
+	machines := suite.getMachines(fakeClient, cluster)
+
+	bootDoneEvents := map[string][]*machine.SequenceEvent{}
+
+	for _, m := range machines {
+		bootDoneEvents[m.Name] = []*machine.SequenceEvent{
+			{
+				Sequence: "boot",
+				Action:   machine.SequenceEvent_START,
+			}, {
+				Sequence: "boot",
+				Action:   machine.SequenceEvent_STOP,
+			},
+		}
+	}
+
+	for _, m := range machines {
+		if len(m.Status.Addresses) == 0 {
+			continue
+		}
+
+		ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+		g.Expect(ok).To(BeTrue())
+
+		ms.resetSequenceEvents()
+
+		for name, events := range bootDoneEvents {
+			g.Expect(ms.addSequenceEvents(name, events...)).To(Succeed())
+		}
+	}
+}
+
+func (suite *ControllersSuite) setEtcdRunning(address string) {
+	g := NewWithT(suite.T())
+
+	ms, ok := suite.machineServices[address]
+	g.Expect(ok).To(BeTrue())
+
+	ms.setServiceListResponse(
+		&machine.ServiceListResponse{
+			Messages: []*machine.ServiceList{
+				{
+					Metadata: &common.Metadata{
+						Hostname: address,
+					},
+					Services: []*machine.ServiceInfo{
+						{
+							Id:    "etcd",
+							State: "running",
+							Events: &machine.ServiceEvents{
+								Events: []*machine.ServiceEvent{
+									{
+										Msg:   "running",
+										State: "Running",
+									},
+								},
+							},
+							Health: &machine.ServiceHealth{
+								Healthy: true,
+							},
+						},
+					},
+				},
+			},
+		})
 }
 
 func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string, replicas *int32) (*clusterv1.Cluster, *controlplanev1.TalosControlPlane, *unstructured.Unstructured) {

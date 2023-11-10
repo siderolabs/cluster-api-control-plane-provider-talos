@@ -215,11 +215,22 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 
 		present := false
 		for _, machine := range machines.Items {
-			// break apart the noderef name in case it's an fqdn (like in AWS)
-			machineNodeNameExploded := strings.Split(machine.Status.NodeRef.Name, ".")
+			hostname := machine.Status.NodeRef.Name
 
-			if machineNodeNameExploded[0] == member.Hostname {
+			for _, address := range machine.Status.Addresses {
+				if address.Type == clusterv1.MachineHostName {
+					hostname = address.Address
+
+					break
+				}
+			}
+
+			// break apart the noderef name in case it's an fqdn (like in AWS)
+			hostname, _, _ = strings.Cut(hostname, ".")
+
+			if strings.EqualFold(hostname, member.Hostname) {
 				present = true
+
 				break
 			}
 		}
