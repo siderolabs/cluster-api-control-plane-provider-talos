@@ -24,6 +24,7 @@ ENV GO111MODULE on
 ENV GOPROXY https://proxy.golang.org
 ENV GOCACHE /.cache/go-build
 ENV GOMODCACHE /.cache/mod
+ENV GOTOOLCHAIN local
 ARG CONTROLLER_GEN_VERSION
 ARG CONVERSION_GEN_VERSION
 RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION}

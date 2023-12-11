@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
@@ -177,7 +178,8 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 				Name:       GenericInfrastructureMachineCRD.Name,
 				Namespace:  GenericInfrastructureMachineCRD.Namespace,
 			},
-			Version: pointer.String("v1.16.6"),
+			NodeDeletionTimeout: &metav1.Duration{Duration: 10 * time.Second},
+			Version:             pointer.String("v1.16.6"),
 		},
 		Status: clusterv1.MachineStatus{
 			NodeRef: &corev1.ObjectReference{
@@ -193,7 +195,6 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 			},
 		},
 	}
-	machine.Default()
 
 	return machine, createNode(machine, ready)
 }
