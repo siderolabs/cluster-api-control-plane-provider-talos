@@ -1,3 +1,31 @@
+## [CAPI Control Plane Provider Talos 0.5.5](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.5) (2024-01-23)
+
+Welcome to the v0.5.5 release of CAPI Control Plane Provider Talos!  
+*This is a pre-release of CAPI Control Plane Provider Talos*
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Contributors
+
+* Andrey Smirnov
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`c3a4cf6`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/c3a4cf6ae50864f9a0f00668b234adf55e02be2b) fix: set a default controller runtime log
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.5.4](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.4)
+
 ## [CAPI Control Plane Provider Talos 0.5.4](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.4) (2023-12-15)
 
 Welcome to the v0.5.4 release of CAPI Control Plane Provider Talos!  
