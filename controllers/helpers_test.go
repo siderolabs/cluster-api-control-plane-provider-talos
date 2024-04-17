@@ -21,7 +21,7 @@ import (
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/crypto/tls"
 	"github.com/siderolabs/crypto/x509"
-	"github.com/siderolabs/gen/slices"
+	"github.com/siderolabs/gen/xslices"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/api/storage"
@@ -83,7 +83,7 @@ func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.
 
 	var tracker *remote.ClusterCacheTracker
 	if options.cluster != nil {
-		tracker = remote.NewTestClusterCacheTracker(logger, client, fakeScheme, *options.cluster)
+		tracker = remote.NewTestClusterCacheTracker(logger, client, client, fakeScheme, *options.cluster)
 	}
 
 	return &controllers.TalosControlPlaneReconciler{
@@ -339,7 +339,7 @@ func startMachineServer(ctx context.Context, secretsBundle *secrets.Bundle) (*ma
 
 	ips := []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1")}
 
-	netIPs := slices.Map(ips, func(ip netip.Addr) net.IP { return ip.AsSlice() })
+	netIPs := xslices.Map(ips, func(ip netip.Addr) net.IP { return ip.AsSlice() })
 
 	var generator tls.Generator
 
@@ -408,15 +408,15 @@ type machineService struct {
 	resetChan           chan struct{}
 
 	requestsMu               sync.Mutex
-	etcdRemoveMemberRequests []*machine.EtcdRemoveMemberRequest
+	etcdRemoveMemberRequests []*machine.EtcdRemoveMemberByIDRequest
 }
 
-func (ms *machineService) getEtcdRemoveMemberRequests() map[string]any {
+func (ms *machineService) getEtcdRemoveMemberRequests() map[uint64]any {
 	ms.requestsMu.Lock()
 	defer ms.requestsMu.Unlock()
 
-	return slices.ToMap(ms.etcdRemoveMemberRequests, func(item *machine.EtcdRemoveMemberRequest) (string, any) {
-		return item.Member, struct{}{}
+	return xslices.ToMap(ms.etcdRemoveMemberRequests, func(item *machine.EtcdRemoveMemberByIDRequest) (uint64, any) {
+		return item.MemberId, struct{}{}
 	})
 }
 
@@ -497,7 +497,7 @@ func (ms *machineService) Events(req *machine.EventsRequest, serv machine.Machin
 		case <-serv.Context().Done():
 			return serv.Context().Err()
 		case e := <-events:
-			serv.Send(e)
+			serv.Send(e) //nolint:errcheck
 		}
 	}
 }
@@ -506,13 +506,13 @@ func (ms *machineService) EtcdForfeitLeadership(ctx context.Context, req *machin
 	return &machine.EtcdForfeitLeadershipResponse{}, nil
 }
 
-func (ms *machineService) EtcdRemoveMember(ctx context.Context, req *machine.EtcdRemoveMemberRequest) (*machine.EtcdRemoveMemberResponse, error) {
+func (ms *machineService) EtcdRemoveMemberByID(ctx context.Context, req *machine.EtcdRemoveMemberByIDRequest) (*machine.EtcdRemoveMemberByIDResponse, error) {
 	ms.requestsMu.Lock()
 	defer ms.requestsMu.Unlock()
 
 	ms.etcdRemoveMemberRequests = append(ms.etcdRemoveMemberRequests, req)
 
-	return &machine.EtcdRemoveMemberResponse{}, nil
+	return &machine.EtcdRemoveMemberByIDResponse{}, nil
 }
 
 func (ms *machineService) EtcdLeaveCluster(ctx context.Context, req *machine.EtcdLeaveClusterRequest) (*machine.EtcdLeaveClusterResponse, error) {

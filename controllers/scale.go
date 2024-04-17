@@ -32,7 +32,7 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	// Create a new Machine w/ join
 	r.Log.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-	return r.bootControlPlane(ctx, cluster, tcp, controlPlane, false)
+	return r.bootControlPlane(ctx, cluster, tcp, false)
 }
 
 func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
@@ -60,7 +60,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{}, fmt.Errorf("no machines found")
 	}
 
-	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, cluster, collections.ToMachineList(controlPlane.Machines).Items); err != nil {
+	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, collections.ToMachineList(controlPlane.Machines).Items); err != nil {
 		r.Log.Info("waiting for all nodes to finish boot sequence", "error", err)
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -120,7 +120,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
-	leaveErr := r.gracefulEtcdLeave(ctx, c, util.ObjectKey(cluster), *deleteMachine)
+	leaveErr := r.gracefulEtcdLeave(ctx, c, *deleteMachine)
 
 	err = r.Client.Delete(ctx, deleteMachine)
 	if err != nil {

@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster, ownedMachines []clusterv1.Machine) error {
+func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, ownedMachines []clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
@@ -102,7 +102,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
-func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, machineToLeave clusterv1.Machine) error {
+func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, machineToLeave clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
@@ -137,29 +137,29 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.
 // This is used in times when the machine was deleted out from under us.
-func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, cluster client.ObjectKey, memberName string) error {
+func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, member *machine.EtcdMember) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
 
-	r.Log.Info("removing etcd member", "memberName", memberName)
+	r.Log.Info("removing etcd member", "memberName", member.Hostname, "memberId", member.Id)
 
-	return c.EtcdRemoveMember(
+	return c.EtcdRemoveMemberByID(
 		ctx,
-		&machine.EtcdRemoveMemberRequest{
-			Member: memberName,
+		&machine.EtcdRemoveMemberByIDRequest{
+			MemberId: member.Id,
 		},
 	)
 }
 
 // auditEtcd rolls through all etcd members to see if there's a matching controlplane machine
 // It uses the first controlplane node returned as the etcd endpoint
-func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey, cpName string) error {
+func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
 
-	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster, cpName)
+	machines, err := r.getControlPlaneMachinesForCluster(ctx, cluster)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 		if !present {
 			r.Log.Info("found etcd member that doesn't exist as controlplane machine", "member", member)
 
-			if err = r.forceEtcdLeave(ctx, c, cluster, member.Hostname); err != nil {
+			if err = r.forceEtcdLeave(ctx, c, member); err != nil {
 				return fmt.Errorf("error leaving etcd for member %q via machine %q", member, designatedCPMachine.Name)
 			}
 		}

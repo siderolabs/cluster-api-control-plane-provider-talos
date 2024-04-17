@@ -314,7 +314,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 				},
 				Members: []*machine.EtcdMember{
 					{
-						Id:       0,
+						Id:       1,
 						Hostname: "foo-machine1",
 					},
 				},
@@ -432,7 +432,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	for _, machine := range suite.getMachines(fakeClient, cluster) {
 		talosconfig := &bootstrapv1alpha3.TalosConfig{}
 
-		fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)
+		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)).NotTo(HaveOccurred())
 
 		patchHelper, err := patch.NewHelper(talosconfig, fakeClient)
 		talosconfig.Spec.TalosVersion = "v1.5.0"
@@ -523,7 +523,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 
-	removedMachines := map[string]any{}
+	removedMachines := map[uint64]any{}
 
 	for _, m := range suite.getMachines(fakeClient, cluster) {
 		ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
