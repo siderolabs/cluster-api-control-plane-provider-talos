@@ -10,11 +10,11 @@ require (
 	github.com/onsi/gomega v1.32.0
 	github.com/pkg/errors v0.9.1
 	github.com/siderolabs/capi-utils v0.0.0-20240417131828-8470421c5823
-	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.4
+	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.5
 	github.com/siderolabs/crypto v0.4.4
 	github.com/siderolabs/gen v0.4.8
 	github.com/siderolabs/go-retry v0.3.3
-	github.com/siderolabs/talos/pkg/machinery v1.7.0-beta.1
+	github.com/siderolabs/talos/pkg/machinery v1.7.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.7.0
@@ -142,7 +142,7 @@ require (
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/net v0.23.0 // indirect
 	golang.org/x/oauth2 v0.18.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/term v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.5.0 // indirect

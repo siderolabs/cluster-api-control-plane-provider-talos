@@ -5,7 +5,7 @@ type: kubernetes
 
 services:
   - name: docker
-    image: ghcr.io/smira/docker:20.10-dind-hacked
+    image: docker:25.0.2-dind
     entrypoint: [dockerd]
     privileged: true
     volumes:
@@ -210,6 +210,6 @@ depends_on:
   - default
 ---
 kind: signature
-hmac: e3d18401c2205988061491de11ad06b3336a5a0f6df49787832683e472b8d427
+hmac: eeb94937711d209fb900a20a2bef3dac019313017914269a7e7bcf896d8d7e16
 
 ...
