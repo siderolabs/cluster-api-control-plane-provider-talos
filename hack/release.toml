@@ -6,9 +6,9 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.5.4"
+previous = "v0.5.5"
 
-pre_release = true
+pre_release = false
 
 preface = """\
 """
