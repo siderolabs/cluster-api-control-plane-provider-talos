@@ -347,6 +347,9 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		Namespace:   tcp.Namespace,
 		OwnerRef:    infraCloneOwner,
 		ClusterName: cluster.Name,
+		Labels: map[string]string{
+			clusterv1.MachineControlPlaneLabel: "",
+		},
 	})
 	if err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.InfrastructureTemplateCloningFailedReason,
