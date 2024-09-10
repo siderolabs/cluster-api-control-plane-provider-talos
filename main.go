@@ -44,8 +44,7 @@ var (
 	webhookPort          int
 	webhookCertDir       string
 	healthAddr           string
-	tlsOptions           = flags.TLSOptions{}
-	diagnosticsOptions   = flags.DiagnosticsOptions{}
+	managerOptions       = flags.ManagerOptions{}
 	logOptions           = logs.NewOptions()
 )
 
@@ -69,8 +68,7 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Webhook cert dir, only used when webhook-port is specified.")
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
-	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
-	flags.AddTLSOptions(fs, &tlsOptions)
+	flags.AddManagerOptions(fs, &managerOptions)
 }
 
 func main() {
@@ -86,9 +84,7 @@ func main() {
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
 
-	diagnosticsOpts := flags.GetDiagnosticsOptions(diagnosticsOptions)
-
-	tlsOptionOverrides, err := flags.GetTLSOptionOverrideFuncs(tlsOptions)
+	tlsOptionOverrides, diagnosticsOpts, err := flags.GetManagerOptions(managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to add TLS settings to the webhook server")
 		os.Exit(1)
@@ -101,7 +97,7 @@ func main() {
 		Scheme:                 scheme,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "controller-leader-election-cacppt",
-		Metrics:                diagnosticsOpts,
+		Metrics:                *diagnosticsOpts,
 		HealthProbeBindAddress: healthAddr,
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{

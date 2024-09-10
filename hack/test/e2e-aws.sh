@@ -22,10 +22,10 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v1.7.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
-K8S_VERSION="${K8S_VERSION:-v1.29.3}"
+TALOS_VERSION="${TALOS_DEFAULT:-v1.8.0-beta.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
+K8S_VERSION="${K8S_VERSION:-v1.29.8}"
 export WORKLOAD_KUBERNETES_VERSION="${WORKLOAD_KUBERNETES_VERSION:-${K8S_VERSION}}"
-export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.29.4}"
+export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.30.0}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}

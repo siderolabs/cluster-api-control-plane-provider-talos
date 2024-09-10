@@ -9,8 +9,8 @@ WITH_RACE ?= false
 CGO_ENABLED = 0
 TESTPKGS ?= ./controllers/...
 
-CONTROLLER_GEN_VERSION ?= v0.14.0
-CONVERSION_GEN_VERSION ?= v0.29.3
+CONTROLLER_GEN_VERSION ?= v0.16.2
+CONVERSION_GEN_VERSION ?= v0.31.0
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
 GO_BUILDFLAGS += -race
@@ -22,8 +22,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/siderolabs/tools:v1.7.0-1-g10b2a69
-PKGS ?= v1.7.0-5-gb7f1920
+TOOLS ?= ghcr.io/siderolabs/tools:v1.8.0-1-ga0c06c6
+PKGS ?= v1.8.0
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64
