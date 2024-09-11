@@ -72,8 +72,10 @@ RUN cd config/manager \
   && cp config/metadata/metadata.yaml /metadata.yaml
 
 FROM scratch AS release
-COPY --from=release-build /control-plane-components.yaml /control-plane-components.yaml
-COPY --from=release-build /metadata.yaml /metadata.yaml
+ARG TAG
+COPY --from=release-build /control-plane-components.yaml /control-plane-talos/${TAG}/control-plane-components.yaml
+COPY --from=release-build /metadata.yaml /control-plane-talos/${TAG}/metadata.yaml
+
 
 FROM build AS binary
 ARG GO_BUILDFLAGS

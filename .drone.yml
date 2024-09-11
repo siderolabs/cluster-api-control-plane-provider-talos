@@ -167,7 +167,7 @@ steps:
         - sha512
       draft: true
       files:
-        - _out/*
+        - _out/control-plane-talos/*/*
       note: _out/RELEASE_NOTES.md
     when:
       event:
