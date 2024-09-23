@@ -10,26 +10,26 @@ require (
 	github.com/onsi/gomega v1.34.2
 	github.com/pkg/errors v0.9.1
 	github.com/siderolabs/capi-utils v0.0.0-20240910133445-d888b3297a6f
-	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.6-0.20240910114321-c0a615238eef
+	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.6
 	github.com/siderolabs/crypto v0.4.4
 	github.com/siderolabs/gen v0.5.0
 	github.com/siderolabs/go-retry v0.3.3
-	github.com/siderolabs/talos/pkg/machinery v1.8.0-beta.0
+	github.com/siderolabs/talos/pkg/machinery v1.8.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.8.0
 	google.golang.org/grpc v1.66.0
 	google.golang.org/protobuf v1.34.2
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.31.0
-	k8s.io/apiextensions-apiserver v0.31.0
-	k8s.io/apimachinery v0.31.0
-	k8s.io/apiserver v0.31.0
-	k8s.io/client-go v0.31.0
-	k8s.io/component-base v0.31.0
+	k8s.io/api v0.31.1
+	k8s.io/apiextensions-apiserver v0.31.1
+	k8s.io/apimachinery v0.31.1
+	k8s.io/apiserver v0.31.1
+	k8s.io/client-go v0.31.1
+	k8s.io/component-base v0.31.1
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20240711033017-18e509b52bc8
-	sigs.k8s.io/cluster-api v1.8.2
+	sigs.k8s.io/cluster-api v1.8.3
 	sigs.k8s.io/controller-runtime v0.19.0
 )
 
@@ -116,7 +116,7 @@ require (
 	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/siderolabs/go-api-signature v0.3.6 // indirect
 	github.com/siderolabs/go-blockdevice v0.4.7 // indirect
-	github.com/siderolabs/go-blockdevice/v2 v2.0.1 // indirect
+	github.com/siderolabs/go-blockdevice/v2 v2.0.2 // indirect
 	github.com/siderolabs/go-pointer v1.0.0 // indirect
 	github.com/siderolabs/net v0.4.0 // indirect
 	github.com/siderolabs/protoenc v0.2.1 // indirect
