@@ -47,6 +47,9 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+          env:
+            - name: GRPC_ENFORCE_ALPN_ENABLED # Compatibility with Talos < 1.9
+              value: "false"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
