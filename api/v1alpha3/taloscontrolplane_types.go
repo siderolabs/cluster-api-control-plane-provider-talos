@@ -163,6 +163,11 @@ type TalosControlPlaneStatus struct {
 	// Conditions defines current service state of the KubeadmControlPlane.
 	// +optional
 	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+
+	// version represents the minimum Kubernetes version for the control plane machines
+	// in the cluster.
+	// +optional
+	Version *string `json:"version,omitempty"`
 }
 
 // +kubebuilder:object:root=true

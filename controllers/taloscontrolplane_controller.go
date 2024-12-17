@@ -353,7 +353,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	})
 	if err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.InfrastructureTemplateCloningFailedReason,
-			clusterv1.ConditionSeverityError, err.Error())
+			clusterv1.ConditionSeverityError, "%s", err.Error())
 
 		return ctrl.Result{}, err
 	}
@@ -367,7 +367,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, bootstrapConfig)
 	if err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.BootstrapTemplateCloningFailedReason,
-			clusterv1.ConditionSeverityError, err.Error())
+			clusterv1.ConditionSeverityError, "%s", err.Error())
 
 		return ctrl.Result{}, err
 	}
@@ -401,7 +401,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	if err := r.Client.Create(ctx, machine); err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.MachineGenerationFailedReason,
-			clusterv1.ConditionSeverityError, err.Error())
+			clusterv1.ConditionSeverityError, "%s", err.Error())
 
 		return ctrl.Result{}, errors.Wrap(err, "Failed to create machine")
 	}
@@ -562,6 +562,11 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
+	lowestVersion := collections.FromMachineList(&ownedMachines).LowestVersion()
+	if lowestVersion != nil {
+		tcp.Status.Version = lowestVersion
+	}
+
 	c, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		r.Log.Info("failed to get kubeconfig for the cluster", "error", err)
@@ -619,7 +624,7 @@ func (r *TalosControlPlaneReconciler) reconcileExternalReference(ctx context.Con
 		return nil
 	}
 
-	obj, err := external.Get(ctx, r.Client, &ref, cluster.Namespace)
+	obj, err := external.Get(ctx, r.Client, &ref)
 	if err != nil {
 		return err
 	}
@@ -699,7 +704,7 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 
 	if err := r.etcdHealthcheck(ctx, tcp, machines.Items); err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.EtcdClusterHealthyCondition, controlplanev1.EtcdClusterUnhealthyReason,
-			clusterv1.ConditionSeverityWarning, err.Error())
+			clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		errs = kerrors.NewAggregate([]error{errs, err})
 	} else {
 		conditions.MarkTrue(tcp, controlplanev1.EtcdClusterHealthyCondition)
@@ -721,7 +726,7 @@ func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, c
 		}
 
 		conditions.MarkFalse(tcp, controlplanev1.ControlPlaneComponentsHealthyCondition, reason,
-			clusterv1.ConditionSeverityWarning, err.Error())
+			clusterv1.ConditionSeverityWarning, "%s", err.Error())
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 	} else {
@@ -800,7 +805,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		if !tcp.Status.Bootstrapped {
 			if err := r.bootstrapCluster(ctx, tcp, machines.Items); err != nil {
-				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, err.Error())
+				conditions.MarkFalse(tcp, controlplanev1.MachinesBootstrapped, controlplanev1.WaitingForTalosBootReason, clusterv1.ConditionSeverityInfo, "%s", err.Error())
 
 				logger.Info("bootstrap failed, retrying in 20 seconds", "error", err)
 

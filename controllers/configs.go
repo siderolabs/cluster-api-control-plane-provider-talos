@@ -23,6 +23,9 @@ import (
 )
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
+//
+// NOTE: There is no client.WithNodes(...) here, so no multiplexing is done. The request will hit any
+// of the controlplane nodes in machines list.
 func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines ...clusterv1.Machine) (*talosclient.Client, error) {
 	if len(machines) == 0 {
 		return nil, fmt.Errorf("at least one machine should be provided")

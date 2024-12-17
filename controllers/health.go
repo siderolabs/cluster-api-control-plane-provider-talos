@@ -15,7 +15,6 @@ import (
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -30,29 +29,36 @@ func (e *errServiceUnhealthy) Error() string {
 
 func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
-
 	defer cancel()
 
-	client, err := r.talosconfigForMachines(ctx, tcp, machines...)
-	if err != nil {
-		return err
-	}
+	for _, machine := range machines {
+		if err := func() error {
+			client, err := r.talosconfigForMachines(ctx, tcp, machine)
+			if err != nil {
+				return err
+			}
 
-	defer client.Close() //nolint:errcheck
+			defer client.Close() //nolint:errcheck
 
-	serviceList, err := client.ServiceList(ctx)
-	if err != nil {
-		return err
-	}
+			serviceList, err := client.ServiceList(ctx)
+			if err != nil {
+				return err
+			}
 
-	for _, message := range serviceList.Messages {
-		for _, svc := range message.Services {
-			if !svc.GetHealth().Unknown && !svc.GetHealth().Healthy {
-				return &errServiceUnhealthy{
-					service: svc.GetId(),
-					reason:  svc.GetState(),
+			for _, message := range serviceList.Messages {
+				for _, svc := range message.Services {
+					if !svc.GetHealth().Unknown && !svc.GetHealth().Healthy {
+						return &errServiceUnhealthy{
+							service: svc.GetId(),
+							reason:  svc.GetState(),
+						}
+					}
 				}
 			}
+
+			return nil
+		}(); err != nil {
+			return fmt.Errorf("machine %q: %w", machine.Name, err)
 		}
 	}
 
@@ -60,22 +66,59 @@ func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp 
 }
 
 func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
-	client, err := r.talosconfigForMachines(ctx, tcp, machines...)
-	if err != nil {
-		return err
-	}
-
-	defer client.Close() //nolint:errcheck
-
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	eventsCh := make(chan talosclient.EventResult)
+
+	var clients []*talosclient.Client
+
+	defer func() {
+		for _, client := range clients {
+			client.Close() //nolint:errcheck
+		}
+	}()
+
+	// watch events from all machines into a single channel
+	for _, machine := range machines {
+		client, err := r.talosconfigForMachines(ctx, tcp, machine)
+		if err != nil {
+			return err
+		}
+
+		clients = append(clients, client)
+
+		if err := client.EventsWatchV2(ctx, eventsCh, talosclient.WithTailEvents(-1)); err != nil {
+			return err
+		}
+	}
 
 	nodesBootStarted := map[string]struct{}{}
 	nodesBootStopped := map[string]struct{}{}
 
-	err = client.EventsWatch(ctx, func(ch <-chan talosclient.Event) {
-		defer cancel()
+loop:
+	for {
+		var eventResult talosclient.EventResult
 
-		for event := range ch {
+		select {
+		case <-ctx.Done():
+			// timeout
+			break loop
+		case eventResult = <-eventsCh:
+		}
+
+		if eventResult.Error != nil {
+			switch {
+			case talosclient.StatusCode(eventResult.Error) == codes.DeadlineExceeded:
+				// expected, we've exhausted events list
+			case errors.Is(eventResult.Error, context.Canceled):
+				// expected, fine
+			default:
+				return fmt.Errorf("failed to watch events: %w", eventResult.Error)
+			}
+		} else {
+			event := eventResult.Event
+
 			if msg, ok := event.Payload.(*machineapi.SequenceEvent); ok {
 				if msg.GetSequence() == "boot" { // can't use runtime constants as they're in `internal/`
 					switch msg.GetAction() { //nolint:exhaustive
@@ -87,28 +130,6 @@ func (r *TalosControlPlaneReconciler) ensureNodesBooted(ctx context.Context, tcp
 				}
 			}
 		}
-	}, talosclient.WithTailEvents(-1))
-
-	if err != nil {
-		unwrappedErr := err
-
-		for {
-			if s, ok := status.FromError(unwrappedErr); ok && s.Code() == codes.DeadlineExceeded {
-				// ignore deadline exceeded as we've just exhausted events list
-				err = nil
-
-				break
-			}
-
-			unwrappedErr = errors.Unwrap(unwrappedErr)
-			if unwrappedErr == nil {
-				break
-			}
-		}
-	}
-
-	if err != nil && !errors.Is(err, context.Canceled) {
-		return err
 	}
 
 	nodesNotFinishedBooting := []string{}
