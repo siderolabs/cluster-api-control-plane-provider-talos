@@ -96,7 +96,7 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 func getInfraResources(ctx context.Context, cl client.Client, machines collections.Machines) (map[string]*unstructured.Unstructured, error) {
 	result := map[string]*unstructured.Unstructured{}
 	for _, m := range machines {
-		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef, m.Namespace)
+		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef)
 		if err != nil {
 			if apierrors.IsNotFound(errors.Cause(err)) {
 				continue
