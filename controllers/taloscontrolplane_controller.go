@@ -374,7 +374,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
+			Name:      infraRef.Name,
 			Namespace: tcp.Namespace,
 			Labels: map[string]string{
 				clusterv1.ClusterNameLabel:         cluster.Name,
