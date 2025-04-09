@@ -9,6 +9,8 @@ WITH_RACE ?= false
 CGO_ENABLED = 0
 TESTPKGS ?= ./controllers/...
 
+KRES_IMAGE ?= ghcr.io/siderolabs/kres:latest
+
 CONTROLLER_GEN_VERSION ?= v0.16.2
 CONVERSION_GEN_VERSION ?= v0.31.0
 
@@ -145,3 +147,8 @@ unit-tests:  ## Performs unit tests
 
 check-dirty: ## Verifies that source tree is not dirty
 	@if test -n "`git status --porcelain`"; then echo "Source tree is dirty"; git status; exit 1 ; fi
+
+.PHONY: rekres
+rekres:
+	@docker pull $(KRES_IMAGE)
+	@docker run --rm --net=host --user $(shell id -u):$(shell id -g) -v $(PWD):/src -w /src -e GITHUB_TOKEN $(KRES_IMAGE)

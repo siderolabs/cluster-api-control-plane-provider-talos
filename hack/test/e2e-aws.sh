@@ -68,17 +68,14 @@ trap 'cleanup $?' INT TERM EXIT
 
 function build_registry_mirrors {
   if [[ "${CI:-false}" == "true" ]]; then
-    REGISTRY_MIRROR_FLAGS=
+    REGISTRY_MIRROR_FLAGS=()
 
-    for registry in docker.io k8s.gcr.io quay.io gcr.io ghcr.io registry.dev.talos-systems.io; do
+    for registry in docker.io registry.k8s.io quay.io gcr.io ghcr.io; do
       local service="registry-${registry//./-}.ci.svc"
-      local addr=`python3 -c "import socket; print(socket.gethostbyname('${service}'))"`
+      addr=$(python3 -c "import socket; print(socket.gethostbyname('${service}'))")
 
-      REGISTRY_MIRROR_FLAGS="${REGISTRY_MIRROR_FLAGS} --registry-mirror ${registry}=http://${addr}:5000"
+      REGISTRY_MIRROR_FLAGS+=("--registry-mirror=${registry}=http://${addr}:5000")
     done
-  else
-    # use the value from the environment, if present
-    REGISTRY_MIRROR_FLAGS=${REGISTRY_MIRROR_FLAGS:-}
   fi
 }
 
@@ -111,7 +108,7 @@ function cluster {
     TAG="${TALOS_VERSION}" ${TALOSCTL} cluster create \
       --name=${CREATED_CLUSTER} \
       --kubernetes-version=${K8S_VERSION} \
-      ${REGISTRY_MIRROR_FLAGS} \
+      "${REGISTRY_MIRROR_FLAGS[@]}" \
       --cidr 172.27.0.0/24 \
       --workers=0
 
