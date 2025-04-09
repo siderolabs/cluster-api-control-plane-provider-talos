@@ -1,3 +1,7 @@
+# THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
+#
+# Generated on 2025-04-09T12:06:20Z by kres d903dae.
+
 policies:
   - type: commit
     spec:
@@ -17,12 +21,21 @@ policies:
       body:
         required: true
       conventional:
-        types: ["chore","docs","perf","refactor","style","test","release"]
-        scopes: [".*"]
+        types:
+          - chore
+          - docs
+          - perf
+          - refactor
+          - style
+          - test
+          - release
+        scopes:
+          - .*
   - type: license
     spec:
       skipPaths:
         - .git/
+        - testdata/
       includeSuffixes:
         - .go
       excludeSuffixes:
