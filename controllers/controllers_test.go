@@ -156,8 +156,8 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 			Version: "v1.16.6",
 		},
 	}
-	tcp.Default()
-	_, err := tcp.ValidateCreate()
+	tcp.Default(suite.T().Context(), tcp)
+	_, err := tcp.ValidateCreate(suite.T().Context(), tcp)
 	g.Expect(err).To(Succeed())
 	fakeClient := newFakeClient(tcp.DeepCopy(), cluster.DeepCopy())
 	r := newReconciler(fakeClient)
@@ -206,8 +206,8 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 		},
 	}
 
-	tcp.Default()
-	_, err := tcp.ValidateCreate()
+	tcp.Default(suite.T().Context(), tcp)
+	_, err := tcp.ValidateCreate(suite.T().Context(), tcp)
 	g.Expect(err).To(Succeed())
 
 	ca := corev1.Secret{

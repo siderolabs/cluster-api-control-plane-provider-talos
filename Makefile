@@ -11,8 +11,8 @@ TESTPKGS ?= ./controllers/...
 
 KRES_IMAGE ?= ghcr.io/siderolabs/kres:latest
 
-CONTROLLER_GEN_VERSION ?= v0.16.2
-CONVERSION_GEN_VERSION ?= v0.31.0
+CONTROLLER_GEN_VERSION ?= v0.17.0
+CONVERSION_GEN_VERSION ?= v0.32.3
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
 GO_BUILDFLAGS += -race
@@ -24,8 +24,8 @@ GO_LDFLAGS += -s -w
 
 ARTIFACTS := _out
 
-TOOLS ?= ghcr.io/siderolabs/tools:v1.9.0
-PKGS ?= v1.9.0
+TOOLS ?= ghcr.io/siderolabs/tools:v1.10.0
+PKGS ?= v1.10.0
 
 BUILD := docker buildx build
 PLATFORM ?= linux/amd64

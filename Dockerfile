@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile-upstream:1.2.0-labs
+# syntax = docker/dockerfile-upstream:1.14.1-labs
 
 # Meta args applied to stage base names.
 
@@ -14,21 +14,19 @@ FROM ghcr.io/siderolabs/fhs:${PKGS} AS pkg-fhs
 # code
 
 FROM --platform=${BUILDPLATFORM} ${TOOLS} AS build
-SHELL ["/toolchain/bin/bash", "-c"]
-ARG CGO_ENABLED
-ENV PATH /toolchain/bin:/toolchain/go/bin:/go/bin
-RUN ["/toolchain/bin/mkdir", "/bin", "/tmp"]
-RUN ["/toolchain/bin/ln", "-svf", "/toolchain/bin/bash", "/bin/sh"]
-RUN ["/toolchain/bin/ln", "-svf", "/toolchain/etc/ssl", "/etc/ssl"]
-ENV GO111MODULE on
-ENV GOPROXY https://proxy.golang.org
-ENV GOCACHE /.cache/go-build
-ENV GOMODCACHE /.cache/mod
-ENV GOTOOLCHAIN local
+ENV GOTOOLCHAIN=local
+ENV CGO_ENABLED=0
+ENV GO111MODULE=on
+ENV GOPROXY=https://proxy.golang.org
+ENV GOCACHE=/.cache/go-build
+ENV GOMODCACHE=/.cache/mod
+SHELL ["/bin/bash", "-c"]
 ARG CONTROLLER_GEN_VERSION
 ARG CONVERSION_GEN_VERSION
-RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION}
-RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@${CONVERSION_GEN_VERSION}
+RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION} \
+  && mv /root/go/bin/controller-gen /usr/bin/controller-gen
+RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@${CONVERSION_GEN_VERSION} \
+  && mv /root/go/bin/conversion-gen /usr/bin/conversion-gen
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
@@ -53,12 +51,12 @@ COPY --from=generate-build /src/api /api
 # runs unit-tests
 FROM build AS unit-tests-run
 ARG TESTPKGS
-RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg --mount=type=cache,target=/tmp go test -v -covermode=atomic -coverprofile=coverage.txt -coverpkg=${TESTPKGS} -count 1 ${TESTPKGS}
+RUN --mount=type=cache,target=/root/.cache --mount=type=cache,target=/tmp go test -v -covermode=atomic -coverprofile=coverage.txt -coverpkg=${TESTPKGS} -count 1 ${TESTPKGS}
 
 FROM scratch AS unit-tests
 COPY --from=unit-tests-run /src/coverage.txt /coverage.txt
 
-FROM --platform=${BUILDPLATFORM} alpine:3.13 AS release-build
+FROM --platform=${BUILDPLATFORM} alpine:3.21 AS release-build
 ADD https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.0/kustomize_v4.1.0_linux_amd64.tar.gz .
 RUN  tar -xf kustomize_v4.1.0_linux_amd64.tar.gz -C /usr/local/bin && rm kustomize_v4.1.0_linux_amd64.tar.gz
 COPY ./config ./config
