@@ -1,3 +1,30 @@
+## [CAPI Control Plane Provider Talos 0.5.10](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.10) (2025-05-02)
+
+Welcome to the v0.5.10 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Contributors
+
+* Noel Georgi
+
+### Changes
+<details><summary>1 commit</summary>
+<p>
+
+* [`9c71ab8`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/9c71ab82e007e73746b11eb38f786b10ee02d938) fix(ci): arm64 container image asset
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.5.9](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.9)
+
 ## [CAPI Control Plane Provider Talos 0.5.9](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.9) (2025-05-01)
 
 Welcome to the v0.5.9 release of CAPI Control Plane Provider Talos!

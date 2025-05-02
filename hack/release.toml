@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.5.8"
+previous = "v0.5.9"
 
 pre_release = false
 
@@ -14,15 +14,3 @@ preface = """\
 """
 
 [notes]
-
-[notes.talos]
-    title = "Talos Linux"
-        description = """\
-CACPPT updated for Talos 1.10.
-"""
-
-[notes.capi]
-    title = "Cluster API"
-        description = """\
-CACPPT is now built and tested with Cluster API 1.10.0.
-"""
