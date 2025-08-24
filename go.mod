@@ -3,37 +3,37 @@ module github.com/siderolabs/cluster-api-control-plane-provider-talos
 go 1.24.0
 
 // compatibility with kube-apiserver v0.32.3, should be dropped once kube-apiserver dependency is updated
-replace github.com/google/cel-go => github.com/google/cel-go v0.22.0
+replace github.com/google/cel-go => github.com/google/cel-go v0.26.0
 
 require (
 	github.com/coreos/go-semver v0.3.1
 	github.com/go-logr/logr v1.4.3
 	github.com/gobuffalo/flect v1.0.3
 	github.com/google/uuid v1.6.0
-	github.com/onsi/gomega v1.36.3
+	github.com/onsi/gomega v1.38.1
 	github.com/pkg/errors v0.9.1
 	github.com/siderolabs/capi-utils v0.0.0-20250812174642-8d7036d74b13
 	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.10-0.20250811162926-710fae2a8bc0
 	github.com/siderolabs/crypto v0.6.3
 	github.com/siderolabs/gen v0.8.5
 	github.com/siderolabs/go-retry v0.3.3
-	github.com/siderolabs/talos/pkg/machinery v1.11.0-beta.2
+	github.com/siderolabs/talos/pkg/machinery v1.11.0-rc.0
 	github.com/spf13/pflag v1.0.7
-	github.com/stretchr/testify v1.10.0
-	golang.org/x/sync v0.15.0
-	google.golang.org/grpc v1.74.2
-	google.golang.org/protobuf v1.36.6
+	github.com/stretchr/testify v1.11.0
+	golang.org/x/sync v0.16.0
+	google.golang.org/grpc v1.75.0
+	google.golang.org/protobuf v1.36.8
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.32.3
-	k8s.io/apiextensions-apiserver v0.32.3
-	k8s.io/apimachinery v0.32.3
-	k8s.io/apiserver v0.32.3
-	k8s.io/client-go v0.32.3
-	k8s.io/component-base v0.32.3
+	k8s.io/api v0.33.4
+	k8s.io/apiextensions-apiserver v0.33.4
+	k8s.io/apimachinery v0.33.4
+	k8s.io/apiserver v0.33.4
+	k8s.io/client-go v0.33.4
+	k8s.io/component-base v0.33.4
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738
-	sigs.k8s.io/cluster-api v1.10.4
-	sigs.k8s.io/controller-runtime v0.20.4
+	k8s.io/utils 0af2bda4dd1d
+	sigs.k8s.io/cluster-api v1.11.0
+	sigs.k8s.io/controller-runtime v0.21.0
 )
 
 require (
