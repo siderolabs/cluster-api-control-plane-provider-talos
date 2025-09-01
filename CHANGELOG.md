@@ -1,3 +1,48 @@
+## [CAPI Control Plane Provider Talos 0.5.11](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.11) (2025-09-01)
+
+Welcome to the v0.5.11 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Talos Linux
+
+CACPPT updated for Talos 1.11.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Andrew Longwill
+
+### Changes
+<details><summary>4 commits</summary>
+<p>
+
+* [`c1ff5f3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/c1ff5f3c8064cf708cf4acf11088b1ff027f030b) feat: update Talos to v1.11.0 final
+* [`702501b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/702501b5c3f33f6246535054d8d4de25104f88a3) feat: update Talos to v1.11.0-beta.2
+* [`e1ad387`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/e1ad38762ba25d88f0f32f72a627c0d8f2559e09) chore: rotate aws iam credentials
+* [`d3cec6d`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d3cec6d77ad58f190adb445c44f4f43d22aa3751) chore: update sops GPG keys
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/go-logr/logr**                                     v1.4.2 -> v1.4.3
+* **github.com/siderolabs/capi-utils**                            935cc561d36b -> 8d7036d74b13
+* **github.com/siderolabs/cluster-api-bootstrap-provider-talos**  v0.6.8 -> v0.6.10
+* **github.com/siderolabs/crypto**                                v0.5.1 -> v0.6.3
+* **github.com/siderolabs/gen**                                   v0.8.0 -> v0.8.5
+* **github.com/siderolabs/talos/pkg/machinery**                   v1.10.0 -> v1.11.0
+* **github.com/spf13/pflag**                                      v1.0.6 -> v1.0.7
+* **golang.org/x/sync**                                           v0.13.0 -> v0.15.0
+* **google.golang.org/grpc**                                      v1.71.1 -> v1.74.2
+* **sigs.k8s.io/cluster-api**                                     v1.10.1 -> v1.10.4
+
+Previous release can be found at [v0.5.10](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.10)
+
 ## [CAPI Control Plane Provider Talos 0.5.10](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.10) (2025-05-02)
 
 Welcome to the v0.5.10 release of CAPI Control Plane Provider Talos!
