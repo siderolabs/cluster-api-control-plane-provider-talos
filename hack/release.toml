@@ -14,3 +14,9 @@ preface = """\
 """
 
 [notes]
+
+[notes.talos]
+    title = "Talos Linux"
+        description = """\
+CACPPT updated for Talos 1.11.
+"""
