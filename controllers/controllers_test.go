@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -75,19 +75,16 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlane() {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "TalosControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "tcp-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			Kind:     "TalosControlPlane",
+			Name:     "tcp-foo",
+			APIGroup: controlplanev1.GroupVersion.Group,
 		},
 	}
 
 	expectedResult := []ctrl.Request{
 		{
-			NamespacedName: client.ObjectKey{
-				Namespace: cluster.Spec.ControlPlaneRef.Namespace,
-				Name:      cluster.Spec.ControlPlaneRef.Name},
+			NamespacedName: client.ObjectKey{Name: cluster.Spec.ControlPlaneRef.Name},
 		},
 	}
 
@@ -115,11 +112,10 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlaneOtherControlPlane()
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "OtherControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "other-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			Kind:     "OtherControlPlane",
+			Name:     "other-foo",
+			APIGroup: controlplanev1.GroupVersion.Group,
 		},
 	}
 
@@ -139,7 +135,10 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
-	cluster.Spec.Paused = true
+
+	var paused = false
+	cluster.Spec.Paused = &paused
+
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceDefault,
@@ -170,7 +169,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = false
+	cluster.Spec.Paused = &paused
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -181,7 +180,13 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g := NewWithT(suite.T())
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	cluster.Status = clusterv1.ClusterStatus{
+		Conditions: []metav1.Condition{
+			{
+				Type: string(clusterv1.InfrastructureReadyV1Beta1Condition),
+			},
+		},
+	}
 
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -340,7 +345,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
 
 		machineList := &clusterv1.MachineList{}
@@ -399,7 +404,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
 		machineList := &clusterv1.MachineList{}
@@ -425,14 +430,14 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
 			g.Expect(machine.Spec.Version).ToNot(BeNil())
-			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
 		}
 	}, time.Minute).Should(Succeed())
 
 	for _, machine := range suite.getMachines(fakeClient, cluster) {
 		talosconfig := &bootstrapv1alpha3.TalosConfig{}
 
-		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)).NotTo(HaveOccurred())
+		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: cluster.Namespace}, talosconfig)).NotTo(HaveOccurred())
 
 		patchHelper, err := patch.NewHelper(talosconfig, fakeClient)
 		talosconfig.Spec.TalosVersion = "v1.5.0"
@@ -450,7 +455,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
 			g.Expect(machine.Spec.Version).ToNot(BeNil())
-			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
 		}
 	}, time.Minute).Should(Succeed())
 
@@ -505,7 +510,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
 
 		machineList := &clusterv1.MachineList{}
@@ -560,10 +565,8 @@ func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client
 							Type:    clusterv1.MachineInternalIP,
 						},
 					}
-					machine.Status.NodeRef = &corev1.ObjectReference{
-						Kind:       "Node",
-						APIVersion: corev1.SchemeGroupVersion.String(),
-						Name:       machine.Name,
+					machine.Status.NodeRef = clusterv1.MachineNodeReference{
+						Name: machine.Name,
 					}
 
 					g.Expect(err).To(BeNil())
@@ -733,7 +736,13 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	g.Expect(fakeClient.Create(suite.ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, fakeClient)
 	g.Expect(err).To(BeNil())
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	cluster.Status = clusterv1.ClusterStatus{
+		Conditions: []metav1.Condition{
+			{
+				Type: string(clusterv1.InfrastructureReadyV1Beta1Condition),
+			},
+		},
+	}
 	g.Expect(patchHelper.Patch(suite.ctx, cluster)).To(Succeed())
 
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
