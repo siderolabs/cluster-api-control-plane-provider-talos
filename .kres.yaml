@@ -44,9 +44,7 @@ spec:
       sops: true
       buildxOptions:
         enabled: true
-      runners:
-        - self-hosted
-        - generic
+      runnerGroup: generic
       conditions:
         - on-pull-request
       steps:
@@ -64,9 +62,7 @@ spec:
     - name: push
       buildxOptions:
         enabled: true
-      runners:
-        - self-hosted
-        - generic
+      runnerGroup: generic
       conditions:
         - except-pull-request
         - not-on-tag
@@ -83,9 +79,7 @@ spec:
       sops: true
       buildxOptions:
         enabled: true
-      runners:
-        - self-hosted
-        - generic
+      runnerGroup: generic
       conditions:
         - only-on-tag
       steps:

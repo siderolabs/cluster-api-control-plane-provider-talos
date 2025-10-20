@@ -51,6 +51,10 @@ func defaultTalosControlPlaneSpec(s *TalosControlPlaneSpec, namespace string) {
 		s.Replicas = &replicas
 	}
 
+	if s.InfrastructureTemplate.Namespace == "" {
+		s.InfrastructureTemplate.Namespace = namespace
+	}
+
 	if !strings.HasPrefix(s.Version, "v") {
 		s.Version = "v" + s.Version
 	}
