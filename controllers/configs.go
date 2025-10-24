@@ -18,7 +18,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -105,7 +105,7 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
-	c, err := r.Tracker.GetClient(ctx, cluster)
+	c, err := r.ClusterCache.GetClient(ctx, cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -115,14 +115,14 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 	var t *talosconfig.Config
 
 	for _, machine := range machines {
-		if machine.Status.NodeRef == nil {
+		if !machine.Status.NodeRef.IsDefined() {
 			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
 		}
 
 		var node v1.Node
 
 		// grab all addresses as endpoints
-		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name, Namespace: machine.Status.NodeRef.Namespace}, &node)
+		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name}, &node)
 		if err != nil {
 			return nil, err
 		}
