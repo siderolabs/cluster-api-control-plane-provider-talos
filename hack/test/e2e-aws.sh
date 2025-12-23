@@ -22,14 +22,14 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v1.11.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
-K8S_VERSION="${K8S_VERSION:-v1.32.7}"
+TALOS_VERSION="${TALOS_DEFAULT:-v1.12.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
+K8S_VERSION="${K8S_VERSION:-v1.34.3}"
 export WORKLOAD_KUBERNETES_VERSION="${WORKLOAD_KUBERNETES_VERSION:-${K8S_VERSION}}"
-export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.33.3}"
+export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.35.0}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
-export PROVIDER=aws:v1.5.2
+export PROVIDER=aws:v2.9.3
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
@@ -55,7 +55,7 @@ cleanup() {
   if [[ ! -z ${CREATED_CLUSTER} ]] && [ "${TEARDOWN_CLUSTER}" = true ]; then
     echo "destroying deployed cluster"
     rm -rf ~/.talos/clusters/${CREATED_CLUSTER}
-    ${TALOSCTL} cluster destroy --name=${CREATED_CLUSTER} || true
+    ${TALOSCTL_PATH} cluster destroy --name=${CREATED_CLUSTER} || true
   fi
 
   if [ "${TEARDOWN_CLUSTER}" = true ]; then
@@ -105,16 +105,18 @@ function cluster {
 
   if [[ ! -f "${TMP}/kubeconfig" ]]; then
     echo "creating cluster ${CREATED_CLUSTER}"
-    TAG="${TALOS_VERSION}" ${TALOSCTL} cluster create \
-      --name=${CREATED_CLUSTER} \
-      --kubernetes-version=${K8S_VERSION} \
-      "${REGISTRY_MIRROR_FLAGS[@]}" \
-      --cidr 172.27.0.0/24 \
-      --workers=0
+    TAG="${TALOS_VERSION}" ${TALOSCTL_PATH} cluster create docker \
+        --name=${CREATED_CLUSTER} \
+        --talosconfig-destination=${TMP}/talosconfig \
+        "${REGISTRY_MIRROR_FLAGS[@]}" \
+        --kubernetes-version=${K8S_VERSION} \
+        --config-patch-controlplanes '{"cluster": {"allowSchedulingOnControlPlanes": true}}' \
+        --mtu=1450 \
+        --memory-controlplanes=8GiB \
+        --cpus-controlplanes=8 \
+        --workers=0
 
-    ${KUBECTL} taint node ${CREATED_CLUSTER}-controlplane-1 node-role.kubernetes.io/control-plane=:NoSchedule-
-
-    ${TALOSCTL} config nodes 172.27.0.2
+    ${TALOSCTL} config nodes 10.5.0.2
     ${TALOSCTL} kubeconfig -f ${TMP}/kubeconfig
   fi
 

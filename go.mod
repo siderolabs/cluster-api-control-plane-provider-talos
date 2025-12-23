@@ -12,12 +12,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/onsi/gomega v1.38.2
 	github.com/pkg/errors v0.9.1
-	github.com/siderolabs/capi-utils v0.0.0-20251121170358-049abbbb183c
-	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.11-0.20251118151157-8141779eebdd
+	github.com/siderolabs/capi-utils v0.0.0-20251124160722-4ee8a1b7d4d0
+	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.11
 	github.com/siderolabs/crypto v0.6.4
 	github.com/siderolabs/gen v0.8.6
 	github.com/siderolabs/go-retry v0.3.3
-	github.com/siderolabs/talos/pkg/machinery v1.12.0-beta.0
+	github.com/siderolabs/talos/pkg/machinery v1.12.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.18.0
@@ -32,7 +32,7 @@ require (
 	k8s.io/component-base v0.32.3
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
-	sigs.k8s.io/cluster-api v1.10.4
+	sigs.k8s.io/cluster-api v1.10.9
 	sigs.k8s.io/controller-runtime v0.20.4
 )
 

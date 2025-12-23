@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.5.10"
+previous = "v0.5.11"
 
 pre_release = false
 
@@ -18,5 +18,5 @@ preface = """\
 [notes.talos]
     title = "Talos Linux"
         description = """\
-CACPPT updated for Talos 1.11.
+CACPPT updated for Talos 1.12.
 """
