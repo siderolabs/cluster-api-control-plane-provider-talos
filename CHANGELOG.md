@@ -1,3 +1,51 @@
+## [CAPI Control Plane Provider Talos 0.5.12](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.12) (2025-12-24)
+
+Welcome to the v0.5.12 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Talos Linux
+
+CACPPT updated for Talos 1.12.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Laura Brehm
+* sartemov
+
+### Changes
+<details><summary>3 commits</summary>
+<p>
+
+* [`38ec279`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/38ec27901eec14f75afa593adfc4017079edd079) feat: update Talos to v1.12.0
+* [`3fb1f3e`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/3fb1f3ec430f00c4dba0c29d2d76ee8a2051a48a) chore: bump Talos to `v1.12.0-beta.0`
+* [`23556bc`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/23556bc8620cf33576157eb52295df97e2ca37fe) feat: set up default namespace for the InfrastructureTemplate in Talos CP
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/onsi/gomega**                                      v1.36.3 -> v1.38.2
+* **github.com/siderolabs/capi-utils**                            8d7036d74b13 -> 4ee8a1b7d4d0
+* **github.com/siderolabs/cluster-api-bootstrap-provider-talos**  v0.6.10 -> v0.6.11
+* **github.com/siderolabs/crypto**                                v0.6.3 -> v0.6.4
+* **github.com/siderolabs/gen**                                   v0.8.5 -> v0.8.6
+* **github.com/siderolabs/talos/pkg/machinery**                   v1.11.0 -> v1.12.0
+* **github.com/spf13/pflag**                                      v1.0.7 -> v1.0.10
+* **github.com/stretchr/testify**                                 v1.10.0 -> v1.11.1
+* **golang.org/x/sync**                                           v0.15.0 -> v0.18.0
+* **google.golang.org/grpc**                                      v1.74.2 -> v1.76.0
+* **google.golang.org/protobuf**                                  v1.36.6 -> v1.36.10
+* **k8s.io/utils**                                                3ea5e8cea738 -> bc988d571ff4
+* **sigs.k8s.io/cluster-api**                                     v1.10.4 -> v1.10.9
+
+Previous release can be found at [v0.5.11](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.11)
+
 ## [CAPI Control Plane Provider Talos 0.5.11](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.11) (2025-09-01)
 
 Welcome to the v0.5.11 release of CAPI Control Plane Provider Talos!
