@@ -4,8 +4,6 @@ go 1.25.3
 
 replace github.com/siderolabs/capi-utils => github.com/bephinix/capi-utils v0.0.0-20260130002241-d35a0ec3b6ed
 
-replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/bephinix/cluster-api-bootstrap-provider-talos v0.0.0-20260130000154-e83f03d67961
-
 require (
 	github.com/coreos/go-semver v0.3.1
 	github.com/go-logr/logr v1.4.3
@@ -14,7 +12,7 @@ require (
 	github.com/onsi/gomega v1.38.2
 	github.com/pkg/errors v0.9.1
 	github.com/siderolabs/capi-utils v0.0.0-20251124160722-4ee8a1b7d4d0
-	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.6.11
+	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.7.0-alpha.0
 	github.com/siderolabs/crypto v0.6.4
 	github.com/siderolabs/gen v0.8.6
 	github.com/siderolabs/go-retry v0.3.3
@@ -100,7 +98,7 @@ require (
 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20241121165744-79df5c4772f2 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
