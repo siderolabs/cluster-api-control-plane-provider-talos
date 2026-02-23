@@ -84,11 +84,11 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlane() {
 
 	expectedResult := []ctrl.Request{
 		{
-			NamespacedName: client.ObjectKey{Name: cluster.Spec.ControlPlaneRef.Name},
+			NamespacedName: client.ObjectKey{Name: cluster.Spec.ControlPlaneRef.Name, Namespace: metav1.NamespaceDefault},
 		},
 	}
 
-	r := newReconciler(fakeClient)
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
 	got := r.ClusterToTalosControlPlane(context.Background(), cluster)
 	g.Expect(got).To(Equal(expectedResult))
@@ -98,9 +98,9 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlaneNoControlPlane() {
 	g := NewWithT(suite.T())
 	fakeClient := newFakeClient()
 
-	r := newReconciler(fakeClient)
-
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
 	got := r.ClusterToTalosControlPlane(context.Background(), cluster)
 	g.Expect(got).To(BeNil())
@@ -159,7 +159,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	_, err := tcp.ValidateCreate(suite.T().Context(), tcp)
 	g.Expect(err).To(Succeed())
 	fakeClient := newFakeClient(tcp.DeepCopy(), cluster.DeepCopy())
-	r := newReconciler(fakeClient)
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
