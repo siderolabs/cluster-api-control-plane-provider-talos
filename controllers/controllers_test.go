@@ -183,7 +183,8 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	cluster.Status = clusterv1.ClusterStatus{
 		Conditions: []metav1.Condition{
 			{
-				Type: string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Status: metav1.ConditionTrue,
 			},
 		},
 	}
@@ -739,7 +740,8 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	cluster.Status = clusterv1.ClusterStatus{
 		Conditions: []metav1.Condition{
 			{
-				Type: string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Status: metav1.ConditionTrue,
 			},
 		},
 	}
