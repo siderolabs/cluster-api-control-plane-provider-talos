@@ -212,8 +212,15 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	for i, v := range ownedMachines.Items {
 		var getter conditions.Getter = &v
 
-		condition := conditions.Get(getter, string(controlplanev1.MachinesReadyCondition))
-		conditionOptions[i] = condition
+		condition := conditions.Get(getter, string(clusterv1.MachinesReadyCondition))
+		if condition == nil {
+			conditionOptions[i] = &metav1.Condition{
+				Type:   string(clusterv1.MachinesReadyCondition),
+				Status: metav1.ConditionUnknown,
+			}
+		} else {
+			conditionOptions[i] = condition
+		}
 	}
 
 	var conditionOptionTypes = make([]string, len(conditionOptions))
@@ -222,14 +229,16 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	}
 
 	var summaryOptions conditions.ForConditionTypes = conditionOptionTypes
-	err = conditions.SetSummaryCondition(
-		tcp,
-		tcp,
-		string(controlplanev1.MachinesReadyCondition),
-		summaryOptions,
-	)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to set summary Machine Ready condition")
+	if len(summaryOptions) > 0 {
+		err = conditions.SetSummaryCondition(
+			tcp,
+			tcp,
+			string(controlplanev1.MachinesAllReadyCondition),
+			summaryOptions,
+		)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to set summary Machine Ready condition")
+		}
 	}
 
 	var (
@@ -893,7 +902,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			tcp.Status.Bootstrapped = true
 		}
 
-		if conditions.Has(tcp, string(controlplanev1.MachinesReadyCondition)) {
+		if conditions.Has(tcp, string(controlplanev1.MachinesAllReadyCondition)) {
 			conditions.Set(tcp, metav1.Condition{
 				Type:   string(controlplanev1.ResizedCondition),
 				Status: metav1.ConditionTrue,
@@ -918,7 +927,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 		conditions.ForConditionTypes{
 			string(controlplanev1.MachinesCreatedCondition),
 			string(controlplanev1.ResizedCondition),
-			string(controlplanev1.MachinesReadyCondition),
+			string(controlplanev1.MachinesAllReadyCondition),
 			string(controlplanev1.AvailableCondition),
 			string(controlplanev1.MachinesBootstrapped),
 		},
@@ -932,7 +941,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 			string(controlplanev1.MachinesCreatedCondition),
 			string(clusterv1.ReadyCondition),
 			string(controlplanev1.ResizedCondition),
-			string(controlplanev1.MachinesReadyCondition),
+			string(controlplanev1.MachinesAllReadyCondition),
 			string(controlplanev1.AvailableCondition),
 			string(controlplanev1.MachinesBootstrapped),
 		}},

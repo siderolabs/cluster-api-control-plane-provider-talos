@@ -11,8 +11,8 @@ import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 // Conditions and condition Reasons for the TalosControlPlane object
 
 const (
-	// MachinesReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
-	MachinesReadyCondition clusterv1.ConditionType = "MachinesReady"
+	// MachinesAllReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
+	MachinesAllReadyCondition clusterv1.ConditionType = "MachinesAllReady"
 )
 
 const (
