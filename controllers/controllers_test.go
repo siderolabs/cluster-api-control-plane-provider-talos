@@ -750,7 +750,7 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachineTemplate",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2",
 			"metadata": map[string]interface{}{
 				"name":      "infra-foo",
 				"namespace": cluster.Namespace,

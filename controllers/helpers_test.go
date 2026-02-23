@@ -266,7 +266,7 @@ func MustFormatValue(str string) string {
 
 var (
 	// InfrastructureGroupVersion is group version used for infrastructure objects.
-	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta1"}
+	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta2"}
 
 	// GenericInfrastructureMachineKind is the Kind for the GenericInfrastructureMachine.
 	GenericInfrastructureMachineKind = "GenericInfrastructureMachine"
@@ -297,7 +297,7 @@ func generateCRD(gvk schema.GroupVersionKind, properties map[string]apiextension
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group),
 			Labels: map[string]string{
-				clusterv1.GroupVersion.String(): "v1beta1",
+				clusterv1.GroupVersion.String(): "v1beta2",
 			},
 		},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
