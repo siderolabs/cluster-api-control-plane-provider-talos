@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -366,6 +367,18 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	g := NewWithT(suite.T())
 
 	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+	g.Expect(fakeClient.Get(suite.ctx, client.ObjectKeyFromObject(tcp), tcp)).To(Succeed())
+
+	// Make the control plane appear as initialized and ready to trigger the creation of machines
+	tcp.Status.Initialized = true
+	tcp.Status.Ready = true
+	tcp.Status.Conditions = append(tcp.Status.Conditions, metav1.Condition{
+		Type:               "ControlPlaneInitialized",
+		Status:             metav1.ConditionTrue,
+		Reason:             "ControlPlaneSuccessfullyInitialized",
+		LastTransitionTime: metav1.Now(),
+	})
+	g.Expect(fakeClient.Status().Update(suite.ctx, tcp)).To(Succeed())
 
 	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -737,16 +750,54 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	g.Expect(fakeClient.Create(suite.ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, fakeClient)
 	g.Expect(err).To(BeNil())
+
 	cluster.Status = clusterv1.ClusterStatus{
 		Conditions: []metav1.Condition{
 			{
-				Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Type:   string(clusterv1.InfrastructureReadyCondition), // User-friendly condition type that is consistent across CAPI versions
 				Status: metav1.ConditionTrue,
+				// Reason et LastTransitionTime are optional, but can be helpful for debugging and ensuring the condition is properly set
+				Reason:             "InfrastructureReady",
+				LastTransitionTime: metav1.Now(),
 			},
 		},
 	}
 	g.Expect(patchHelper.Patch(suite.ctx, cluster)).To(Succeed())
 
+	t.Log("Creating the dummy CRD for GenericInfrastructureMachine")
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "genericinfrastructuremachines.infrastructure.cluster.x-k8s.io",
+			Labels: map[string]string{
+				// Ensure the CRD is recognized as a Cluster API infrastructure provider CRD by including the expected labels for both v1beta1 and v1beta2 versions of CAPI
+				"cluster.x-k8s.io/v1beta2": "v1beta2",
+				"cluster.x-k8s.io/v1beta1": "v1beta2",
+			},
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "infrastructure.cluster.x-k8s.io",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:     "GenericInfrastructureMachine",
+				Plural:   "genericinfrastructuremachines",
+				Singular: "genericinfrastructuremachine",
+			},
+			Scope: apiextensionsv1.NamespaceScoped,
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    "v1beta2", // Should match the API version used in the test
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type:                   "object",
+							XPreserveUnknownFields: pointer.Bool(true), // Lets the controller handle arbitrary fields in the spec without needing to define a strict schema, which is useful for testing
+						},
+					},
+				},
+			},
+		},
+	}
+	g.Expect(fakeClient.Create(suite.ctx, crd)).To(Succeed())
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachineTemplate",
