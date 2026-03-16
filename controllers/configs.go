@@ -60,6 +60,26 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 
 	addrList := []string{}
 
+	// Fetch the Cluster object to determine the control plane endpoint (VIP).
+	// Infrastructure providers (e.g., Sidero) report all node addresses — including
+	// shared VIPs — as MachineInternalIP. The VIP is not a real node endpoint and
+	// must be excluded: gRPC connections to the VIP may route to an unexpected node
+	// or produce inconsistent event streams, causing ensureNodesBooted and other
+	// health checks to hang or return incorrect results during scale-down.
+	var cluster clusterv1.Cluster
+
+	if err := r.Client.Get(ctx,
+		types.NamespacedName{
+			Namespace: tcp.GetNamespace(),
+			Name:      clusterName,
+		},
+		&cluster,
+	); err != nil {
+		return nil, fmt.Errorf("failed to get Cluster %q: %w", clusterName, err)
+	}
+
+	cpEndpoint := cluster.Spec.ControlPlaneEndpoint.Host
+
 	var (
 		talosconfigSecret v1.Secret
 	)
@@ -82,6 +102,10 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	for _, machine := range machines {
 		for _, addr := range machine.Status.Addresses {
 			if addr.Type == clusterv1.MachineExternalIP || addr.Type == clusterv1.MachineInternalIP {
+				if cpEndpoint != "" && addr.Address == cpEndpoint {
+					continue
+				}
+
 				addrList = append(addrList, addr.Address)
 			}
 		}
