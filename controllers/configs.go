@@ -100,19 +100,34 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	}
 
 	for _, machine := range machines {
+		var machineAddrs []string
+
 		for _, addr := range machine.Status.Addresses {
 			if addr.Type == clusterv1.MachineExternalIP || addr.Type == clusterv1.MachineInternalIP {
-				if cpEndpoint != "" && addr.Address == cpEndpoint {
-					continue
-				}
-
-				addrList = append(addrList, addr.Address)
+				machineAddrs = append(machineAddrs, addr.Address)
 			}
 		}
 
-		if len(addrList) == 0 {
+		if len(machineAddrs) == 0 {
 			return nil, fmt.Errorf("no addresses were found for node %q", machine.Name)
 		}
+
+		// Only filter the control plane endpoint when the machine has other
+		// addresses available. On a single-node cluster the endpoint may be the
+		// machine's only address; removing it would leave zero endpoints.
+		if cpEndpoint != "" && len(machineAddrs) > 1 {
+			filtered := machineAddrs[:0]
+
+			for _, a := range machineAddrs {
+				if a != cpEndpoint {
+					filtered = append(filtered, a)
+				}
+			}
+
+			machineAddrs = filtered
+		}
+
+		addrList = append(addrList, machineAddrs...)
 	}
 
 	// we don't need to set endpoints in general here, as endpoints were already pre-populated by the CABPT controller
