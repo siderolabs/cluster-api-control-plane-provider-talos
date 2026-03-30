@@ -13,7 +13,7 @@ import (
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -180,7 +180,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	for _, machine := range machines.Items {
 		// nb: we'll assume any machine that doesn't have a noderef is new and we can audit later because
 		//     otherwise a new etcd member can get removed before even getting the noderef set by the CAPI controllers.
-		if machine.Status.NodeRef == nil {
+		if !machine.Status.NodeRef.IsDefined() {
 			return fmt.Errorf("some CP machines do not have a noderef")
 		}
 	}
@@ -188,7 +188,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	var designatedCPMachine clusterv1.Machine
 
 	for _, machine := range machines.Items {
-		if !machine.ObjectMeta.DeletionTimestamp.IsZero() || machine.Status.NodeRef == nil {
+		if !machine.ObjectMeta.DeletionTimestamp.IsZero() || !machine.Status.NodeRef.IsDefined() {
 			continue
 		}
 

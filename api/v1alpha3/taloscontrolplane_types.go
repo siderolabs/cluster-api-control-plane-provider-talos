@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 const (
@@ -122,6 +121,14 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
+	// availableReplicas is the number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
+	// +optional
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered available when Machine's  UpToDate condition is true.
+	// +optional
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+
 	// Total number of unavailable machines targeted by this control plane.
 	// This is the total number of machines that are still required for
 	// the deployment to have 100% available capacity. They may either
@@ -162,7 +169,7 @@ type TalosControlPlaneStatus struct {
 
 	// Conditions defines current service state of the KubeadmControlPlane.
 	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
@@ -191,12 +198,12 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
+func (r *TalosControlPlane) GetConditions() []metav1.Condition {
 	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+func (r *TalosControlPlane) SetConditions(conditions []metav1.Condition) {
 	r.Status.Conditions = conditions
 }
 
