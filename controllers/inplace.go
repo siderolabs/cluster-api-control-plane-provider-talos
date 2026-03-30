@@ -135,10 +135,11 @@ func (r *TalosControlPlaneReconciler) filterMachinesForInPlaceUpdate(
 	controlPlane *ControlPlane,
 	machinesNeedingRollout collections.Machines,
 ) (collections.Machines, error) {
-	// If in-place updates are not possible, return all machines as needing rollout.
-	if !feature.Gates.Enabled(feature.InPlaceUpdates) || r.RuntimeClient == nil {
+	// If in-place updates feature gate is disabled, return all machines as needing rollout.
+	if !feature.Gates.Enabled(feature.InPlaceUpdates) {
 		return machinesNeedingRollout, nil
 	}
+	// Note: RuntimeClient == nil is OK for Talos — canUpdateMachineInPlace handles it.
 
 	// Skip machines that already have an in-place update in progress.
 	remaining := collections.New()
