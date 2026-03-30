@@ -116,6 +116,10 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(
 		machine.Annotations = map[string]string{}
 	}
 	machine.Annotations[clusterv1.UpdateInProgressAnnotation] = ""
+	// Mark UpdateMachine hook as pending — CAPI Machine controller checks this
+	// annotation before calling the hook. Without it, Machine controller just
+	// logs "waiting for owning controller to mark UpdateMachine hook as pending".
+	machine.Annotations["runtime.cluster.x-k8s.io/pending-hooks"] = "UpdateMachine"
 
 	if err := r.Client.Patch(ctx, machine, client.MergeFrom(orig)); err != nil {
 		return errors.Wrapf(err, "failed to trigger in-place update for Machine %s by setting the %s annotation",
