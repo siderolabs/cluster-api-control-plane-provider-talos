@@ -37,7 +37,7 @@ var (
 )
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type.
-func (r *TalosControlPlane) Default(ctx context.Context, obj runtime.Object) error {
+func (r *TalosControlPlane) Default(_ context.Context, obj runtime.Object) error {
 	r = obj.(*TalosControlPlane)
 
 	defaultTalosControlPlaneSpec(&r.Spec, r.Namespace)
@@ -85,49 +85,60 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 	return rolloutStrategy
 }
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
+func (r *TalosControlPlane) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	r = obj.(*TalosControlPlane)
 
 	return r.validate()
 }
 
-// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateUpdate(ctx context.Context, oldObj runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
+// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
+func (r *TalosControlPlane) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
 	r = newObj.(*TalosControlPlane)
 
 	return r.validate()
 }
 
-// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (r *TalosControlPlane) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+// ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
+func (r *TalosControlPlane) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
 
 func (r *TalosControlPlane) validate() (admission.Warnings, error) {
-	var allErrs field.ErrorList
-
-	if r.Spec.RolloutStrategy == nil {
+	allErrs := validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))
+	if len(allErrs) == 0 {
 		return nil, nil
 	}
 
-	switch r.Spec.RolloutStrategy.Type {
+	return nil, newInvalidTalosControlPlaneError("TalosControlPlane", r.Name, allErrs)
+}
+
+func validateRolloutStrategy(rolloutStrategy *RolloutStrategy, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if rolloutStrategy == nil {
+		return allErrs
+	}
+
+	switch rolloutStrategy.Type {
 	case "":
 	case RollingUpdateStrategyType:
 	case OnDeleteStrategyType:
 	default:
 		allErrs = append(allErrs,
-			field.Invalid(field.NewPath("spec").Child("rolloutStrategy"), r.Spec.RolloutStrategy.Type,
+			field.Invalid(fldPath, rolloutStrategy.Type,
 				fmt.Sprintf("valid values are: %q", []RolloutStrategyType{RollingUpdateStrategyType, OnDeleteStrategyType}),
 			),
 		)
 	}
 
-	if len(allErrs) == 0 {
-		return nil, nil
-	}
+	return allErrs
+}
 
-	return nil, apierrors.NewInvalid(
-		schema.GroupKind{Group: GroupVersion.Group, Kind: "TalosControlPlane"},
-		r.Name, allErrs)
+func newInvalidTalosControlPlaneError(kind, name string, allErrs field.ErrorList) error {
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: GroupVersion.Group, Kind: kind},
+		name,
+		allErrs,
+	)
 }
