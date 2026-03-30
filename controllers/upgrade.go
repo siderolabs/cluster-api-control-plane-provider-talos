@@ -25,6 +25,22 @@ func (r *TalosControlPlaneReconciler) upgradeControlPlane(
 ) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
 
+	// Before proceeding with the rolling update strategy, attempt to filter out
+	// machines that can be updated in-place via the CanUpdateMachine runtime hook.
+	// Machines that can be updated in-place are marked with the UpdateInProgressAnnotation
+	// and removed from the rolling rollout set.
+	machinesForRolling, err := r.filterMachinesForInPlaceUpdate(ctx, controlPlane, machinesRequireUpgrade)
+	if err != nil {
+		logger.Error(err, "error during in-place update filtering, continuing with rolling update for all machines")
+		machinesForRolling = machinesRequireUpgrade
+	}
+
+	// If all machines were handled by in-place updates, no rolling update is needed.
+	if machinesForRolling.Len() == 0 {
+		logger.Info("all machines scheduled for in-place update, no rolling update needed")
+		return ctrl.Result{}, nil
+	}
+
 	if tcp.Spec.RolloutStrategy == nil || tcp.Spec.RolloutStrategy.RollingUpdate == nil {
 		return ctrl.Result{}, errors.New("rolloutStrategy is not set")
 	}
@@ -38,7 +54,7 @@ func (r *TalosControlPlaneReconciler) upgradeControlPlane(
 			return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
 		}
 
-		return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, machinesRequireUpgrade)
+		return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, machinesForRolling)
 	case controlplanev1.OnDeleteStrategyType:
 		// nothing to do, scale up handler will take care of creating machines with the new spec
 		return ctrl.Result{}, nil

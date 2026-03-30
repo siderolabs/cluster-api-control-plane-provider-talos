@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/flags"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -69,6 +70,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
 	flags.AddManagerOptions(fs, &managerOptions)
+	feature.MutableGates.AddFlag(fs)
 }
 
 func main() {
@@ -162,13 +164,26 @@ func main() {
 		setupLog.Error(err, "unable to create cluster cache tracker")
 		os.Exit(1)
 	}
-	if err = (&controllers.TalosControlPlaneReconciler{
+	reconciler := &controllers.TalosControlPlaneReconciler{
 		Client:       mgr.GetClient(),
 		APIReader:    mgr.GetAPIReader(),
 		Log:          ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
 		Scheme:       mgr.GetScheme(),
 		ClusterCache: clusterCache,
-	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
+	}
+
+	if feature.Gates.Enabled(feature.InPlaceUpdates) {
+		// NOTE: The RuntimeClient for in-place updates is currently not created here
+		// because the CAPI runtime client implementation is internal to the CAPI module.
+		// When a RuntimeClient is needed, it should be provided via the shared CAPI core
+		// manager runtime infrastructure (e.g., by running CACPPT together with the CAPI
+		// core RuntimeSDK setup). The in-place update code path in the reconciler is
+		// gated on RuntimeClient != nil, so without it, machines will fall back to
+		// rolling updates.
+		setupLog.Info("InPlaceUpdates feature gate is enabled; in-place update hooks will be called if a RuntimeClient is configured")
+	}
+
+	if err = reconciler.SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosControlPlane")
 		os.Exit(1)
 	}

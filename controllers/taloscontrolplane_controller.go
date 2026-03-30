@@ -35,6 +35,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	runtimeclient "sigs.k8s.io/cluster-api/exp/runtime/client"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/certs"
@@ -61,6 +62,11 @@ type TalosControlPlaneReconciler struct {
 	Log          logr.Logger
 	Scheme       *runtime.Scheme
 	ClusterCache clustercache.ClusterCache
+
+	// RuntimeClient is the runtime extension client for calling hooks
+	// such as CanUpdateMachine for in-place updates.
+	// This field is optional; when nil, in-place updates are disabled.
+	RuntimeClient runtimeclient.Client
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
