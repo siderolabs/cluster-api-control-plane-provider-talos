@@ -42,9 +42,15 @@ func (r *TalosControlPlaneReconciler) canUpdateMachineInPlace(
 		return false, nil
 	}
 
-	// In-place updates require a RuntimeClient.
+	// For Talos Linux, all config changes can be applied in-place via
+	// talosctl apply-config. If RuntimeClient is not available (CAPI internal
+	// client is not exported), we skip the CanUpdateMachine hook and assume
+	// in-place is always possible. The UpdateMachine hook (called by CAPI
+	// Machine controller) will handle the actual apply and report failure
+	// if the config change cannot be applied.
 	if r.RuntimeClient == nil {
-		return false, nil
+		log.Info("No RuntimeClient available — assuming in-place update is possible (Talos can apply all config changes)")
+		return true, nil
 	}
 
 	// Check if there are any CanUpdateMachine extension handlers registered.
