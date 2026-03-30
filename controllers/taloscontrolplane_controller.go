@@ -221,8 +221,10 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		condition := conditions.Get(getter, string(clusterv1.MachinesReadyCondition))
 		if condition == nil {
 			conditionOptions[i] = &metav1.Condition{
-				Type:   string(clusterv1.MachinesReadyCondition),
-				Status: metav1.ConditionUnknown,
+				Type:    string(clusterv1.MachinesReadyCondition),
+				Status:  metav1.ConditionUnknown,
+				Reason:  "MachineConditionUnavailable",
+				Message: "Machine readiness condition is not yet available",
 			}
 		} else {
 			conditionOptions[i] = condition
@@ -325,9 +327,10 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 	}
 
 	conditions.Set(tcp, metav1.Condition{
-		Type:   string(controlplanev1.ResizedCondition),
-		Status: metav1.ConditionFalse,
-		Reason: clusterv1.DeletingReason,
+		Type:    string(controlplanev1.ResizedCondition),
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.DeletingReason,
+		Message: "Control plane is being deleted",
 	})
 
 	// Requeue the deletion so we can check to make sure machines got cleaned up
@@ -642,8 +645,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	// workload cluster control plane endpoint is available
 	tcp.Status.Initialized = true
 	conditions.Set(tcp, metav1.Condition{
-		Type:   string(controlplanev1.AvailableCondition),
-		Status: metav1.ConditionTrue,
+		Type:    string(controlplanev1.AvailableCondition),
+		Status:  metav1.ConditionTrue,
+		Reason:  "ControlPlaneAvailable",
+		Message: "Control plane endpoint is available",
 	})
 
 	for _, node := range nodes.Items {
@@ -762,8 +767,10 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 		errs = kerrors.NewAggregate([]error{errs, err})
 	} else {
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.EtcdClusterHealthyCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.EtcdClusterHealthyCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  "EtcdHealthy",
+			Message: "Etcd cluster is healthy",
 		})
 	}
 
@@ -792,8 +799,10 @@ func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, c
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 	} else {
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.ControlPlaneComponentsHealthyCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.ControlPlaneComponentsHealthyCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  "ControlPlaneComponentsHealthy",
+			Message: "All control plane components are healthy",
 		})
 	}
 
@@ -848,8 +857,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	} else {
 		if conditions.Has(controlPlane.TCP, string(controlplanev1.MachinesSpecUpToDateCondition)) {
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesSpecUpToDateCondition),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.MachinesSpecUpToDateCondition),
+				Status:  metav1.ConditionTrue,
+				Reason:  "MachinesSpecUpToDate",
+				Message: "All machine specs are up to date",
 			})
 		}
 	}
@@ -881,8 +892,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			tcp.Status.Bootstrapped = true
 
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.MachinesBootstrapped),
+				Status:  metav1.ConditionTrue,
+				Reason:  "Bootstrapped",
+				Message: "Control plane machines are bootstrapped via init config",
 			})
 		}
 
@@ -901,8 +914,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			}
 
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.MachinesBootstrapped),
+				Status:  metav1.ConditionTrue,
+				Reason:  "Bootstrapped",
+				Message: "Cluster bootstrap completed successfully",
 			})
 
 			tcp.Status.Bootstrapped = true
@@ -910,14 +925,18 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		if conditions.Has(tcp, string(controlplanev1.MachinesAllReadyCondition)) {
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.ResizedCondition),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.ResizedCondition),
+				Status:  metav1.ConditionTrue,
+				Reason:  "ResizeComplete",
+				Message: "Control plane has reached the desired number of replicas",
 			})
 		}
 
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.MachinesCreatedCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.MachinesCreatedCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  "MachinesCreated",
+			Message: "All required control plane machines have been created",
 		})
 	}
 
