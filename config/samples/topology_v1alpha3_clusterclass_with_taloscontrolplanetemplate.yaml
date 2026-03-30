@@ -1,0 +1,47 @@
+# This sample intentionally uses CAPI v1beta1 APIs.
+# Update to v1beta2 only as part of a broader provider contract migration.
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: talos-quickstart
+spec:
+  infrastructure:
+    ref:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: DockerClusterTemplate
+      name: talos-quickstart
+  controlPlane:
+    ref:
+      apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+      kind: TalosControlPlaneTemplate
+      name: talos-cp-template
+  workers:
+    machineDeployments:
+    - class: default-worker
+      template:
+        bootstrap:
+          ref:
+            apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+            kind: TalosConfigTemplate
+            name: talos-worker-template
+        infrastructure:
+          ref:
+            apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+            kind: DockerMachineTemplate
+            name: talos-worker-machine-template
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: talos-topology
+spec:
+  topology:
+    class: talos-quickstart
+    version: v1.31.0
+    controlPlane:
+      replicas: 3
+    workers:
+      machineDeployments:
+      - class: default-worker
+        name: md-0
+        replicas: 2

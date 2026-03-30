@@ -181,7 +181,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controlplanev1alpha3.TalosControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "TalosConfigTemplate")
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlane")
+		os.Exit(1)
+	}
+	if err = (&controlplanev1alpha3.TalosControlPlaneTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlaneTemplate")
 		os.Exit(1)
 	}
 

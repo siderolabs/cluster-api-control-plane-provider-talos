@@ -100,8 +100,12 @@ It contains templates for `AWS` and `GCP`, which are verified by the integration
 
 If you wish to craft your own manifests, here is some important info.
 
-CACPPT supports a single API type, a TalosControlPlane.
-You can create YAML definitions of a TalosControlPlane and `kubectl apply` them as part of a larger CAPI cluster deployment.
+CACPPT supports two API types:
+
+- `TalosControlPlane` for direct control plane resources.
+- `TalosControlPlaneTemplate` for ClusterClass / managed topology.
+
+You can create YAML definitions of a `TalosControlPlane` and `kubectl apply` them as part of a larger CAPI cluster deployment.
 Below is a bare-minimum example.
 
 A basic config:
@@ -163,3 +167,52 @@ spec:
 
 Note that specifying the full config above removes the ability for our control plane provider to generate a talosconfig for use.
 As such, you should keep track of the talosconfig that's generated when running `talosctl config generate`.
+
+
+### ClusterClass / managed topology
+
+For managed topology, define a `TalosControlPlaneTemplate` and reference it from a `ClusterClass`.
+These examples intentionally use `cluster.x-k8s.io/v1beta1`, which is the Cluster API contract
+currently targeted by this repository (see `go.mod` and CRD labels in `config/crd/kustomization.yaml`).
+Moving the topology examples to `v1beta2` should happen together with a broader provider migration.
+
+```yaml
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlaneTemplate
+metadata:
+  name: talos-cp-template
+spec:
+  template:
+    spec:
+      infrastructureTemplate:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: talos-cp-machine-template
+      controlPlaneConfig:
+        controlplane:
+          generateType: controlplane
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: talos-quickstart
+spec:
+  controlPlane:
+    ref:
+      apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+      kind: TalosControlPlaneTemplate
+      name: talos-cp-template
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: talos-topology
+spec:
+  topology:
+    class: talos-quickstart
+    version: v1.31.0
+    controlPlane:
+      replicas: 3
+```
+
+See `config/samples/topology_v1alpha3_clusterclass_with_taloscontrolplanetemplate.yaml` for a fuller example including workers.
