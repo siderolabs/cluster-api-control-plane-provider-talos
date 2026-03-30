@@ -1,0 +1,280 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.0
+  name: taloscontrolplanetemplates.controlplane.cluster.x-k8s.io
+spec:
+  group: controlplane.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: TalosControlPlaneTemplate
+    listKind: TalosControlPlaneTemplateList
+    plural: taloscontrolplanetemplates
+    shortNames:
+    - tcpt
+    singular: taloscontrolplanetemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha3
+    schema:
+      openAPIV3Schema:
+        description: TalosControlPlaneTemplate is the Schema for the taloscontrolplanetemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TalosControlPlaneTemplateSpec defines the desired state of
+              TalosControlPlaneTemplate.
+            properties:
+              template:
+                description: TalosControlPlaneTemplateResource describes the data
+                  needed to create a TalosControlPlane from a template.
+                properties:
+                  metadata:
+                    description: |-
+                      Standard object's metadata.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/metadata/
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          annotations is an unstructured key value map stored with a resource that may be
+                          set by external tools to store and retrieve arbitrary metadata. They are not
+                          queryable and should be preserved when modifying objects.
+                          More info: http://kubernetes.io/docs/user-guide/annotations
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          labels is a map of string keys and values that can be used to organize and categorize
+                          (scope and select) objects. May match selectors of replication controllers
+                          and services.
+                          More info: http://kubernetes.io/docs/user-guide/labels
+                        type: object
+                    type: object
+                  spec:
+                    description: TalosControlPlaneTemplateResourceSpec defines the
+                      desired state of TalosControlPlane through a template.
+                    properties:
+                      controlPlaneConfig:
+                        description: |-
+                          ControlPlaneConfig is a two TalosConfigSpecs
+                          to use for initializing and joining machines to the control plane.
+                        properties:
+                          controlplane:
+                            description: TalosConfigSpec defines the desired state
+                              of TalosConfig
+                            properties:
+                              configPatches:
+                                items:
+                                  properties:
+                                    op:
+                                      type: string
+                                    path:
+                                      type: string
+                                    value:
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  required:
+                                  - op
+                                  - path
+                                  type: object
+                                type: array
+                              data:
+                                type: string
+                              generateType:
+                                type: string
+                              hostname:
+                                description: Set hostname in the machine configuration
+                                  to some value.
+                                properties:
+                                  source:
+                                    description: |-
+                                      Source of the hostname.
+
+                                      Allowed values:
+                                      "MachineName" (use linked Machine's Name).
+                                      "InfrastructureName" (use linked Machine's infrastructure's name).
+                                    type: string
+                                type: object
+                              strategicPatches:
+                                description: Talos Linux machine configuration strategic
+                                  merge patch list.
+                                items:
+                                  type: string
+                                type: array
+                              talosVersion:
+                                type: string
+                            required:
+                            - generateType
+                            type: object
+                          init:
+                            description: 'Deprecated: starting from cacppt v0.4.0
+                              provider doesn''t use init configs.'
+                            properties:
+                              configPatches:
+                                items:
+                                  properties:
+                                    op:
+                                      type: string
+                                    path:
+                                      type: string
+                                    value:
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  required:
+                                  - op
+                                  - path
+                                  type: object
+                                type: array
+                              data:
+                                type: string
+                              generateType:
+                                type: string
+                              hostname:
+                                description: Set hostname in the machine configuration
+                                  to some value.
+                                properties:
+                                  source:
+                                    description: |-
+                                      Source of the hostname.
+
+                                      Allowed values:
+                                      "MachineName" (use linked Machine's Name).
+                                      "InfrastructureName" (use linked Machine's infrastructure's name).
+                                    type: string
+                                type: object
+                              strategicPatches:
+                                description: Talos Linux machine configuration strategic
+                                  merge patch list.
+                                items:
+                                  type: string
+                                type: array
+                              talosVersion:
+                                type: string
+                            required:
+                            - generateType
+                            type: object
+                        required:
+                        - controlplane
+                        type: object
+                      infrastructureTemplate:
+                        description: |-
+                          InfrastructureTemplate is a required reference to a custom resource
+                          offered by an infrastructure provider.
+                        properties:
+                          apiVersion:
+                            description: API version of the referent.
+                            type: string
+                          fieldPath:
+                            description: |-
+                              If referring to a piece of an object instead of an entire object, this string
+                              should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                              For example, if the object reference is to a container within a pod, this would take on a value like:
+                              "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                              the event) or if no container name is specified "spec.containers[2]" (container with
+                              index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                              referencing a part of an object.
+                            type: string
+                          kind:
+                            description: |-
+                              Kind of the referent.
+                              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                            type: string
+                          name:
+                            description: |-
+                              Name of the referent.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          namespace:
+                            description: |-
+                              Namespace of the referent.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                            type: string
+                          resourceVersion:
+                            description: |-
+                              Specific resourceVersion to which this reference is made, if any.
+                              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                            type: string
+                          uid:
+                            description: |-
+                              UID of the referent.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      rolloutStrategy:
+                        default:
+                          rollingUpdate:
+                            maxSurge: 1
+                          type: RollingUpdate
+                        description: |-
+                          The RolloutStrategy to use to replace control plane machines with
+                          new ones.
+                        properties:
+                          rollingUpdate:
+                            description: |-
+                              Rolling update config params. Present only if
+                              RolloutStrategyType = RollingUpdate.
+                            properties:
+                              maxSurge:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: |-
+                                  The maximum number of control planes that can be scheduled above or under the
+                                  desired number of control planes.
+                                  Value can be an absolute number 1 or 0.
+                                  Defaults to 1.
+                                  Example: when this is set to 1, the control plane can be scaled
+                                  up immediately when the rolling update starts.
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          type:
+                            description: |-
+                              Change rollout strategy.
+
+                              Supported strategies:
+                               * "RollingUpdate".
+                               * "OnDelete"
+
+                              Default is RollingUpdate.
+                            type: string
+                        type: object
+                    required:
+                    - controlPlaneConfig
+                    - infrastructureTemplate
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

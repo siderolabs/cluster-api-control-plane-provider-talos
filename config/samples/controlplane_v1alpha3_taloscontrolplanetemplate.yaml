@@ -1,0 +1,14 @@
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlaneTemplate
+metadata:
+  name: talos-cp-template
+spec:
+  template:
+    spec:
+      infrastructureTemplate:
+        kind: DockerMachineTemplate
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        name: talos-cp-machine-template
+      controlPlaneConfig:
+        controlplane:
+          generateType: controlplane

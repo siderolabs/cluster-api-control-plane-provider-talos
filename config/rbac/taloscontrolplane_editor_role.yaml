@@ -19,6 +19,18 @@ rules:
 - apiGroups:
   - controlplane.cluster.x-k8s.io
   resources:
+  - taloscontrolplanetemplates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
   - taloscontrolplanes/status
   verbs:
   - get
