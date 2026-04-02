@@ -24,7 +24,8 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 	machines := []clusterv1.Machine{}
 
 	for _, machine := range ownedMachines {
-		if machine.ObjectMeta.DeletionTimestamp.IsZero() {
+		if machine.ObjectMeta.DeletionTimestamp.IsZero() &&
+			machine.Annotations["controlplane.cluster.x-k8s.io/etcd-leaving"] != "true" {
 			machines = append(machines, machine)
 		}
 	}

@@ -120,6 +120,19 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
+	// Mark machine as leaving etcd so health check skips it even if reconciliation
+	// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
+	// stopped etcd without DeletionTimestamp fails health checks forever).
+	annotations := deleteMachine.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations["controlplane.cluster.x-k8s.io/etcd-leaving"] = "true"
+	deleteMachine.SetAnnotations(annotations)
+	if err := r.Client.Update(ctx, deleteMachine); err != nil {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	}
+
 	leaveErr := r.gracefulEtcdLeave(ctx, c, *deleteMachine)
 
 	err = r.Client.Delete(ctx, deleteMachine)
