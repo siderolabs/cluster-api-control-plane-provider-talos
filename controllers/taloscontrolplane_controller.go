@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math/rand"
 	"reflect"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -134,8 +136,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
-	if !controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer) {
-		controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+	if ensureTalosControlPlaneFinalizers(tcp) {
 
 		// patch and return right away instead of reusing the main defer,
 		// because the main defer may take too much time to get cluster status
@@ -189,7 +190,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	logger.Info("reconcile TalosControlPlane")
 
 	// Update ownerrefs on infra templates
-	if err := r.reconcileExternalReference(ctx, tcp.Spec.InfrastructureTemplate, cluster); err != nil {
+	if err := r.reconcileExternalReference(ctx, tcp.Spec.InfrastructureTemplateRef(), cluster); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -277,7 +278,7 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 
 	// If no control plane machines remain, remove the finalizer
 	if len(ownedMachines.Items) == 0 {
-		controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+		removeTalosControlPlaneFinalizers(tcp)
 		return ctrl.Result{}, r.Client.Update(ctx, tcp)
 	}
 
@@ -317,6 +318,27 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 	return machineList, nil
 }
 
+func ensureTalosControlPlaneFinalizers(tcp *controlplanev1.TalosControlPlane) bool {
+	changed := false
+
+	if !controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer) {
+		controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+		changed = true
+	}
+
+	if controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizerLegacy) {
+		controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizerLegacy)
+		changed = true
+	}
+
+	return changed
+}
+
+func removeTalosControlPlaneFinalizers(tcp *controlplanev1.TalosControlPlane) {
+	controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
+	controllerutil.RemoveFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizerLegacy)
+}
+
 // getFailureDomain will return a slice of failure domains from the cluster status.
 func (r *TalosControlPlaneReconciler) getFailureDomain(_ context.Context, cluster *clusterv1.Cluster) []string {
 	if cluster.Status.FailureDomains == nil {
@@ -341,9 +363,10 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	// Clone the infrastructure template
+	templateRef := tcp.Spec.InfrastructureTemplateRef()
 	infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 		Client:      r.Client,
-		TemplateRef: &tcp.Spec.InfrastructureTemplate,
+		TemplateRef: &templateRef,
 		Namespace:   tcp.Namespace,
 		OwnerRef:    infraCloneOwner,
 		ClusterName: cluster.Name,
@@ -376,10 +399,10 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
 			Namespace: tcp.Namespace,
-			Labels: map[string]string{
-				clusterv1.ClusterNameLabel:         cluster.Name,
-				clusterv1.MachineControlPlaneLabel: "",
-			},
+			Labels:    controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
+			Annotations: copyStringMap(
+				tcp.Spec.MachineTemplate.Metadata.Annotations,
+			),
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
 			},
@@ -388,6 +411,14 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			ClusterName:       cluster.Name,
 			Version:           &tcp.Spec.Version,
 			InfrastructureRef: *infraRef,
+			ReadinessGates:    copyMachineReadinessGates(tcp.Spec.MachineTemplate.ReadinessGates),
+			NodeDrainTimeout:  copyDuration(tcp.Spec.MachineTemplate.NodeDrainTimeout),
+			NodeVolumeDetachTimeout: copyDuration(
+				tcp.Spec.MachineTemplate.NodeVolumeDetachTimeout,
+			),
+			NodeDeletionTimeout: copyDuration(
+				tcp.Spec.MachineTemplate.NodeDeletionTimeout,
+			),
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: bootstrapRef,
 			},
@@ -549,12 +580,14 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return err
 	}
 
-	replicas := int32(len(ownedMachines.Items))
+	nonDeletingMachines := collections.FromMachineList(&ownedMachines).Filter(collections.Not(collections.HasDeletionTimestamp))
+	replicas := int32(nonDeletingMachines.Len())
 
 	// set basic data that does not require interacting with the workload cluster
 	tcp.Status.Ready = false
 	tcp.Status.Replicas = replicas
 	tcp.Status.ReadyReplicas = 0
+	tcp.Status.UpdatedReplicas = 0
 	tcp.Status.UnavailableReplicas = replicas
 
 	// Return early if the deletion timestamp is set, we don't want to try to connect to the workload cluster.
@@ -562,9 +595,16 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return nil
 	}
 
-	lowestVersion := collections.FromMachineList(&ownedMachines).LowestVersion()
+	lowestVersion := nonDeletingMachines.LowestVersion()
 	if lowestVersion != nil {
 		tcp.Status.Version = lowestVersion
+	}
+
+	controlPlane, err := newControlPlane(ctx, r.Client, cluster, tcp, nonDeletingMachines)
+	if err != nil {
+		r.Log.Info("failed to compute updated replica status", "error", err)
+	} else {
+		tcp.Status.UpdatedReplicas = int32(len(controlPlane.Machines) - len(controlPlane.MachinesWithOutdatedRolloutSpec()))
 	}
 
 	c, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
@@ -748,6 +788,83 @@ func (r *TalosControlPlaneReconciler) reconcileConditions(ctx context.Context, c
 	return ctrl.Result{}, nil
 }
 
+func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
+	desiredLabels := controlPlaneMachineLabelsForCluster(tcp, cluster.Name)
+	desiredAnnotations := copyStringMap(tcp.Spec.MachineTemplate.Metadata.Annotations)
+	desiredReadinessGates := copyMachineReadinessGates(tcp.Spec.MachineTemplate.ReadinessGates)
+	desiredNodeDrainTimeout := copyDuration(tcp.Spec.MachineTemplate.NodeDrainTimeout)
+	desiredNodeVolumeDetachTimeout := copyDuration(tcp.Spec.MachineTemplate.NodeVolumeDetachTimeout)
+	desiredNodeDeletionTimeout := copyDuration(tcp.Spec.MachineTemplate.NodeDeletionTimeout)
+
+	for i := range machines.Items {
+		machine := &machines.Items[i]
+		if !machine.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		patchHelper, err := patch.NewHelper(machine, r.Client)
+		if err != nil {
+			return err
+		}
+
+		changed := false
+
+		if machine.Labels == nil {
+			machine.Labels = map[string]string{}
+		}
+
+		for key, value := range desiredLabels {
+			if machine.Labels[key] != value {
+				machine.Labels[key] = value
+				changed = true
+			}
+		}
+
+		if len(desiredAnnotations) > 0 {
+			if machine.Annotations == nil {
+				machine.Annotations = map[string]string{}
+			}
+
+			for key, value := range desiredAnnotations {
+				if machine.Annotations[key] != value {
+					machine.Annotations[key] = value
+					changed = true
+				}
+			}
+		}
+
+		if !reflect.DeepEqual(machine.Spec.ReadinessGates, desiredReadinessGates) {
+			machine.Spec.ReadinessGates = copyMachineReadinessGates(desiredReadinessGates)
+			changed = true
+		}
+
+		if !durationsEqual(machine.Spec.NodeDrainTimeout, desiredNodeDrainTimeout) {
+			machine.Spec.NodeDrainTimeout = copyDuration(desiredNodeDrainTimeout)
+			changed = true
+		}
+
+		if !durationsEqual(machine.Spec.NodeVolumeDetachTimeout, desiredNodeVolumeDetachTimeout) {
+			machine.Spec.NodeVolumeDetachTimeout = copyDuration(desiredNodeVolumeDetachTimeout)
+			changed = true
+		}
+
+		if !durationsEqual(machine.Spec.NodeDeletionTimeout, desiredNodeDeletionTimeout) {
+			machine.Spec.NodeDeletionTimeout = copyDuration(desiredNodeDeletionTimeout)
+			changed = true
+		}
+
+		if !changed {
+			continue
+		}
+
+		if err := patchHelper.Patch(ctx, machine); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (res ctrl.Result, err error) {
 	logger := r.Log.WithValues("namespace", tcp.Namespace, "talosControlPlane", tcp.Name)
 
@@ -757,6 +874,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 	controlPlane, err := newControlPlane(ctx, r.Client, cluster, tcp, collections.FromMachineList(machines))
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileMachineTemplateState(ctx, cluster, tcp, machines); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -825,6 +946,74 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, clusterName string) map[string]string {
+	labels := copyStringMap(tcp.Spec.MachineTemplate.Metadata.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+
+	labels[clusterv1.ClusterNameLabel] = clusterName
+	labels[clusterv1.MachineControlPlaneLabel] = ""
+	labels[clusterv1.MachineControlPlaneNameLabel] = mustFormatValue(tcp.Name)
+
+	return labels
+}
+
+func mustFormatValue(str string) string {
+	if len(validation.IsValidLabelValue(str)) == 0 {
+		return str
+	}
+
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(str))
+
+	return fmt.Sprintf("%x", hasher.Sum32())
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+
+	return out
+}
+
+func copyMachineReadinessGates(in []clusterv1.MachineReadinessGate) []clusterv1.MachineReadinessGate {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]clusterv1.MachineReadinessGate, len(in))
+	copy(out, in)
+
+	return out
+}
+
+func copyDuration(in *metav1.Duration) *metav1.Duration {
+	if in == nil {
+		return nil
+	}
+
+	out := *in
+	return &out
+}
+
+func durationsEqual(a, b *metav1.Duration) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return a.Duration == b.Duration
+	}
 }
 
 func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp *controlplanev1.TalosControlPlane, opts ...patch.Option) error {
