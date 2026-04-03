@@ -118,6 +118,8 @@ metadata:
 spec:
   version: v1.31.0
   replicas: 1
+  machineNamingStrategy:
+    template: "{{ .talosControlPlane.name }}-{{ .random }}"
   machineTemplate:
     infrastructureRef:
       apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -138,6 +140,15 @@ Direct `TalosControlPlane` resources must resolve an infrastructure machine temp
 The legacy `spec.infrastructureTemplate` field is still accepted for backward compatibility,
 but new manifests should use `machineTemplate.infrastructureRef`.
 See your infrastructure provider for how to craft the referenced machine template.
+
+`spec.machineNamingStrategy` controls the names used for control plane `Machine` objects.
+The corresponding infrastructure machine and Talos bootstrap config reuse the same name.
+If you omit the field, the default template is `{{ .talosControlPlane.name }}-{{ .random }}`.
+Custom templates must include `{{ .random }}` and can use:
+
+- `.cluster.name`
+- `.talosControlPlane.name`
+- `.random`
 
 `strategicPatches` is an array of strings.
 Each patch must be passed as a YAML string, typically via a block scalar (`- |`), not as an inline object.
@@ -193,6 +204,8 @@ metadata:
 spec:
   template:
     spec:
+      machineNamingStrategy:
+        template: "{{ .talosControlPlane.name }}-{{ .random }}"
       machineTemplate:
         metadata:
           labels:
@@ -212,6 +225,8 @@ metadata:
   name: talos-quickstart
 spec:
   controlPlane:
+    namingStrategy:
+      template: "{{ .cluster.name }}-control-plane"
     ref:
       apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
       kind: TalosControlPlaneTemplate
@@ -238,6 +253,15 @@ For ClusterClass / topology, the infrastructure machine template is supplied via
 `ClusterClass.spec.controlPlane.machineInfrastructure.ref`, and the topology controller
 populates `TalosControlPlane.spec.machineTemplate.infrastructureRef` on the generated
 concrete control plane object.
+
+For naming in managed topology there are two levels:
+
+- `ClusterClass.spec.controlPlane.namingStrategy` controls the generated `TalosControlPlane` name.
+- `TalosControlPlaneTemplate.spec.template.spec.machineNamingStrategy` controls the generated control plane `Machine`, infrastructure machine, and Talos bootstrap config names.
+
+With the example above, a cluster named `talos-topology` produces a concrete `TalosControlPlane`
+named `talos-topology-control-plane`, and control plane machines named
+`talos-topology-control-plane-xxxxx`.
 
 See `config/samples/topology_v1alpha3_clusterclass_with_taloscontrolplanetemplate.yaml` for a ClusterClass / Cluster fragment including workers.
 That sample assumes the referenced infrastructure and worker bootstrap templates already exist.

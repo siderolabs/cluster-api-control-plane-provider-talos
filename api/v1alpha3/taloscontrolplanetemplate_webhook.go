@@ -75,6 +75,7 @@ func (r *TalosControlPlaneTemplate) validate() (admission.Warnings, error) {
 		field.NewPath("spec", "template", "spec"),
 		false,
 	)
+	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.Template.Spec.MachineNamingStrategy, field.NewPath("spec", "template", "spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.Template.Spec.RolloutStrategy, field.NewPath("spec", "template", "spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
 		return nil, nil

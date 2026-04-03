@@ -32,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -362,12 +361,21 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		UID:        tcp.UID,
 	}
 
+	machineName, err := tcp.Spec.GenerateMachineName(cluster.Name, tcp.Name)
+	if err != nil {
+		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.MachineGenerationFailedReason,
+			clusterv1.ConditionSeverityError, "%s", err.Error())
+
+		return ctrl.Result{}, err
+	}
+
 	// Clone the infrastructure template
 	templateRef := tcp.Spec.InfrastructureTemplateRef()
 	infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 		Client:      r.Client,
 		TemplateRef: &templateRef,
 		Namespace:   tcp.Namespace,
+		Name:        machineName,
 		OwnerRef:    infraCloneOwner,
 		ClusterName: cluster.Name,
 		Labels: map[string]string{
@@ -387,7 +395,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	// Clone the bootstrap configuration
-	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, bootstrapConfig)
+	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, machineName, bootstrapConfig)
 	if err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.BootstrapTemplateCloningFailedReason,
 			clusterv1.ConditionSeverityError, "%s", err.Error())
@@ -397,7 +405,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
+			Name:      machineName,
 			Namespace: tcp.Namespace,
 			Labels:    controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
 			Annotations: copyStringMap(
@@ -525,7 +533,7 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, spec *cabptv1.TalosConfigSpec) (*corev1.ObjectReference, error) {
+func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, name string, spec *cabptv1.TalosConfigSpec) (*corev1.ObjectReference, error) {
 	owner := metav1.OwnerReference{
 		APIVersion:         controlplanev1.GroupVersion.String(),
 		Kind:               "TalosControlPlane",
@@ -536,7 +544,7 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 
 	bootstrapConfig := &cabptv1.TalosConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            names.SimpleNameGenerator.GenerateName(tcp.Name + "-"),
+			Name:            name,
 			Namespace:       tcp.Namespace,
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},

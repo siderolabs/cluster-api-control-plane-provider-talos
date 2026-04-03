@@ -160,6 +160,34 @@ func TestTalosControlPlaneValidateCreateRejectsConflictingInfrastructureRefs(t *
 	}
 }
 
+func TestTalosControlPlaneValidateCreateRejectsInvalidMachineNamingStrategy(t *testing.T) {
+	t.Parallel()
+
+	tcp := &TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cp",
+		},
+		Spec: TalosControlPlaneSpec{
+			Version: "v1.31.0",
+			MachineTemplate: TalosControlPlaneMachineTemplate{
+				InfrastructureRef: corev1.ObjectReference{
+					Name:       "cp-template",
+					Kind:       "DockerMachineTemplate",
+					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				},
+			},
+			MachineNamingStrategy: &MachineNamingStrategy{
+				Template: "{{ .talosControlPlane.name }}",
+			},
+		},
+	}
+
+	_, err := tcp.ValidateCreate(context.Background(), tcp)
+	if err == nil {
+		t.Fatal("expected validation error for machine naming strategy without {{ .random }}")
+	}
+}
+
 func TestTalosControlPlaneTemplateDefault(t *testing.T) {
 	t.Parallel()
 
@@ -250,6 +278,27 @@ func TestTalosControlPlaneTemplateValidateUpdate(t *testing.T) {
 	_, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj)
 	if err == nil {
 		t.Fatal("expected validation error for invalid rollout strategy type on update")
+	}
+}
+
+func TestTalosControlPlaneTemplateValidateCreateRejectsInvalidMachineNamingStrategy(t *testing.T) {
+	t.Parallel()
+
+	tcpt := &TalosControlPlaneTemplate{
+		Spec: TalosControlPlaneTemplateSpec{
+			Template: TalosControlPlaneTemplateResource{
+				Spec: TalosControlPlaneTemplateResourceSpec{
+					MachineNamingStrategy: &MachineNamingStrategy{
+						Template: "{{ .talosControlPlane.name }}",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := tcpt.ValidateCreate(context.Background(), tcpt)
+	if err == nil {
+		t.Fatal("expected validation error for template machine naming strategy without {{ .random }}")
 	}
 }
 

@@ -33,6 +33,11 @@ type TalosControlPlaneTemplateResourceSpec struct {
 	// +optional
 	MachineTemplate TalosControlPlaneMachineTemplate `json:"machineTemplate,omitempty"`
 
+	// MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
+	// InfraMachines and bootstrap configs use the same name as the corresponding Machine.
+	// +optional
+	MachineNamingStrategy *MachineNamingStrategy `json:"machineNamingStrategy,omitempty"`
+
 	// InfrastructureTemplate is kept as a deprecated compatibility alias for older template manifests.
 	// New manifests should use spec.template.spec.machineTemplate.infrastructureRef when an inline
 	// infrastructure reference is required outside of ClusterClass-managed topology.
