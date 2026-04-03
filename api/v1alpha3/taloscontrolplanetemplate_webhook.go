@@ -41,9 +41,10 @@ func (r *TalosControlPlaneTemplate) Default(_ context.Context, obj runtime.Objec
 }
 
 func defaultTalosControlPlaneTemplateSpec(s *TalosControlPlaneTemplateSpec, namespace string) {
-	if s.Template.Spec.InfrastructureTemplate.Namespace == "" {
-		s.Template.Spec.InfrastructureTemplate.Namespace = namespace
-	}
+	s.Template.Spec.SyncInfrastructureTemplateCompatibility()
+	defaultObjectReferenceNamespace(&s.Template.Spec.MachineTemplate.InfrastructureRef, namespace)
+	defaultObjectReferenceNamespace(&s.Template.Spec.InfrastructureTemplate, namespace)
+	s.Template.Spec.SyncInfrastructureTemplateCompatibility()
 
 	s.Template.Spec.RolloutStrategy = defaultRolloutStrategy(s.Template.Spec.RolloutStrategy)
 }
@@ -68,7 +69,13 @@ func (r *TalosControlPlaneTemplate) ValidateDelete(_ context.Context, _ runtime.
 }
 
 func (r *TalosControlPlaneTemplate) validate() (admission.Warnings, error) {
-	allErrs := validateRolloutStrategy(r.Spec.Template.Spec.RolloutStrategy, field.NewPath("spec", "template", "spec", "rolloutStrategy"))
+	allErrs := validateInfrastructureTemplateCompatibility(
+		r.Spec.Template.Spec.MachineTemplate,
+		r.Spec.Template.Spec.InfrastructureTemplate,
+		field.NewPath("spec", "template", "spec"),
+		false,
+	)
+	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.Template.Spec.RolloutStrategy, field.NewPath("spec", "template", "spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}

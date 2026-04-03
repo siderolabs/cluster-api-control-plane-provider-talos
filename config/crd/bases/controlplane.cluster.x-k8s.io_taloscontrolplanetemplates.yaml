@@ -183,8 +183,9 @@ spec:
                         type: object
                       infrastructureTemplate:
                         description: |-
-                          InfrastructureTemplate is a required reference to a custom resource
-                          offered by an infrastructure provider.
+                          InfrastructureTemplate is kept as a deprecated compatibility alias for older template manifests.
+                          New manifests should use spec.template.spec.machineTemplate.infrastructureRef when an inline
+                          infrastructure reference is required outside of ClusterClass-managed topology.
                         properties:
                           apiVersion:
                             description: API version of the referent.
@@ -226,6 +227,94 @@ spec:
                             type: string
                         type: object
                         x-kubernetes-map-type: atomic
+                      machineTemplate:
+                        description: |-
+                          MachineTemplate contains information about how control plane Machines should be shaped.
+                          For ClusterClass / topology, ClusterClass.spec.controlPlane.machineInfrastructure.ref populates
+                          machineTemplate.infrastructureRef when creating a concrete TalosControlPlane.
+                        properties:
+                          infrastructureRef:
+                            description: |-
+                              InfrastructureRef is a reference to a custom resource offered by an infrastructure provider.
+                              For ClusterClass / topology, this field is populated from ClusterClass.spec.controlPlane.machineInfrastructure.ref.
+                            properties:
+                              apiVersion:
+                                description: API version of the referent.
+                                type: string
+                              fieldPath:
+                                description: |-
+                                  If referring to a piece of an object instead of an entire object, this string
+                                  should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                                  For example, if the object reference is to a container within a pod, this would take on a value like:
+                                  "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                                  the event) or if no container name is specified "spec.containers[2]" (container with
+                                  index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                                  referencing a part of an object.
+                                type: string
+                              kind:
+                                description: |-
+                                  Kind of the referent.
+                                  More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                                type: string
+                              name:
+                                description: |-
+                                  Name of the referent.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              namespace:
+                                description: |-
+                                  Namespace of the referent.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                                type: string
+                              resourceVersion:
+                                description: |-
+                                  Specific resourceVersion to which this reference is made, if any.
+                                  More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                                type: string
+                              uid:
+                                description: |-
+                                  UID of the referent.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          metadata:
+                            description: Metadata is the standard object's metadata.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                            type: object
+                          nodeDeletionTimeout:
+                            description: NodeDeletionTimeout defines how long the controller will attempt to delete the Node that is hosted by a Machine.
+                            type: string
+                          nodeDrainTimeout:
+                            description: NodeDrainTimeout is the total amount of time that the controller will spend draining a control plane node.
+                            type: string
+                          nodeVolumeDetachTimeout:
+                            description: NodeVolumeDetachTimeout is the total amount of time that the controller will spend waiting for volumes to be detached.
+                            type: string
+                          readinessGates:
+                            description: ReadinessGates specifies additional conditions to include when evaluating Machine Ready condition.
+                            items:
+                              properties:
+                                conditionType:
+                                  type: string
+                              required:
+                              - conditionType
+                              type: object
+                            maxItems: 32
+                            minItems: 1
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - conditionType
+                            x-kubernetes-list-type: map
+                        type: object
                       rolloutStrategy:
                         default:
                           rollingUpdate:
@@ -266,7 +355,6 @@ spec:
                         type: object
                     required:
                     - controlPlaneConfig
-                    - infrastructureTemplate
                     type: object
                 required:
                 - spec

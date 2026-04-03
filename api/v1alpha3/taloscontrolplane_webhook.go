@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,9 +52,10 @@ func defaultTalosControlPlaneSpec(s *TalosControlPlaneSpec, namespace string) {
 		s.Replicas = &replicas
 	}
 
-	if s.InfrastructureTemplate.Namespace == "" {
-		s.InfrastructureTemplate.Namespace = namespace
-	}
+	s.SyncInfrastructureTemplateCompatibility()
+	defaultObjectReferenceNamespace(&s.MachineTemplate.InfrastructureRef, namespace)
+	defaultObjectReferenceNamespace(&s.InfrastructureTemplate, namespace)
+	s.SyncInfrastructureTemplateCompatibility()
 
 	if !strings.HasPrefix(s.Version, "v") {
 		s.Version = "v" + s.Version
@@ -105,7 +107,13 @@ func (r *TalosControlPlane) ValidateDelete(_ context.Context, _ runtime.Object) 
 }
 
 func (r *TalosControlPlane) validate() (admission.Warnings, error) {
-	allErrs := validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))
+	allErrs := validateInfrastructureTemplateCompatibility(
+		r.Spec.MachineTemplate,
+		r.Spec.InfrastructureTemplate,
+		field.NewPath("spec"),
+		true,
+	)
+	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
@@ -141,4 +149,35 @@ func newInvalidTalosControlPlaneError(kind, name string, allErrs field.ErrorList
 		name,
 		allErrs,
 	)
+}
+
+func defaultObjectReferenceNamespace(ref *corev1.ObjectReference, namespace string) {
+	if hasObjectReference(*ref) && ref.Namespace == "" {
+		ref.Namespace = namespace
+	}
+}
+
+func validateInfrastructureTemplateCompatibility(machineTemplate TalosControlPlaneMachineTemplate, legacy corev1.ObjectReference, fldPath *field.Path, requireRef bool) field.ErrorList {
+	var allErrs field.ErrorList
+
+	machineRefPath := fldPath.Child("machineTemplate", "infrastructureRef")
+	legacyRefPath := fldPath.Child("infrastructureTemplate")
+
+	hasMachineRef := hasObjectReference(machineTemplate.InfrastructureRef)
+	hasLegacyRef := hasObjectReference(legacy)
+
+	if requireRef && !hasMachineRef && !hasLegacyRef {
+		allErrs = append(allErrs,
+			field.Required(machineRefPath, "machineTemplate.infrastructureRef or infrastructureTemplate must be set"),
+		)
+	}
+
+	if hasMachineRef && hasLegacyRef && machineTemplate.InfrastructureRef != legacy {
+		allErrs = append(allErrs,
+			field.Invalid(machineRefPath, machineTemplate.InfrastructureRef, "must match spec.infrastructureTemplate when both fields are set"),
+			field.Invalid(legacyRefPath, legacy, "must match spec.machineTemplate.infrastructureRef when both fields are set"),
+		)
+	}
+
+	return allErrs
 }
