@@ -312,9 +312,47 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 	g.Expect(machine.Spec.NodeDrainTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDrainTimeout))
 	g.Expect(machine.Spec.NodeVolumeDetachTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeVolumeDetachTimeout))
 	g.Expect(machine.Spec.NodeDeletionTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDeletionTimeout))
+	g.Expect(machine.Spec.InfrastructureRef.Name).To(Equal(machine.Name))
+	g.Expect(machine.Spec.Bootstrap.ConfigRef).NotTo(BeNil())
+	g.Expect(machine.Spec.Bootstrap.ConfigRef.Name).To(Equal(machine.Name))
 
 	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
 	g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
+}
+
+func (suite *ControllersSuite) TestReconcileCreatesMachineFromCustomMachineNamingStrategy() {
+	fakeClient := newFakeClient()
+
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-naming-strategy", pointer.Int32(1))
+
+	g := NewWithT(suite.T())
+
+	patchHelper, err := patch.NewHelper(tcp, fakeClient)
+	g.Expect(err).To(BeNil())
+
+	tcp.Spec.MachineNamingStrategy = &controlplanev1.MachineNamingStrategy{
+		Template: "{{ .cluster.name }}-control-plane-{{ .random }}",
+	}
+	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{}))
+
+	result, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	machineList := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(machineList.Items).To(HaveLen(1))
+
+	machine := machineList.Items[0]
+	g.Expect(machine.Name).To(HavePrefix(cluster.Name + "-control-plane-"))
+	g.Expect(machine.Spec.InfrastructureRef.Name).To(Equal(machine.Name))
+	g.Expect(machine.Spec.Bootstrap.ConfigRef).NotTo(BeNil())
+	g.Expect(machine.Spec.Bootstrap.ConfigRef.Name).To(Equal(machine.Name))
 }
 
 func (suite *ControllersSuite) TestReconcileMigratesLegacyFinalizer() {
