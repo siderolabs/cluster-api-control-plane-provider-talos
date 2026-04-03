@@ -8,6 +8,8 @@ metadata:
 spec:
   template:
     spec:
+      machineNamingStrategy:
+        template: "{{ .talosControlPlane.name }}-{{ .random }}"
       machineTemplate:
         metadata:
           labels:

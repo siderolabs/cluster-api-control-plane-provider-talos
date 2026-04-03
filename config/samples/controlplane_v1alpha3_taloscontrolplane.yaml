@@ -7,6 +7,8 @@ metadata:
 spec:
   version: v1.31.0
   replicas: 1
+  machineNamingStrategy:
+    template: "{{ .talosControlPlane.name }}-{{ .random }}"
   machineTemplate:
     infrastructureRef:
       apiVersion: infrastructure.cluster.x-k8s.io/v1beta1

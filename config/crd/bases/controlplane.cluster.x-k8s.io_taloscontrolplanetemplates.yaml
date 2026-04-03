@@ -315,6 +315,25 @@ spec:
                             - conditionType
                             x-kubernetes-list-type: map
                         type: object
+                      machineNamingStrategy:
+                        description: |-
+                          MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
+                          InfraMachines and bootstrap configs use the same name as the corresponding Machine.
+                        properties:
+                          template:
+                            description: |-
+                              Template defines the template to use for generating the names of control plane Machine objects.
+                              If not defined, it falls back to `{{ .talosControlPlane.name }}-{{ .random }}`.
+                              If the generated name string exceeds 63 characters, it is trimmed to 58 characters and
+                              concatenated with a random suffix of length 5.
+                              The template allows the following variables:
+                              * `.cluster.name`: the Cluster name.
+                              * `.talosControlPlane.name`: the TalosControlPlane name.
+                              * `.random`: a random alphanumeric string without vowels of length 5.
+                            maxLength: 256
+                            minLength: 1
+                            type: string
+                        type: object
                       rolloutStrategy:
                         default:
                           rollingUpdate:

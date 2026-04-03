@@ -14,6 +14,7 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -113,6 +114,7 @@ func (r *TalosControlPlane) validate() (admission.Warnings, error) {
 		field.NewPath("spec"),
 		true,
 	)
+	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -136,6 +138,43 @@ func validateRolloutStrategy(rolloutStrategy *RolloutStrategy, fldPath *field.Pa
 		allErrs = append(allErrs,
 			field.Invalid(fldPath, rolloutStrategy.Type,
 				fmt.Sprintf("valid values are: %q", []RolloutStrategyType{RollingUpdateStrategyType, OnDeleteStrategyType}),
+			),
+		)
+	}
+
+	return allErrs
+}
+
+func validateMachineNamingStrategy(strategy *MachineNamingStrategy, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if strategy == nil || strategy.Template == "" {
+		return allErrs
+	}
+
+	if !strings.Contains(strategy.Template, "{{ .random }}") {
+		allErrs = append(allErrs,
+			field.Invalid(fldPath.Child("template"), strategy.Template, "must contain {{ .random }}"),
+		)
+
+		return allErrs
+	}
+
+	exampleName, err := generateTalosControlPlaneMachineName(strategy, "cluster", "talos-control-plane")
+	if err != nil {
+		allErrs = append(allErrs,
+			field.Invalid(fldPath.Child("template"), strategy.Template, err.Error()),
+		)
+
+		return allErrs
+	}
+
+	for _, msg := range validation.IsDNS1123Subdomain(exampleName) {
+		allErrs = append(allErrs,
+			field.Invalid(
+				fldPath.Child("template"),
+				strategy.Template,
+				fmt.Sprintf("produces invalid machine name %q: %s", exampleName, msg),
 			),
 		)
 	}
