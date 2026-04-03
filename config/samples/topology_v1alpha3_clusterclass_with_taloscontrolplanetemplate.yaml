@@ -1,5 +1,7 @@
 # This sample intentionally uses CAPI v1beta1 APIs.
 # Update to v1beta2 only as part of a broader provider contract migration.
+# This file is a ClusterClass / Cluster fragment, not a self-contained quickstart.
+# Apply it together with the referenced Docker*Template and TalosConfigTemplate objects.
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: ClusterClass
 metadata:
@@ -15,6 +17,11 @@ spec:
       apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
       kind: TalosControlPlaneTemplate
       name: talos-cp-template
+    machineInfrastructure:
+      ref:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: talos-cp-machine-template
   workers:
     machineDeployments:
     - class: default-worker

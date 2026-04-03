@@ -76,6 +76,11 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 		return collections.New()
 	}
 
+	return c.MachinesWithOutdatedRolloutSpec()
+}
+
+// MachinesWithOutdatedRolloutSpec returns Machines whose rollout-requiring fields do not match the desired control plane spec.
+func (c *ControlPlane) MachinesWithOutdatedRolloutSpec() collections.Machines {
 	// Ignore machines to be deleted.
 	machines := c.Machines.Filter(collections.Not(collections.HasDeletionTimestamp))
 
@@ -158,9 +163,11 @@ func MatchesTemplateClonedFrom(infraConfigs map[string]*unstructured.Unstructure
 			return true
 		}
 
+		templateRef := tcp.Spec.InfrastructureTemplateRef()
+
 		// Check if the machine's infrastructure reference has been created from the current TCP infrastructure template.
-		if clonedFromName != tcp.Spec.InfrastructureTemplate.Name ||
-			clonedFromGroupKind != tcp.Spec.InfrastructureTemplate.GroupVersionKind().GroupKind().String() {
+		if clonedFromName != templateRef.Name ||
+			clonedFromGroupKind != templateRef.GroupVersionKind().GroupKind().String() {
 			return false
 		}
 

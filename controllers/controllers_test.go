@@ -154,6 +154,12 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
+			InfrastructureTemplate: corev1.ObjectReference{
+				Kind:       "GenericInfrastructureMachineTemplate",
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Name:       "paused-template",
+				Namespace:  metav1.NamespaceDefault,
+			},
 		},
 	}
 	tcp.Default(suite.T().Context(), tcp)
@@ -253,6 +259,88 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g.Expect(machineList.Items).To(BeEmpty())
 }
 
+func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateContract() {
+	fakeClient := newFakeClient()
+
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-template-contract", pointer.Int32(1))
+
+	g := NewWithT(suite.T())
+
+	patchHelper, err := patch.NewHelper(tcp, fakeClient)
+	g.Expect(err).To(BeNil())
+
+	tcp.Spec.MachineTemplate = controlplanev1.TalosControlPlaneMachineTemplate{
+		InfrastructureRef: tcp.Spec.InfrastructureTemplate,
+		Metadata: clusterv1.ObjectMeta{
+			Labels: map[string]string{
+				"example.siderolabs.dev/control-plane": "true",
+			},
+			Annotations: map[string]string{
+				"example.siderolabs.dev/annotation": "present",
+			},
+		},
+		ReadinessGates: []clusterv1.MachineReadinessGate{
+			{ConditionType: "APIServerReady"},
+		},
+		NodeDrainTimeout:        &metav1.Duration{Duration: 30 * time.Second},
+		NodeVolumeDetachTimeout: &metav1.Duration{Duration: 40 * time.Second},
+		NodeDeletionTimeout:     &metav1.Duration{Duration: 50 * time.Second},
+	}
+	tcp.Spec.InfrastructureTemplate = corev1.ObjectReference{}
+	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{}))
+
+	result, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	machineList := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(machineList.Items).To(HaveLen(1))
+
+	machine := machineList.Items[0]
+	g.Expect(machine.Labels["example.siderolabs.dev/control-plane"]).To(Equal("true"))
+	g.Expect(machine.Annotations["example.siderolabs.dev/annotation"]).To(Equal("present"))
+	g.Expect(machine.Labels[clusterv1.ClusterNameLabel]).To(Equal(cluster.Name))
+	g.Expect(machine.Labels[clusterv1.MachineControlPlaneLabel]).To(Equal(""))
+	g.Expect(machine.Labels[clusterv1.MachineControlPlaneNameLabel]).NotTo(BeEmpty())
+	g.Expect(machine.Spec.ReadinessGates).To(Equal(tcp.Spec.MachineTemplate.ReadinessGates))
+	g.Expect(machine.Spec.NodeDrainTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDrainTimeout))
+	g.Expect(machine.Spec.NodeVolumeDetachTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeVolumeDetachTimeout))
+	g.Expect(machine.Spec.NodeDeletionTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDeletionTimeout))
+
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
+}
+
+func (suite *ControllersSuite) TestReconcileMigratesLegacyFinalizer() {
+	fakeClient := newFakeClient()
+
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-migrate-legacy-finalizer", pointer.Int32(1))
+
+	g := NewWithT(suite.T())
+
+	patchHelper, err := patch.NewHelper(tcp, fakeClient)
+	g.Expect(err).To(BeNil())
+
+	tcp.Finalizers = []string{controlplanev1.TalosControlPlaneFinalizerLegacy}
+	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{}))
+
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+	g.Expect(tcp.Finalizers).NotTo(ContainElement(controlplanev1.TalosControlPlaneFinalizerLegacy))
+}
+
 func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	fakeClient := newFakeClient()
 
@@ -340,6 +428,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
 		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
 
@@ -399,6 +488,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(2))
 		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
@@ -505,6 +595,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(3))
 		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
 

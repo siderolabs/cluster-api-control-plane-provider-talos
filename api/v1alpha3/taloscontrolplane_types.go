@@ -13,13 +13,50 @@ import (
 )
 
 const (
-	TalosControlPlaneFinalizer = "talos.controlplane.cluster.x-k8s.io"
+	// TalosControlPlaneFinalizer is the finalizer used by the controller to clean up owned Machines.
+	TalosControlPlaneFinalizer = "talos.controlplane.cluster.x-k8s.io/finalizer"
+
+	// TalosControlPlaneFinalizerLegacy is kept temporarily so the controller can migrate
+	// existing objects away from the old non-path-qualified finalizer value.
+	TalosControlPlaneFinalizerLegacy = "talos.controlplane.cluster.x-k8s.io"
 )
 
 type ControlPlaneConfig struct {
 	// Deprecated: starting from cacppt v0.4.0 provider doesn't use init configs.
 	InitConfig         cabptv1.TalosConfigSpec `json:"init,omitempty"`
 	ControlPlaneConfig cabptv1.TalosConfigSpec `json:"controlplane"`
+}
+
+// TalosControlPlaneMachineTemplate defines how control plane Machines should be shaped.
+type TalosControlPlaneMachineTemplate struct {
+	// Metadata is the standard object's metadata.
+	// +optional
+	Metadata clusterv1.ObjectMeta `json:"metadata,omitempty"`
+
+	// InfrastructureRef is a reference to a custom resource offered by an infrastructure provider.
+	// For ClusterClass / topology, this field is populated from ClusterClass.spec.controlPlane.machineInfrastructure.ref.
+	// +optional
+	InfrastructureRef corev1.ObjectReference `json:"infrastructureRef,omitempty"`
+
+	// ReadinessGates specifies additional conditions to include when evaluating Machine Ready condition.
+	// +optional
+	// +listType=map
+	// +listMapKey=conditionType
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	ReadinessGates []clusterv1.MachineReadinessGate `json:"readinessGates,omitempty"`
+
+	// NodeDrainTimeout is the total amount of time that the controller will spend draining a control plane node.
+	// +optional
+	NodeDrainTimeout *metav1.Duration `json:"nodeDrainTimeout,omitempty"`
+
+	// NodeVolumeDetachTimeout is the total amount of time that the controller will spend waiting for volumes to be detached.
+	// +optional
+	NodeVolumeDetachTimeout *metav1.Duration `json:"nodeVolumeDetachTimeout,omitempty"`
+
+	// NodeDeletionTimeout defines how long the controller will attempt to delete the Node that is hosted by a Machine.
+	// +optional
+	NodeDeletionTimeout *metav1.Duration `json:"nodeDeletionTimeout,omitempty"`
 }
 
 // RolloutStrategyType defines the rollout strategies for a KubeadmControlPlane.
@@ -47,9 +84,15 @@ type TalosControlPlaneSpec struct {
 	// +kubebuilder:validation:Pattern:=^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-0-9a-zA-Z_\.+]*)?$
 	Version string `json:"version"`
 
-	// InfrastructureTemplate is a required reference to a custom resource
-	// offered by an infrastructure provider.
-	InfrastructureTemplate corev1.ObjectReference `json:"infrastructureTemplate"`
+	// MachineTemplate contains information about how control plane Machines should be shaped.
+	// This is the Cluster API v1beta1 control plane contract field consumed by ClusterClass / topology.
+	// +optional
+	MachineTemplate TalosControlPlaneMachineTemplate `json:"machineTemplate,omitempty"`
+
+	// InfrastructureTemplate is kept as a deprecated compatibility alias for users of older TalosControlPlane manifests.
+	// New manifests should use spec.machineTemplate.infrastructureRef instead.
+	// +optional
+	InfrastructureTemplate corev1.ObjectReference `json:"infrastructureTemplate,omitempty"`
 
 	// ControlPlaneConfig is a two TalosConfigSpecs
 	// to use for initializing and joining machines to the control plane.
@@ -70,6 +113,22 @@ func (s *TalosControlPlaneSpec) GetReplicas() int32 {
 	}
 
 	return *s.Replicas
+}
+
+// SyncInfrastructureTemplateCompatibility keeps the deprecated infrastructureTemplate alias
+// and the Cluster API machineTemplate.infrastructureRef field aligned when only one is set.
+func (s *TalosControlPlaneSpec) SyncInfrastructureTemplateCompatibility() {
+	syncInfrastructureTemplateCompatibility(&s.MachineTemplate, &s.InfrastructureTemplate)
+}
+
+// InfrastructureTemplateRef returns the resolved infrastructure machine template reference.
+func (s *TalosControlPlaneSpec) InfrastructureTemplateRef() corev1.ObjectReference {
+	return resolvedInfrastructureTemplateRef(s.MachineTemplate, s.InfrastructureTemplate)
+}
+
+// HasInfrastructureTemplateRef reports whether the control plane spec has a resolved infrastructure template reference.
+func (s *TalosControlPlaneSpec) HasInfrastructureTemplateRef() bool {
+	return hasObjectReference(s.InfrastructureTemplateRef())
 }
 
 // RolloutStrategy describes how to replace existing machines
@@ -129,6 +188,10 @@ type TalosControlPlaneStatus struct {
 	// that still have not been created.
 	// +optional
 	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
+
+	// Total number of non-terminated Machines targeted by this control plane that have the desired spec.
+	// +optional
+	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
 
 	// Initialized denotes whether or not the control plane has the
 	// uploaded talos-config configmap.
@@ -211,4 +274,31 @@ type TalosControlPlaneList struct {
 
 func init() {
 	SchemeBuilder.Register(&TalosControlPlane{}, &TalosControlPlaneList{})
+}
+
+func syncInfrastructureTemplateCompatibility(machineTemplate *TalosControlPlaneMachineTemplate, legacy *corev1.ObjectReference) {
+	switch {
+	case !hasObjectReference(machineTemplate.InfrastructureRef) && hasObjectReference(*legacy):
+		machineTemplate.InfrastructureRef = *legacy
+	case hasObjectReference(machineTemplate.InfrastructureRef) && !hasObjectReference(*legacy):
+		*legacy = machineTemplate.InfrastructureRef
+	}
+}
+
+func resolvedInfrastructureTemplateRef(machineTemplate TalosControlPlaneMachineTemplate, legacy corev1.ObjectReference) corev1.ObjectReference {
+	if hasObjectReference(machineTemplate.InfrastructureRef) {
+		return machineTemplate.InfrastructureRef
+	}
+
+	return legacy
+}
+
+func hasObjectReference(ref corev1.ObjectReference) bool {
+	return ref.APIVersion != "" ||
+		ref.Kind != "" ||
+		ref.Name != "" ||
+		ref.Namespace != "" ||
+		ref.ResourceVersion != "" ||
+		ref.FieldPath != "" ||
+		ref.UID != ""
 }
