@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -292,12 +291,6 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		t.Fatalf("expected validation error to mention valid values, got: %v", err)
 	}
 
-	persisted.Spec.Template.Spec.RolloutStrategy = &controlplanev1.RolloutStrategy{Type: controlplanev1.RolloutStrategyType("Invalid")}
-	err = k8sClient.Update(ctx, persisted)
-	if err == nil {
-		t.Fatalf("expected invalid rolloutStrategy update to be rejected")
-	}
-
 	persisted.Spec.Template.Spec.RolloutStrategy = &controlplanev1.RolloutStrategy{
 		Type: controlplanev1.RollingUpdateStrategyType,
 		RollingUpdate: &controlplanev1.RollingUpdate{MaxSurge: func() *intstr.IntOrString {
@@ -305,26 +298,23 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 			return &v
 		}()},
 	}
-	if err := k8sClient.Update(ctx, persisted); err != nil {
-		t.Fatalf("expected valid update to succeed: %v", err)
+	err = k8sClient.Update(ctx, persisted)
+	if err == nil {
+		t.Fatalf("expected template spec update to be rejected")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("expected immutability error, got: %v", err)
 	}
 
-	eventuallyUpdated := &controlplanev1.TalosControlPlaneTemplate{}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(valid), eventuallyUpdated); err != nil {
-			t.Fatalf("failed to get updated template: %v", err)
-		}
-		if eventuallyUpdated.Spec.Template.Spec.RolloutStrategy != nil &&
-			eventuallyUpdated.Spec.Template.Spec.RolloutStrategy.RollingUpdate != nil &&
-			eventuallyUpdated.Spec.Template.Spec.RolloutStrategy.RollingUpdate.MaxSurge != nil &&
-			eventuallyUpdated.Spec.Template.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntValue() == 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for updated rollout strategy to persist")
-		}
-		time.Sleep(250 * time.Millisecond)
+	metadataOnly := &controlplanev1.TalosControlPlaneTemplate{}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(valid), metadataOnly); err != nil {
+		t.Fatalf("failed to reload template: %v", err)
+	}
+	metadataOnly.Labels = map[string]string{
+		"example.siderolabs.dev/revision": "2",
+	}
+	if err := k8sClient.Update(ctx, metadataOnly); err != nil {
+		t.Fatalf("expected metadata-only update to succeed: %v", err)
 	}
 }
 
