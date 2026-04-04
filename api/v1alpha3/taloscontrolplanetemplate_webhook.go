@@ -6,7 +6,10 @@ package v1alpha3
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,10 +60,38 @@ func (r *TalosControlPlaneTemplate) ValidateCreate(_ context.Context, obj runtim
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlaneTemplate) ValidateUpdate(_ context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
-	r = newObj.(*TalosControlPlaneTemplate)
+func (r *TalosControlPlaneTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	oldTemplate, ok := oldObj.(*TalosControlPlaneTemplate)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a TalosControlPlaneTemplate but got a %T", oldObj))
+	}
 
-	return r.validate()
+	newTemplate, ok := newObj.(*TalosControlPlaneTemplate)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a TalosControlPlaneTemplate but got a %T", newObj))
+	}
+
+	oldTemplate = oldTemplate.DeepCopy()
+	newTemplate = newTemplate.DeepCopy()
+
+	if err := r.Default(ctx, oldTemplate); err != nil {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("failed to compare old and new TalosControlPlaneTemplate: failed to default old object: %v", err))
+	}
+	if err := r.Default(ctx, newTemplate); err != nil {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("failed to compare old and new TalosControlPlaneTemplate: failed to default new object: %v", err))
+	}
+
+	if diff := cmp.Diff(oldTemplate.Spec.Template.Spec, newTemplate.Spec.Template.Spec); diff != "" {
+		return nil, newInvalidTalosControlPlaneError("TalosControlPlaneTemplate", newTemplate.Name, field.ErrorList{
+			field.Invalid(
+				field.NewPath("spec", "template", "spec"),
+				newTemplate.Spec.Template.Spec,
+				fmt.Sprintf("field is immutable. Please create a new resource instead. Diff: %s", diff),
+			),
+		})
+	}
+
+	return nil, nil
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
