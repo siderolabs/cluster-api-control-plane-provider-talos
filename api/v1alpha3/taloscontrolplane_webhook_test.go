@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
@@ -264,20 +265,80 @@ func TestTalosControlPlaneTemplateValidateCreate(t *testing.T) {
 func TestTalosControlPlaneTemplateValidateUpdate(t *testing.T) {
 	t.Parallel()
 
-	oldObj := &TalosControlPlaneTemplate{}
-	newObj := &TalosControlPlaneTemplate{
+	one := intstr.FromInt(1)
+	two := intstr.FromInt(2)
+
+	oldObj := &TalosControlPlaneTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "template",
+			Namespace: "default",
+		},
 		Spec: TalosControlPlaneTemplateSpec{
 			Template: TalosControlPlaneTemplateResource{
 				Spec: TalosControlPlaneTemplateResourceSpec{
-					RolloutStrategy: &RolloutStrategy{Type: RolloutStrategyType("Invalid")},
+					MachineTemplate: TalosControlPlaneMachineTemplate{
+						InfrastructureRef: corev1.ObjectReference{
+							Name:       "cp-template",
+							Kind:       "DockerMachineTemplate",
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						},
+					},
+					ControlPlaneConfig: ControlPlaneConfig{
+						ControlPlaneConfig: cabptControlPlaneConfig("controlplane", nil),
+					},
+					RolloutStrategy: &RolloutStrategy{
+						Type:          RollingUpdateStrategyType,
+						RollingUpdate: &RollingUpdate{MaxSurge: &one},
+					},
+				},
+			},
+		},
+	}
+	newObj := oldObj.DeepCopy()
+	newObj.Spec.Template.Spec.RolloutStrategy.RollingUpdate.MaxSurge = &two
+
+	_, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj)
+	if err == nil {
+		t.Fatal("expected validation error for immutable spec.template.spec")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("expected immutability error, got: %v", err)
+	}
+}
+
+func TestTalosControlPlaneTemplateValidateUpdateAllowsMetadataOnlyChanges(t *testing.T) {
+	t.Parallel()
+
+	obj := &TalosControlPlaneTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "template",
+			Namespace: "default",
+		},
+		Spec: TalosControlPlaneTemplateSpec{
+			Template: TalosControlPlaneTemplateResource{
+				Spec: TalosControlPlaneTemplateResourceSpec{
+					MachineTemplate: TalosControlPlaneMachineTemplate{
+						InfrastructureRef: corev1.ObjectReference{
+							Name:       "cp-template",
+							Kind:       "DockerMachineTemplate",
+							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						},
+					},
+					ControlPlaneConfig: ControlPlaneConfig{
+						ControlPlaneConfig: cabptControlPlaneConfig("controlplane", nil),
+					},
 				},
 			},
 		},
 	}
 
-	_, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj)
-	if err == nil {
-		t.Fatal("expected validation error for invalid rollout strategy type on update")
+	updated := obj.DeepCopy()
+	updated.Labels = map[string]string{
+		"example.siderolabs.dev/revision": "2",
+	}
+
+	if _, err := updated.ValidateUpdate(context.Background(), obj, updated); err != nil {
+		t.Fatalf("expected metadata-only update to succeed: %v", err)
 	}
 }
 

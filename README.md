@@ -195,6 +195,7 @@ These examples intentionally use `cluster.x-k8s.io/v1beta1`, which is the Cluste
 currently targeted by this repository (see `go.mod` and CRD labels in `config/crd/kustomization.yaml`).
 Moving the topology examples to `v1beta2` should happen together with a broader provider migration.
 The template example below intentionally omits `machineTemplate.infrastructureRef`; for ClusterClass-managed topology, that reference comes from `ClusterClass.spec.controlPlane.machineInfrastructure.ref`.
+`TalosControlPlaneTemplate.spec.template.spec` is immutable after creation, so create a new template resource when you need to roll out a spec change.
 
 ```yaml
 apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
