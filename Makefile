@@ -1,5 +1,5 @@
-REGISTRY ?= ghcr.io
-USERNAME ?= siderolabs
+REGISTRY ?= docker.io
+USERNAME ?= smartdeploy
 SHA ?= $(shell git describe --match=none --always --abbrev=8 --dirty)
 TAG ?= $(shell git describe --tag --always --dirty)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
@@ -139,7 +139,7 @@ integration-test-build:
 
 .PHONY: integration-test
 integration-test: integration-test-build
-	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh
+	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-docker.sh
 
 .PHONY: unit-tests
 unit-tests:  ## Performs unit tests
