@@ -24,7 +24,8 @@ import (
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/controllers/clustercache" // for remote cluster client builder
+	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util/flags"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -144,6 +145,7 @@ func main() {
 	clusterCache, err := clustercache.SetupWithManager(context.Background(), mgr, clustercache.Options{
 		SecretClient: secretCachingClient,
 		Client: clustercache.ClientOptions{
+			UserAgent: remote.DefaultClusterAPIUserAgent("cluster-api-control-plane-provider-talos"),
 			Cache: clustercache.ClientCacheOptions{
 				DisableFor: []client.Object{
 					&corev1.ConfigMap{},

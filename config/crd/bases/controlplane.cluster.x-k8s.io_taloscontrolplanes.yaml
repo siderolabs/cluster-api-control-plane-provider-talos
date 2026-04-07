@@ -268,6 +268,12 @@ spec:
           status:
             description: TalosControlPlaneStatus defines the observed state of TalosControlPlane
             properties:
+              availableReplicas:
+                description: availableReplicas is the number of available replicas
+                  for this ControlPlane. A machine is considered available when Machine's
+                  Available condition is true.
+                format: int32
+                type: integer
               bootstrapped:
                 description: |-
                   Bootstrapped denotes whether any nodes received bootstrap request
@@ -382,6 +388,12 @@ spec:
                   the deployment to have 100% available capacity. They may either
                   be machines that are running but not yet ready or machines
                   that still have not been created.
+                format: int32
+                type: integer
+              upToDateReplicas:
+                description: upToDateReplicas is the number of up-to-date replicas
+                  targeted by this ControlPlane. A machine is considered available
+                  when Machine's  UpToDate condition is true.
                 format: int32
                 type: integer
               version:
