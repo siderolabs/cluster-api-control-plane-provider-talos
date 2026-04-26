@@ -21,10 +21,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -75,18 +76,17 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlane() {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "TalosControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "tcp-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlplanev1.GroupVersion.Group,
+			Kind:     "TalosControlPlane",
+			Name:     "tcp-foo",
 		},
 	}
 
 	expectedResult := []ctrl.Request{
 		{
 			NamespacedName: client.ObjectKey{
-				Namespace: cluster.Spec.ControlPlaneRef.Namespace,
+				Namespace: cluster.Namespace,
 				Name:      cluster.Spec.ControlPlaneRef.Name},
 		},
 	}
@@ -115,11 +115,10 @@ func (suite *ControllersSuite) TestClusterToTalosControlPlaneOtherControlPlane()
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "OtherControlPlane",
-			Namespace:  metav1.NamespaceDefault,
-			Name:       "other-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
+		ControlPlaneRef: clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlplanev1.GroupVersion.Group,
+			Kind:     "OtherControlPlane",
+			Name:     "other-foo",
 		},
 	}
 
@@ -139,7 +138,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
-	cluster.Spec.Paused = true
+	cluster.Spec.Paused = pointer.Bool(true)
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceDefault,
@@ -154,11 +153,14 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       "GenericInfrastructureMachineTemplate",
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Name:       "paused-template",
-				Namespace:  metav1.NamespaceDefault,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "GenericInfrastructureMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+						Name:     "paused-template",
+					},
+				},
 			},
 		},
 	}
@@ -176,7 +178,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = false
+	cluster.Spec.Paused = pointer.Bool(false)
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -187,7 +189,11 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g := NewWithT(suite.T())
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	conditions.Set(cluster, metav1.Condition{
+		Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ReadyReason,
+	})
 
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -203,11 +209,14 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       "UnknownInfraMachine",
-				APIVersion: "test/v1alpha1",
-				Name:       "foo",
-				Namespace:  metav1.NamespaceDefault,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test.example.com",
+						Name:     "foo",
+					},
+				},
 			},
 		},
 	}
@@ -270,8 +279,7 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 	g.Expect(err).To(BeNil())
 
 	tcp.Spec.MachineTemplate = controlplanev1.TalosControlPlaneMachineTemplate{
-		InfrastructureRef: tcp.Spec.InfrastructureTemplate,
-		Metadata: clusterv1.ObjectMeta{
+		ObjectMeta: clusterv1.ObjectMeta{
 			Labels: map[string]string{
 				"example.siderolabs.dev/control-plane": "true",
 			},
@@ -279,14 +287,18 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 				"example.siderolabs.dev/annotation": "present",
 			},
 		},
-		ReadinessGates: []clusterv1.MachineReadinessGate{
-			{ConditionType: "APIServerReady"},
+		Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+			InfrastructureRef: tcp.Spec.MachineTemplate.Spec.InfrastructureRef,
+			ReadinessGates: []clusterv1.MachineReadinessGate{
+				{ConditionType: "APIServerReady"},
+			},
+			Deletion: controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
+				NodeDrainTimeoutSeconds:        pointer.Int32(30),
+				NodeVolumeDetachTimeoutSeconds: pointer.Int32(40),
+				NodeDeletionTimeoutSeconds:     pointer.Int32(50),
+			},
 		},
-		NodeDrainTimeout:        &metav1.Duration{Duration: 30 * time.Second},
-		NodeVolumeDetachTimeout: &metav1.Duration{Duration: 40 * time.Second},
-		NodeDeletionTimeout:     &metav1.Duration{Duration: 50 * time.Second},
 	}
-	tcp.Spec.InfrastructureTemplate = corev1.ObjectReference{}
 	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
 
 	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
@@ -308,10 +320,10 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 	g.Expect(machine.Labels[clusterv1.ClusterNameLabel]).To(Equal(cluster.Name))
 	g.Expect(machine.Labels[clusterv1.MachineControlPlaneLabel]).To(Equal(""))
 	g.Expect(machine.Labels[clusterv1.MachineControlPlaneNameLabel]).NotTo(BeEmpty())
-	g.Expect(machine.Spec.ReadinessGates).To(Equal(tcp.Spec.MachineTemplate.ReadinessGates))
-	g.Expect(machine.Spec.NodeDrainTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDrainTimeout))
-	g.Expect(machine.Spec.NodeVolumeDetachTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeVolumeDetachTimeout))
-	g.Expect(machine.Spec.NodeDeletionTimeout).To(Equal(tcp.Spec.MachineTemplate.NodeDeletionTimeout))
+	g.Expect(machine.Spec.ReadinessGates).To(Equal(tcp.Spec.MachineTemplate.Spec.ReadinessGates))
+	g.Expect(machine.Spec.Deletion.NodeDrainTimeoutSeconds).To(HaveValue(Equal(int32(30))))
+	g.Expect(machine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds).To(HaveValue(Equal(int32(40))))
+	g.Expect(machine.Spec.Deletion.NodeDeletionTimeoutSeconds).To(HaveValue(Equal(int32(50))))
 	g.Expect(machine.Spec.InfrastructureRef.Name).To(Equal(machine.Name))
 	g.Expect(machine.Spec.Bootstrap.ConfigRef).NotTo(BeNil())
 	g.Expect(machine.Spec.Bootstrap.ConfigRef.Name).To(Equal(machine.Name))
@@ -467,7 +479,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
 		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
 
 		machineList := &clusterv1.MachineList{}
@@ -527,7 +539,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
 		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(2))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
 		machineList := &clusterv1.MachineList{}
@@ -552,15 +564,14 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
-			g.Expect(machine.Spec.Version).ToNot(BeNil())
-			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
 		}
 	}, time.Minute).Should(Succeed())
 
 	for _, machine := range suite.getMachines(fakeClient, cluster) {
 		talosconfig := &bootstrapv1alpha3.TalosConfig{}
 
-		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Spec.Bootstrap.ConfigRef.Namespace}, talosconfig)).NotTo(HaveOccurred())
+		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Namespace}, talosconfig)).NotTo(HaveOccurred())
 
 		patchHelper, err := patch.NewHelper(talosconfig, fakeClient)
 		talosconfig.Spec.TalosVersion = "v1.5.0"
@@ -577,8 +588,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		machines := suite.getMachines(fakeClient, cluster)
 		for _, machine := range machines {
-			g.Expect(machine.Spec.Version).ToNot(BeNil())
-			g.Expect(*machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
 		}
 	}, time.Minute).Should(Succeed())
 
@@ -634,7 +644,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
 		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(3))
-		g.Expect(conditions.IsTrue(tcp, controlplanev1.AvailableCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
 
 		machineList := &clusterv1.MachineList{}
@@ -689,9 +699,7 @@ func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client
 							Type:    clusterv1.MachineInternalIP,
 						},
 					}
-					machine.Status.NodeRef = &corev1.ObjectReference{
-						Kind:       "Node",
-						APIVersion: corev1.SchemeGroupVersion.String(),
+					machine.Status.NodeRef = clusterv1.MachineNodeReference{
 						Name:       machine.Name,
 					}
 
@@ -862,8 +870,19 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	g.Expect(fakeClient.Create(suite.ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, fakeClient)
 	g.Expect(err).To(BeNil())
-	cluster.Status = clusterv1.ClusterStatus{InfrastructureReady: true}
+	conditions.Set(cluster, metav1.Condition{
+		Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ReadyReason,
+	})
 	g.Expect(patchHelper.Patch(suite.ctx, cluster)).To(Succeed())
+
+	genericInfrastructureMachineTemplateCRD := untypedCRD(schema.GroupVersionKind{
+		Group:   "infrastructure.cluster.x-k8s.io",
+		Version: "v1beta1",
+		Kind:    "GenericInfrastructureMachineTemplate",
+	})
+	g.Expect(fakeClient.Create(suite.ctx, genericInfrastructureMachineTemplateCRD)).To(Succeed())
 
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -900,11 +919,14 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Replicas: replicas,
 			Version:  "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       genericInfrastructureMachineTemplate.GetKind(),
-				APIVersion: genericInfrastructureMachineTemplate.GetAPIVersion(),
-				Name:       genericInfrastructureMachineTemplate.GetName(),
-				Namespace:  cluster.Namespace,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     genericInfrastructureMachineTemplate.GetKind(),
+						APIGroup: genericInfrastructureMachineTemplate.GroupVersionKind().Group,
+						Name:     genericInfrastructureMachineTemplate.GetName(),
+					},
+				},
 			},
 			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{},
 			RolloutStrategy: &controlplanev1.RolloutStrategy{

@@ -6,16 +6,13 @@ package v1alpha3
 
 import (
 	"context"
-	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -29,10 +26,12 @@ func TestTalosControlPlaneDefaultFromMachineTemplate(t *testing.T) {
 		Spec: TalosControlPlaneSpec{
 			Version: "1.31.0",
 			MachineTemplate: TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Name:       "cp-template",
-					Kind:       "DockerMachineTemplate",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
 				},
 			},
 		},
@@ -48,49 +47,11 @@ func TestTalosControlPlaneDefaultFromMachineTemplate(t *testing.T) {
 	if got := tcp.Spec.Version; got != "v1.31.0" {
 		t.Fatalf("expected version default with v prefix, got %s", got)
 	}
-	if got := tcp.Spec.MachineTemplate.InfrastructureRef.Namespace; got != "default" {
-		t.Fatalf("expected machineTemplate.infrastructureRef namespace default to object namespace, got %s", got)
-	}
-	if got := tcp.Spec.InfrastructureTemplate.Namespace; got != "default" {
-		t.Fatalf("expected legacy infrastructureTemplate namespace default to object namespace, got %s", got)
-	}
-	if tcp.Spec.InfrastructureTemplate.Name != tcp.Spec.MachineTemplate.InfrastructureRef.Name {
-		t.Fatalf("expected legacy infrastructureTemplate to stay in sync with machineTemplate.infrastructureRef")
-	}
 	if tcp.Spec.RolloutStrategy == nil || tcp.Spec.RolloutStrategy.RollingUpdate == nil || tcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge == nil {
 		t.Fatalf("expected rollout strategy defaults to be set")
 	}
 	if got := tcp.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntValue(); got != 1 {
 		t.Fatalf("expected maxSurge default to 1, got %d", got)
-	}
-}
-
-func TestTalosControlPlaneDefaultFromLegacyInfrastructureTemplate(t *testing.T) {
-	t.Parallel()
-
-	tcp := &TalosControlPlane{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "default",
-		},
-		Spec: TalosControlPlaneSpec{
-			Version: "1.31.0",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Name:       "cp-template",
-				Kind:       "DockerMachineTemplate",
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-			},
-		},
-	}
-
-	if err := tcp.Default(context.Background(), tcp); err != nil {
-		t.Fatalf("default failed: %v", err)
-	}
-
-	if got := tcp.Spec.MachineTemplate.InfrastructureRef.Namespace; got != "default" {
-		t.Fatalf("expected machineTemplate.infrastructureRef namespace default to object namespace, got %s", got)
-	}
-	if tcp.Spec.MachineTemplate.InfrastructureRef.Name != tcp.Spec.InfrastructureTemplate.Name {
-		t.Fatalf("expected machineTemplate.infrastructureRef to be backfilled from legacy infrastructureTemplate")
 	}
 }
 
@@ -101,10 +62,12 @@ func TestTalosControlPlaneValidateCreate(t *testing.T) {
 		Spec: TalosControlPlaneSpec{
 			Version: "v1.31.0",
 			MachineTemplate: TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Name:       "cp-template",
-					Kind:       "DockerMachineTemplate",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
 				},
 			},
 			RolloutStrategy: &RolloutStrategy{
@@ -134,33 +97,6 @@ func TestTalosControlPlaneValidateCreateRejectsMissingInfrastructureRef(t *testi
 	}
 }
 
-func TestTalosControlPlaneValidateCreateRejectsConflictingInfrastructureRefs(t *testing.T) {
-	t.Parallel()
-
-	tcp := &TalosControlPlane{
-		Spec: TalosControlPlaneSpec{
-			Version: "v1.31.0",
-			MachineTemplate: TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Name:       "cp-template-a",
-					Kind:       "DockerMachineTemplate",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				},
-			},
-			InfrastructureTemplate: corev1.ObjectReference{
-				Name:       "cp-template-b",
-				Kind:       "DockerMachineTemplate",
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-			},
-		},
-	}
-
-	_, err := tcp.ValidateCreate(context.Background(), tcp)
-	if err == nil {
-		t.Fatal("expected validation error when infrastructure references conflict")
-	}
-}
-
 func TestTalosControlPlaneValidateCreateRejectsInvalidMachineNamingStrategy(t *testing.T) {
 	t.Parallel()
 
@@ -171,10 +107,12 @@ func TestTalosControlPlaneValidateCreateRejectsInvalidMachineNamingStrategy(t *t
 		Spec: TalosControlPlaneSpec{
 			Version: "v1.31.0",
 			MachineTemplate: TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					Name:       "cp-template",
-					Kind:       "DockerMachineTemplate",
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
 				},
 			},
 			MachineNamingStrategy: &MachineNamingStrategy{
@@ -198,19 +136,12 @@ func TestTalosControlPlaneTemplateDefault(t *testing.T) {
 		},
 		Spec: TalosControlPlaneTemplateSpec{
 			Template: TalosControlPlaneTemplateResource{
-				Metadata: clusterv1.ObjectMeta{
+				ObjectMeta: clusterv1.ObjectMeta{
 					Labels: map[string]string{
 						"cluster.x-k8s.io/cluster-name": "workload-cluster",
 					},
 				},
 				Spec: TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: TalosControlPlaneMachineTemplate{
-						InfrastructureRef: corev1.ObjectReference{
-							Name:       "cp-template",
-							Kind:       "DockerMachineTemplate",
-							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						},
-					},
 					RolloutStrategy: &RolloutStrategy{
 						Type: RollingUpdateStrategyType,
 						RollingUpdate: &RollingUpdate{
@@ -229,13 +160,7 @@ func TestTalosControlPlaneTemplateDefault(t *testing.T) {
 		t.Fatalf("default failed: %v", err)
 	}
 
-	if got := tcpt.Spec.Template.Spec.MachineTemplate.InfrastructureRef.Namespace; got != "default" {
-		t.Fatalf("expected machineTemplate.infrastructureRef namespace default to object namespace, got %s", got)
-	}
-	if tcpt.Spec.Template.Spec.InfrastructureTemplate.Name != tcpt.Spec.Template.Spec.MachineTemplate.InfrastructureRef.Name {
-		t.Fatalf("expected legacy infrastructureTemplate to stay in sync with machineTemplate.infrastructureRef")
-	}
-	if got := tcpt.Spec.Template.Metadata.Labels["cluster.x-k8s.io/cluster-name"]; got != "workload-cluster" {
+	if got := tcpt.Spec.Template.ObjectMeta.Labels["cluster.x-k8s.io/cluster-name"]; got != "workload-cluster" {
 		t.Fatalf("expected template metadata labels to be preserved, got %q", got)
 	}
 	if got := tcpt.Spec.Template.Spec.RolloutStrategy.RollingUpdate.MaxSurge.IntValue(); got != 2 {
@@ -276,13 +201,6 @@ func TestTalosControlPlaneTemplateValidateUpdate(t *testing.T) {
 		Spec: TalosControlPlaneTemplateSpec{
 			Template: TalosControlPlaneTemplateResource{
 				Spec: TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: TalosControlPlaneMachineTemplate{
-						InfrastructureRef: corev1.ObjectReference{
-							Name:       "cp-template",
-							Kind:       "DockerMachineTemplate",
-							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						},
-					},
 					ControlPlaneConfig: ControlPlaneConfig{
 						ControlPlaneConfig: cabptControlPlaneConfig("controlplane", nil),
 					},
@@ -317,13 +235,6 @@ func TestTalosControlPlaneTemplateValidateUpdateAllowsMetadataOnlyChanges(t *tes
 		Spec: TalosControlPlaneTemplateSpec{
 			Template: TalosControlPlaneTemplateResource{
 				Spec: TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: TalosControlPlaneMachineTemplate{
-						InfrastructureRef: corev1.ObjectReference{
-							Name:       "cp-template",
-							Kind:       "DockerMachineTemplate",
-							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-						},
-					},
 					ControlPlaneConfig: ControlPlaneConfig{
 						ControlPlaneConfig: cabptControlPlaneConfig("controlplane", nil),
 					},
@@ -374,14 +285,11 @@ func TestTalosControlPlaneTemplateAllowsClusterClassMachineInfrastructure(t *tes
 		Spec: TalosControlPlaneTemplateSpec{
 			Template: TalosControlPlaneTemplateResource{
 				Spec: TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: TalosControlPlaneMachineTemplate{
-						Metadata: clusterv1.ObjectMeta{
+					MachineTemplate: TalosControlPlaneTemplateMachineTemplate{
+						ObjectMeta: clusterv1.ObjectMeta{
 							Labels: map[string]string{
 								"example.siderolabs.dev/control-plane": "true",
 							},
-						},
-						ReadinessGates: []clusterv1.MachineReadinessGate{
-							{ConditionType: "APIServerReady"},
 						},
 					},
 					ControlPlaneConfig: ControlPlaneConfig{
@@ -399,33 +307,28 @@ func TestTalosControlPlaneTemplateAllowsClusterClassMachineInfrastructure(t *tes
 		t.Fatalf("expected template without infrastructureRef to be allowed for ClusterClass machineInfrastructure flow: %v", err)
 	}
 
-	data, err := json.Marshal(template.Spec.Template.Spec)
-	if err != nil {
-		t.Fatalf("failed to marshal template spec: %v", err)
-	}
-
-	replicas := int32(3)
-	generated := TalosControlPlaneSpec{
-		Replicas: &replicas,
-		Version:  "v1.31.0",
-	}
-	if err := json.Unmarshal(data, &generated); err != nil {
-		t.Fatalf("failed to unmarshal template spec into TalosControlPlaneSpec: %v", err)
-	}
-
-	// Simulate the topology controller injecting ClusterClass.spec.controlPlane.machineInfrastructure.ref.
-	generated.MachineTemplate.InfrastructureRef = corev1.ObjectReference{
-		Name:       "cp-template",
-		Kind:       "DockerMachineTemplate",
-		APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-		Namespace:  "default",
-	}
-
+	// Simulate the topology controller projecting the template's MachineTemplate metadata onto a
+	// concrete TalosControlPlane and then injecting ClusterClass.spec.controlPlane.machineInfrastructure
+	// into machineTemplate.spec.infrastructureRef.
 	tcp := &TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "default",
 		},
-		Spec: generated,
+		Spec: TalosControlPlaneSpec{
+			Replicas: func() *int32 { v := int32(3); return &v }(),
+			Version:  "v1.31.0",
+			MachineTemplate: TalosControlPlaneMachineTemplate{
+				ObjectMeta: template.Spec.Template.Spec.MachineTemplate.ObjectMeta,
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
+				},
+			},
+			ControlPlaneConfig: template.Spec.Template.Spec.ControlPlaneConfig,
+		},
 	}
 
 	if err := tcp.Default(context.Background(), tcp); err != nil {
@@ -434,14 +337,8 @@ func TestTalosControlPlaneTemplateAllowsClusterClassMachineInfrastructure(t *tes
 	if _, err := tcp.ValidateCreate(context.Background(), tcp); err != nil {
 		t.Fatalf("expected generated TalosControlPlane to validate after machineInfrastructure injection: %v", err)
 	}
-	if tcp.Spec.InfrastructureTemplate.Name != "cp-template" {
-		t.Fatalf("expected legacy infrastructureTemplate to be synchronized from machineTemplate.infrastructureRef")
-	}
-	if !reflect.DeepEqual(tcp.Spec.MachineTemplate.Metadata, template.Spec.Template.Spec.MachineTemplate.Metadata) {
-		t.Fatalf("expected machineTemplate metadata to survive template-to-spec conversion")
-	}
-	if !reflect.DeepEqual(tcp.Spec.ControlPlaneConfig, template.Spec.Template.Spec.ControlPlaneConfig) {
-		t.Fatalf("control plane config mismatch after conversion")
+	if got := tcp.Spec.MachineTemplate.ObjectMeta.Labels["example.siderolabs.dev/control-plane"]; got != "true" {
+		t.Fatalf("expected machineTemplate metadata to carry over, got %q", got)
 	}
 }
 

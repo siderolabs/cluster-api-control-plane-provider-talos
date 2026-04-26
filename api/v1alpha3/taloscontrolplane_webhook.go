@@ -9,22 +9,18 @@ import (
 	"fmt"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // SetupWebhookWithManager implements webhook methods.
 func (r *TalosControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(r).
+	return ctrl.NewWebhookManagedBy(mgr, r).
 		WithDefaulter(r).
 		WithValidator(r).
 		Complete()
@@ -34,29 +30,22 @@ func (r *TalosControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 //+kubebuilder:webhook:verbs=create;update;delete,path=/validate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplane,mutating=false,failurePolicy=fail,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1alpha3,name=validate.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
 
 var (
-	_ webhook.CustomDefaulter = &TalosControlPlane{}
-	_ webhook.CustomValidator = &TalosControlPlane{}
+	_ admission.Defaulter[*TalosControlPlane] = &TalosControlPlane{}
+	_ admission.Validator[*TalosControlPlane] = &TalosControlPlane{}
 )
 
-// Default implements webhook.Defaulter so a webhook will be registered for the type.
-func (r *TalosControlPlane) Default(_ context.Context, obj runtime.Object) error {
-	r = obj.(*TalosControlPlane)
-
-	defaultTalosControlPlaneSpec(&r.Spec, r.Namespace)
+// Default implements admission.Defaulter so a webhook will be registered for the type.
+func (*TalosControlPlane) Default(_ context.Context, obj *TalosControlPlane) error {
+	defaultTalosControlPlaneSpec(&obj.Spec)
 
 	return nil
 }
 
-func defaultTalosControlPlaneSpec(s *TalosControlPlaneSpec, namespace string) {
+func defaultTalosControlPlaneSpec(s *TalosControlPlaneSpec) {
 	if s.Replicas == nil {
 		replicas := int32(1)
 		s.Replicas = &replicas
 	}
-
-	s.SyncInfrastructureTemplateCompatibility()
-	defaultObjectReferenceNamespace(&s.MachineTemplate.InfrastructureRef, namespace)
-	defaultObjectReferenceNamespace(&s.InfrastructureTemplate, namespace)
-	s.SyncInfrastructureTemplateCompatibility()
 
 	if !strings.HasPrefix(s.Version, "v") {
 		s.Version = "v" + s.Version
@@ -88,32 +77,33 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 	return rolloutStrategy
 }
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlane) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	r = obj.(*TalosControlPlane)
-
-	return r.validate()
+// ValidateCreate implements admission.Validator so a webhook will be registered for the type.
+func (*TalosControlPlane) ValidateCreate(_ context.Context, obj *TalosControlPlane) (admission.Warnings, error) {
+	return obj.validate()
 }
 
-// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlane) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	r = newObj.(*TalosControlPlane)
-
-	return r.validate()
+// ValidateUpdate implements admission.Validator so a webhook will be registered for the type.
+func (*TalosControlPlane) ValidateUpdate(_ context.Context, _, newObj *TalosControlPlane) (admission.Warnings, error) {
+	return newObj.validate()
 }
 
-// ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlane) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+// ValidateDelete implements admission.Validator so a webhook will be registered for the type.
+func (*TalosControlPlane) ValidateDelete(_ context.Context, _ *TalosControlPlane) (admission.Warnings, error) {
 	return nil, nil
 }
 
 func (r *TalosControlPlane) validate() (admission.Warnings, error) {
-	allErrs := validateInfrastructureTemplateCompatibility(
-		r.Spec.MachineTemplate,
-		r.Spec.InfrastructureTemplate,
-		field.NewPath("spec"),
-		true,
-	)
+	allErrs := field.ErrorList{}
+
+	if r.Spec.MachineTemplate.Spec.InfrastructureRef.Name == "" {
+		allErrs = append(allErrs,
+			field.Required(
+				field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"),
+				"infrastructureRef is required",
+			),
+		)
+	}
+
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
@@ -188,35 +178,4 @@ func newInvalidTalosControlPlaneError(kind, name string, allErrs field.ErrorList
 		name,
 		allErrs,
 	)
-}
-
-func defaultObjectReferenceNamespace(ref *corev1.ObjectReference, namespace string) {
-	if hasObjectReference(*ref) && ref.Namespace == "" {
-		ref.Namespace = namespace
-	}
-}
-
-func validateInfrastructureTemplateCompatibility(machineTemplate TalosControlPlaneMachineTemplate, legacy corev1.ObjectReference, fldPath *field.Path, requireRef bool) field.ErrorList {
-	var allErrs field.ErrorList
-
-	machineRefPath := fldPath.Child("machineTemplate", "infrastructureRef")
-	legacyRefPath := fldPath.Child("infrastructureTemplate")
-
-	hasMachineRef := hasObjectReference(machineTemplate.InfrastructureRef)
-	hasLegacyRef := hasObjectReference(legacy)
-
-	if requireRef && !hasMachineRef && !hasLegacyRef {
-		allErrs = append(allErrs,
-			field.Required(machineRefPath, "machineTemplate.infrastructureRef or infrastructureTemplate must be set"),
-		)
-	}
-
-	if hasMachineRef && hasLegacyRef && machineTemplate.InfrastructureRef != legacy {
-		allErrs = append(allErrs,
-			field.Invalid(machineRefPath, machineTemplate.InfrastructureRef, "must match spec.infrastructureTemplate when both fields are set"),
-			field.Invalid(legacyRefPath, legacy, "must match spec.machineTemplate.infrastructureRef when both fields are set"),
-		)
-	}
-
-	return allErrs
 }

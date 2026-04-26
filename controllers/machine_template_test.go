@@ -7,14 +7,13 @@ package controllers
 import (
 	"context"
 	"testing"
-	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/utils/pointer"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -59,7 +58,7 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
-				Metadata: clusterv1.ObjectMeta{
+				ObjectMeta: clusterv1.ObjectMeta{
 					Labels: map[string]string{
 						"example.siderolabs.dev/control-plane": "true",
 					},
@@ -67,12 +66,16 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 						"example.siderolabs.dev/annotation": "present",
 					},
 				},
-				ReadinessGates: []clusterv1.MachineReadinessGate{
-					{ConditionType: "APIServerReady"},
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					ReadinessGates: []clusterv1.MachineReadinessGate{
+						{ConditionType: "APIServerReady"},
+					},
+					Deletion: controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
+						NodeDrainTimeoutSeconds:        pointer.Int32(20),
+						NodeVolumeDetachTimeoutSeconds: pointer.Int32(30),
+						NodeDeletionTimeoutSeconds:     pointer.Int32(40),
+					},
 				},
-				NodeDrainTimeout:        &metav1.Duration{Duration: 20 * time.Second},
-				NodeVolumeDetachTimeout: &metav1.Duration{Duration: 30 * time.Second},
-				NodeDeletionTimeout:     &metav1.Duration{Duration: 40 * time.Second},
 			},
 		},
 	}
@@ -109,16 +112,16 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 	if len(persisted.Spec.ReadinessGates) != 1 || persisted.Spec.ReadinessGates[0].ConditionType != "APIServerReady" {
 		t.Fatalf("expected readiness gates to be propagated")
 	}
-	if persisted.Spec.NodeDrainTimeout == nil || persisted.Spec.NodeDrainTimeout.Duration != 20*time.Second {
+	if persisted.Spec.Deletion.NodeDrainTimeoutSeconds == nil || *persisted.Spec.Deletion.NodeDrainTimeoutSeconds != 20 {
 		t.Fatalf("expected nodeDrainTimeout to be propagated")
 	}
-	if persisted.Spec.NodeVolumeDetachTimeout == nil || persisted.Spec.NodeVolumeDetachTimeout.Duration != 30*time.Second {
+	if persisted.Spec.Deletion.NodeVolumeDetachTimeoutSeconds == nil || *persisted.Spec.Deletion.NodeVolumeDetachTimeoutSeconds != 30 {
 		t.Fatalf("expected nodeVolumeDetachTimeout to be propagated")
 	}
-	if persisted.Spec.NodeDeletionTimeout == nil || persisted.Spec.NodeDeletionTimeout.Duration != 40*time.Second {
+	if persisted.Spec.Deletion.NodeDeletionTimeoutSeconds == nil || *persisted.Spec.Deletion.NodeDeletionTimeoutSeconds != 40 {
 		t.Fatalf("expected nodeDeletionTimeout to be propagated")
 	}
-	if persisted.Spec.InfrastructureRef != (corev1.ObjectReference{}) {
+	if persisted.Spec.InfrastructureRef != (clusterv1.ContractVersionedObjectReference{}) {
 		t.Fatalf("expected reconcileMachineTemplateState to avoid mutating infrastructureRef")
 	}
 }

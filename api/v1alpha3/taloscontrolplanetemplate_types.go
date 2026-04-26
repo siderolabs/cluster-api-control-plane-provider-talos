@@ -5,9 +5,8 @@
 package v1alpha3
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 // TalosControlPlaneTemplateSpec defines the desired state of TalosControlPlaneTemplate.
@@ -20,7 +19,7 @@ type TalosControlPlaneTemplateResource struct {
 	// Standard object's metadata.
 	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/metadata/
 	// +optional
-	Metadata clusterv1.ObjectMeta `json:"metadata,omitempty"`
+	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
 	Spec TalosControlPlaneTemplateResourceSpec `json:"spec"`
 }
@@ -28,21 +27,18 @@ type TalosControlPlaneTemplateResource struct {
 // TalosControlPlaneTemplateResourceSpec defines the desired state of TalosControlPlane through a template.
 type TalosControlPlaneTemplateResourceSpec struct {
 	// MachineTemplate contains information about how control plane Machines should be shaped.
-	// For ClusterClass / topology, ClusterClass.spec.controlPlane.machineInfrastructure.ref populates
-	// machineTemplate.infrastructureRef when creating a concrete TalosControlPlane.
+	// For ClusterClass / topology, ClusterClass.spec.controlPlane.machineInfrastructure.templateRef
+	// populates machineTemplate.spec.infrastructureRef when creating a concrete TalosControlPlane.
+	// The template variant intentionally omits infrastructureRef and readinessGates: those fields
+	// are owned by the topology controller (infrastructureRef) or by individual TalosControlPlane
+	// instances (readinessGates).
 	// +optional
-	MachineTemplate TalosControlPlaneMachineTemplate `json:"machineTemplate,omitempty"`
+	MachineTemplate TalosControlPlaneTemplateMachineTemplate `json:"machineTemplate,omitempty,omitzero"`
 
 	// MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
 	// InfraMachines and bootstrap configs use the same name as the corresponding Machine.
 	// +optional
 	MachineNamingStrategy *MachineNamingStrategy `json:"machineNamingStrategy,omitempty"`
-
-	// InfrastructureTemplate is kept as a deprecated compatibility alias for older template manifests.
-	// New manifests should use spec.template.spec.machineTemplate.infrastructureRef when an inline
-	// infrastructure reference is required outside of ClusterClass-managed topology.
-	// +optional
-	InfrastructureTemplate corev1.ObjectReference `json:"infrastructureTemplate,omitempty"`
 
 	// ControlPlaneConfig is a two TalosConfigSpecs
 	// to use for initializing and joining machines to the control plane.
@@ -55,20 +51,27 @@ type TalosControlPlaneTemplateResourceSpec struct {
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
 }
 
-// SyncInfrastructureTemplateCompatibility keeps the deprecated infrastructureTemplate alias
-// and the Cluster API machineTemplate.infrastructureRef field aligned when only one is set.
-func (s *TalosControlPlaneTemplateResourceSpec) SyncInfrastructureTemplateCompatibility() {
-	syncInfrastructureTemplateCompatibility(&s.MachineTemplate, &s.InfrastructureTemplate)
+// TalosControlPlaneTemplateMachineTemplate is the MachineTemplate carried by a
+// TalosControlPlaneTemplate. It mirrors the upstream KubeadmControlPlaneTemplate variant by
+// omitting the infrastructure reference and readiness gates: those fields are populated either
+// by the topology controller (infrastructureRef) or by the concrete TalosControlPlane instance
+// (readinessGates).
+type TalosControlPlaneTemplateMachineTemplate struct {
+	// ObjectMeta is the standard object's metadata.
+	// +optional
+	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+
+	// Spec is the specification of the desired behavior of the machine template.
+	// +optional
+	Spec TalosControlPlaneTemplateMachineTemplateSpec `json:"spec,omitempty,omitzero"`
 }
 
-// InfrastructureTemplateRef returns the resolved infrastructure machine template reference.
-func (s *TalosControlPlaneTemplateResourceSpec) InfrastructureTemplateRef() corev1.ObjectReference {
-	return resolvedInfrastructureTemplateRef(s.MachineTemplate, s.InfrastructureTemplate)
-}
-
-// HasInfrastructureTemplateRef reports whether the template spec has a resolved infrastructure template reference.
-func (s *TalosControlPlaneTemplateResourceSpec) HasInfrastructureTemplateRef() bool {
-	return hasObjectReference(s.InfrastructureTemplateRef())
+// TalosControlPlaneTemplateMachineTemplateSpec carries the per-template Machine spec fields.
+// +kubebuilder:validation:MinProperties=1
+type TalosControlPlaneTemplateMachineTemplateSpec struct {
+	// Deletion contains configuration options for Machine deletion.
+	// +optional
+	Deletion TalosControlPlaneMachineTemplateDeletionSpec `json:"deletion,omitempty,omitzero"`
 }
 
 // +kubebuilder:object:root=true
