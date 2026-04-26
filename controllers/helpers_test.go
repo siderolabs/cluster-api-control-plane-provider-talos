@@ -14,7 +14,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
@@ -44,8 +43,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/controllers/remote"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -81,22 +80,26 @@ func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.
 		opt(&options)
 	}
 
-	var tracker *remote.ClusterCacheTracker
+	var clusterCache clustercache.ClusterCache
 	if options.cluster != nil {
-		tracker = remote.NewTestClusterCacheTracker(logger, client, client, fakeScheme, *options.cluster)
+		clusterCache = clustercache.NewFakeClusterCache(client, *options.cluster)
 	}
 
 	return &controllers.TalosControlPlaneReconciler{
-		Client:    client,
-		Log:       logger,
-		APIReader: client,
-		Tracker:   tracker,
+		Client:       client,
+		Log:          logger,
+		APIReader:    client,
+		ClusterCache: clusterCache,
 	}
 }
 
 func newFakeClient(initObjs ...client.Object) client.Client {
+	objects := make([]client.Object, 0, len(initObjs)+1)
+	objects = append(objects, GenericInfrastructureMachineCRD.DeepCopy())
+	objects = append(objects, initObjs...)
+
 	return fake.NewClientBuilder().
-		WithObjects(initObjs...).
+		WithObjects(objects...).
 		WithScheme(fakeScheme).
 		WithStatusSubresource(
 			&clusterv1.Cluster{},
@@ -172,19 +175,18 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       GenericInfrastructureMachineCRD.Kind,
-				APIVersion: GenericInfrastructureMachineCRD.APIVersion,
-				Name:       GenericInfrastructureMachineCRD.Name,
-				Namespace:  GenericInfrastructureMachineCRD.Namespace,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: InfrastructureGroupVersion.Group,
+				Kind:     GenericInfrastructureMachineKind,
+				Name:     name,
 			},
-			NodeDeletionTimeout: &metav1.Duration{Duration: 10 * time.Second},
-			Version:             pointer.String("v1.16.6"),
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDeletionTimeoutSeconds: pointer.Int32(10),
+			},
+			Version: "v1.16.6",
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
-				Kind:       "Node",
-				APIVersion: corev1.SchemeGroupVersion.String(),
+			NodeRef: clusterv1.MachineNodeReference{
 				Name:       name,
 			},
 			Addresses: clusterv1.MachineAddresses{
@@ -268,7 +270,7 @@ func MustFormatValue(str string) string {
 
 var (
 	// InfrastructureGroupVersion is group version used for infrastructure objects.
-	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta1"}
+	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta2"}
 
 	// GenericInfrastructureMachineKind is the Kind for the GenericInfrastructureMachine.
 	GenericInfrastructureMachineKind = "GenericInfrastructureMachine"

@@ -1,53 +1,51 @@
-# This sample intentionally uses CAPI v1beta1 APIs.
-# Update to v1beta2 only as part of a broader provider contract migration.
 # This file is a ClusterClass / Cluster fragment, not a self-contained quickstart.
 # Apply it together with the referenced Docker*Template and TalosConfigTemplate objects.
-# Use ClusterClass.spec.controlPlane.namingStrategy to name the generated TalosControlPlane,
+# Use ClusterClass.spec.controlPlane.naming.template to name the generated TalosControlPlane,
 # and TalosControlPlaneTemplate.spec.template.spec.machineNamingStrategy to name its Machines.
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: ClusterClass
 metadata:
   name: talos-quickstart
 spec:
   infrastructure:
-    ref:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    templateRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
       kind: DockerClusterTemplate
       name: talos-quickstart
   controlPlane:
-    namingStrategy:
+    naming:
       template: "{{ .cluster.name }}-control-plane"
-    ref:
+    templateRef:
       apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
       kind: TalosControlPlaneTemplate
       name: talos-cp-template
     machineInfrastructure:
-      ref:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      templateRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: DockerMachineTemplate
         name: talos-cp-machine-template
   workers:
     machineDeployments:
     - class: default-worker
-      template:
-        bootstrap:
-          ref:
-            apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
-            kind: TalosConfigTemplate
-            name: talos-worker-template
-        infrastructure:
-          ref:
-            apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-            kind: DockerMachineTemplate
-            name: talos-worker-machine-template
+      bootstrap:
+        templateRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: TalosConfigTemplate
+          name: talos-worker-template
+      infrastructure:
+        templateRef:
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+          kind: DockerMachineTemplate
+          name: talos-worker-machine-template
 ---
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   name: talos-topology
 spec:
   topology:
-    class: talos-quickstart
+    classRef:
+      name: talos-quickstart
     version: v1.31.0
     controlPlane:
       replicas: 3

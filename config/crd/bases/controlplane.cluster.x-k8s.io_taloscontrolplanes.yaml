@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: taloscontrolplanes.controlplane.cluster.x-k8s.io
 spec:
   group: controlplane.cluster.x-k8s.io
@@ -165,138 +165,6 @@ spec:
                 required:
                 - controlplane
                 type: object
-              infrastructureTemplate:
-                description: |-
-                  InfrastructureTemplate is kept as a deprecated compatibility alias for users of older TalosControlPlane manifests.
-                  New manifests should use spec.machineTemplate.infrastructureRef instead.
-                properties:
-                  apiVersion:
-                    description: API version of the referent.
-                    type: string
-                  fieldPath:
-                    description: |-
-                      If referring to a piece of an object instead of an entire object, this string
-                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within a pod, this would take on a value like:
-                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]" (container with
-                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                      referencing a part of an object.
-                    type: string
-                  kind:
-                    description: |-
-                      Kind of the referent.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                    type: string
-                  name:
-                    description: |-
-                      Name of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                  namespace:
-                    description: |-
-                      Namespace of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                    type: string
-                  resourceVersion:
-                    description: |-
-                      Specific resourceVersion to which this reference is made, if any.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                    type: string
-                  uid:
-                    description: |-
-                      UID of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                    type: string
-                type: object
-                x-kubernetes-map-type: atomic
-              machineTemplate:
-                description: |-
-                  MachineTemplate contains information about how control plane Machines should be shaped.
-                  This is the Cluster API v1beta1 control plane contract field consumed by ClusterClass / topology.
-                properties:
-                  infrastructureRef:
-                    description: |-
-                      InfrastructureRef is a reference to a custom resource offered by an infrastructure provider.
-                      For ClusterClass / topology, this field is populated from ClusterClass.spec.controlPlane.machineInfrastructure.ref.
-                    properties:
-                      apiVersion:
-                        description: API version of the referent.
-                        type: string
-                      fieldPath:
-                        description: |-
-                          If referring to a piece of an object instead of an entire object, this string
-                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                          For example, if the object reference is to a container within a pod, this would take on a value like:
-                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                          the event) or if no container name is specified "spec.containers[2]" (container with
-                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                          referencing a part of an object.
-                        type: string
-                      kind:
-                        description: |-
-                          Kind of the referent.
-                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                        type: string
-                      name:
-                        description: |-
-                          Name of the referent.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                        type: string
-                      namespace:
-                        description: |-
-                          Namespace of the referent.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                        type: string
-                      resourceVersion:
-                        description: |-
-                          Specific resourceVersion to which this reference is made, if any.
-                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                        type: string
-                      uid:
-                        description: |-
-                          UID of the referent.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                        type: string
-                    type: object
-                    x-kubernetes-map-type: atomic
-                  metadata:
-                    description: Metadata is the standard object's metadata.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        type: object
-                      labels:
-                        additionalProperties:
-                          type: string
-                        type: object
-                    type: object
-                  nodeDeletionTimeout:
-                    description: NodeDeletionTimeout defines how long the controller will attempt to delete the Node that is hosted by a Machine.
-                    type: string
-                  nodeDrainTimeout:
-                    description: NodeDrainTimeout is the total amount of time that the controller will spend draining a control plane node.
-                    type: string
-                  nodeVolumeDetachTimeout:
-                    description: NodeVolumeDetachTimeout is the total amount of time that the controller will spend waiting for volumes to be detached.
-                    type: string
-                  readinessGates:
-                    description: ReadinessGates specifies additional conditions to include when evaluating Machine Ready condition.
-                    items:
-                      properties:
-                        conditionType:
-                          type: string
-                      required:
-                      - conditionType
-                      type: object
-                    maxItems: 32
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-map-keys:
-                    - conditionType
-                    x-kubernetes-list-type: map
-                type: object
               machineNamingStrategy:
                 description: |-
                   MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
@@ -315,6 +183,148 @@ spec:
                     maxLength: 256
                     minLength: 1
                     type: string
+                type: object
+              machineTemplate:
+                description: |-
+                  MachineTemplate contains information about how control plane Machines should be shaped.
+                  This is the Cluster API v1beta2 control plane contract field consumed by ClusterClass / topology.
+                properties:
+                  metadata:
+                    description: ObjectMeta is the standard object's metadata.
+                    minProperties: 1
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          annotations is an unstructured key value map stored with a resource that may be
+                          set by external tools to store and retrieve arbitrary metadata. They are not
+                          queryable and should be preserved when modifying objects.
+                          More info: http://kubernetes.io/docs/user-guide/annotations
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          labels is a map of string keys and values that can be used to organize and categorize
+                          (scope and select) objects. May match selectors of replication controllers
+                          and services.
+                          More info: http://kubernetes.io/docs/user-guide/labels
+                        type: object
+                    type: object
+                  spec:
+                    description: Spec is the specification of the desired behavior
+                      of the machine template.
+                    minProperties: 1
+                    properties:
+                      deletion:
+                        description: Deletion contains configuration options for Machine
+                          deletion.
+                        minProperties: 1
+                        properties:
+                          nodeDeletionTimeoutSeconds:
+                            description: |-
+                              NodeDeletionTimeoutSeconds defines, in seconds, how long the controller will attempt to
+                              delete the Node that is hosted by a Machine after the Machine is marked for deletion. A
+                              duration of 0 will retry deletion indefinitely. Defaults to 10 seconds when omitted.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          nodeDrainTimeoutSeconds:
+                            description: |-
+                              NodeDrainTimeoutSeconds is the total amount of time, in seconds, that the controller will
+                              spend draining a control plane node. The default value is 0, meaning that the node can be
+                              drained without any time limitations.
+                              NOTE: NodeDrainTimeoutSeconds is different from `kubectl drain --timeout`.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          nodeVolumeDetachTimeoutSeconds:
+                            description: |-
+                              NodeVolumeDetachTimeoutSeconds is the total amount of time, in seconds, that the controller
+                              will spend waiting for all volumes to be detached. The default value is 0, meaning that the
+                              volumes can be detached without any time limitations.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                        type: object
+                      infrastructureRef:
+                        description: |-
+                          InfrastructureRef is a required reference to a custom resource offered by an infrastructure provider.
+                          For ClusterClass / topology, this field is populated from
+                          ClusterClass.spec.controlPlane.machineInfrastructure.templateRef.
+                        properties:
+                          apiGroup:
+                            description: |-
+                              apiGroup is the group of the resource being referenced.
+                              apiGroup must be fully qualified domain name.
+                              The corresponding version for this reference will be looked up from the contract
+                              labels of the corresponding CRD of the resource being referenced.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          kind:
+                            description: |-
+                              kind of the resource being referenced.
+                              kind must consist of alphanumeric characters or '-', start with an alphabetic character, and end with an alphanumeric character.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                            type: string
+                          name:
+                            description: |-
+                              name of the resource being referenced.
+                              name must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                        required:
+                        - apiGroup
+                        - kind
+                        - name
+                        type: object
+                      readinessGates:
+                        description: |-
+                          ReadinessGates specifies additional conditions to include when evaluating the Machine
+                          Ready condition.
+                        items:
+                          description: MachineReadinessGate contains the type of a
+                            Machine condition to be used as a readiness gate.
+                          properties:
+                            conditionType:
+                              description: |-
+                                conditionType refers to a condition with matching type in the Machine's condition list.
+                                If the conditions doesn't exist, it will be treated as unknown.
+                                Note: Both Cluster API conditions or conditions added by 3rd party controllers can be used as readiness gates.
+                              maxLength: 316
+                              minLength: 1
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                              type: string
+                            polarity:
+                              description: |-
+                                polarity of the conditionType specified in this readinessGate.
+                                Valid values are Positive, Negative and omitted.
+                                When omitted, the default behaviour will be Positive.
+                                A positive polarity means that the condition should report a true status under normal conditions.
+                                A negative polarity means that the condition should report a false status under normal conditions.
+                              enum:
+                              - Positive
+                              - Negative
+                              type: string
+                          required:
+                          - conditionType
+                          type: object
+                        maxItems: 32
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - conditionType
+                        x-kubernetes-list-type: map
+                    required:
+                    - infrastructureRef
+                    type: object
                 type: object
               replicas:
                 description: |-
@@ -373,59 +383,70 @@ spec:
           status:
             description: TalosControlPlaneStatus defines the observed state of TalosControlPlane
             properties:
+              availableReplicas:
+                description: |-
+                  AvailableReplicas is the number of available replicas for this ControlPlane.
+                  A machine is considered available when Machine's Available condition is true.
+                format: int32
+                type: integer
               bootstrapped:
                 description: |-
                   Bootstrapped denotes whether any nodes received bootstrap request
                   which is required to start etcd and Kubernetes components in Talos.
                 type: boolean
               conditions:
-                description: Conditions defines current service state of the KubeadmControlPlane.
+                description: Conditions defines the current service state of the TalosControlPlane.
                 items:
-                  description: Condition defines an observation of a Cluster API resource
-                    operational state.
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
                       description: |-
                         lastTransitionTime is the last time the condition transitioned from one status to another.
-                        This should be when the underlying condition changed. If that is not known, then using the time when
-                        the API field changed is acceptable.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                       format: date-time
                       type: string
                     message:
                       description: |-
                         message is a human readable message indicating details about the transition.
-                        This field may be empty.
-                      maxLength: 10240
-                      minLength: 1
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
                     reason:
                       description: |-
-                        reason is the reason for the condition's last transition in CamelCase.
-                        The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may be empty.
-                      maxLength: 256
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
                       minLength: 1
-                      type: string
-                    severity:
-                      description: |-
-                        severity provides an explicit classification of Reason code, so the users or machines can immediately
-                        understand the current situation and act accordingly.
-                        The Severity field MUST be set only when Status=False.
-                      maxLength: 32
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                       type: string
                     status:
                       description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
                       type: string
                     type:
-                      description: |-
-                        type of condition in CamelCase or in foo.example.com/CamelCase.
-                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
-                        can be useful (see .node.status.conditions), the ability to deconflict is important.
-                      maxLength: 256
-                      minLength: 1
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                       type: string
                   required:
                   - lastTransitionTime
+                  - message
+                  - reason
                   - status
                   - type
                   type: object
@@ -441,6 +462,23 @@ spec:
                   state, and will be set to a token value suitable for
                   programmatic interpretation.
                 type: string
+              initialization:
+                description: |-
+                  initialization provides observations of the TalosControlPlane initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate
+                  initial Machine provisioning.
+                minProperties: 1
+                properties:
+                  controlPlaneInitialized:
+                    description: |-
+                      controlPlaneInitialized is true when the TalosControlPlane provider reports that the
+                      Kubernetes control plane is initialized; A control plane is considered initialized when
+                      it can accept requests, no matter if this happens before the control plane is fully
+                      provisioned or not.
+                      NOTE: this field is part of the Cluster API contract, and it is used to orchestrate
+                      initial Machine provisioning.
+                    type: boolean
+                type: object
               initialized:
                 description: |-
                   Initialized denotes whether or not the control plane has the
@@ -484,9 +522,15 @@ spec:
                   that still have not been created.
                 format: int32
                 type: integer
+              upToDateReplicas:
+                description: |-
+                  UpToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane.
+                  A machine is considered up to date when Machine's UpToDate condition is true.
+                format: int32
+                type: integer
               updatedReplicas:
-                description: Total number of non-terminated Machines targeted by
-                  this control plane that have the desired spec.
+                description: Total number of non-terminated Machines targeted by this
+                  control plane that have the desired spec.
                 format: int32
                 type: integer
               version:

@@ -6,10 +6,9 @@ package v1alpha3
 
 import (
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
@@ -28,17 +27,31 @@ type ControlPlaneConfig struct {
 }
 
 // TalosControlPlaneMachineTemplate defines how control plane Machines should be shaped.
+// It mirrors the upstream Cluster API v1beta2 KubeadmControlPlane.MachineTemplate layout:
+// metadata + spec, where spec carries the infrastructure reference, readiness gates and
+// the machine deletion configuration.
 type TalosControlPlaneMachineTemplate struct {
-	// Metadata is the standard object's metadata.
+	// ObjectMeta is the standard object's metadata.
 	// +optional
-	Metadata clusterv1.ObjectMeta `json:"metadata,omitempty"`
+	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
-	// InfrastructureRef is a reference to a custom resource offered by an infrastructure provider.
-	// For ClusterClass / topology, this field is populated from ClusterClass.spec.controlPlane.machineInfrastructure.ref.
+	// Spec is the specification of the desired behavior of the machine template.
 	// +optional
-	InfrastructureRef corev1.ObjectReference `json:"infrastructureRef,omitempty"`
+	Spec TalosControlPlaneMachineTemplateSpec `json:"spec,omitempty,omitzero"`
+}
 
-	// ReadinessGates specifies additional conditions to include when evaluating Machine Ready condition.
+// TalosControlPlaneMachineTemplateSpec defines the desired Machine spec carried by the
+// TalosControlPlane MachineTemplate.
+// +kubebuilder:validation:MinProperties=1
+type TalosControlPlaneMachineTemplateSpec struct {
+	// InfrastructureRef is a required reference to a custom resource offered by an infrastructure provider.
+	// For ClusterClass / topology, this field is populated from
+	// ClusterClass.spec.controlPlane.machineInfrastructure.templateRef.
+	// +required
+	InfrastructureRef clusterv1.ContractVersionedObjectReference `json:"infrastructureRef,omitempty,omitzero"`
+
+	// ReadinessGates specifies additional conditions to include when evaluating the Machine
+	// Ready condition.
 	// +optional
 	// +listType=map
 	// +listMapKey=conditionType
@@ -46,17 +59,35 @@ type TalosControlPlaneMachineTemplate struct {
 	// +kubebuilder:validation:MaxItems=32
 	ReadinessGates []clusterv1.MachineReadinessGate `json:"readinessGates,omitempty"`
 
-	// NodeDrainTimeout is the total amount of time that the controller will spend draining a control plane node.
+	// Deletion contains configuration options for Machine deletion.
 	// +optional
-	NodeDrainTimeout *metav1.Duration `json:"nodeDrainTimeout,omitempty"`
+	Deletion TalosControlPlaneMachineTemplateDeletionSpec `json:"deletion,omitempty,omitzero"`
+}
 
-	// NodeVolumeDetachTimeout is the total amount of time that the controller will spend waiting for volumes to be detached.
+// TalosControlPlaneMachineTemplateDeletionSpec contains configuration options for Machine deletion.
+// +kubebuilder:validation:MinProperties=1
+type TalosControlPlaneMachineTemplateDeletionSpec struct {
+	// NodeDrainTimeoutSeconds is the total amount of time, in seconds, that the controller will
+	// spend draining a control plane node. The default value is 0, meaning that the node can be
+	// drained without any time limitations.
+	// NOTE: NodeDrainTimeoutSeconds is different from `kubectl drain --timeout`.
 	// +optional
-	NodeVolumeDetachTimeout *metav1.Duration `json:"nodeVolumeDetachTimeout,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	NodeDrainTimeoutSeconds *int32 `json:"nodeDrainTimeoutSeconds,omitempty"`
 
-	// NodeDeletionTimeout defines how long the controller will attempt to delete the Node that is hosted by a Machine.
+	// NodeVolumeDetachTimeoutSeconds is the total amount of time, in seconds, that the controller
+	// will spend waiting for all volumes to be detached. The default value is 0, meaning that the
+	// volumes can be detached without any time limitations.
 	// +optional
-	NodeDeletionTimeout *metav1.Duration `json:"nodeDeletionTimeout,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	NodeVolumeDetachTimeoutSeconds *int32 `json:"nodeVolumeDetachTimeoutSeconds,omitempty"`
+
+	// NodeDeletionTimeoutSeconds defines, in seconds, how long the controller will attempt to
+	// delete the Node that is hosted by a Machine after the Machine is marked for deletion. A
+	// duration of 0 will retry deletion indefinitely. Defaults to 10 seconds when omitted.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	NodeDeletionTimeoutSeconds *int32 `json:"nodeDeletionTimeoutSeconds,omitempty"`
 }
 
 // RolloutStrategyType defines the rollout strategies for a KubeadmControlPlane.
@@ -85,19 +116,14 @@ type TalosControlPlaneSpec struct {
 	Version string `json:"version"`
 
 	// MachineTemplate contains information about how control plane Machines should be shaped.
-	// This is the Cluster API v1beta1 control plane contract field consumed by ClusterClass / topology.
+	// This is the Cluster API v1beta2 control plane contract field consumed by ClusterClass / topology.
 	// +optional
-	MachineTemplate TalosControlPlaneMachineTemplate `json:"machineTemplate,omitempty"`
+	MachineTemplate TalosControlPlaneMachineTemplate `json:"machineTemplate,omitempty,omitzero"`
 
 	// MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
 	// InfraMachines and bootstrap configs use the same name as the corresponding Machine.
 	// +optional
 	MachineNamingStrategy *MachineNamingStrategy `json:"machineNamingStrategy,omitempty"`
-
-	// InfrastructureTemplate is kept as a deprecated compatibility alias for users of older TalosControlPlane manifests.
-	// New manifests should use spec.machineTemplate.infrastructureRef instead.
-	// +optional
-	InfrastructureTemplate corev1.ObjectReference `json:"infrastructureTemplate,omitempty"`
 
 	// ControlPlaneConfig is a two TalosConfigSpecs
 	// to use for initializing and joining machines to the control plane.
@@ -118,22 +144,6 @@ func (s *TalosControlPlaneSpec) GetReplicas() int32 {
 	}
 
 	return *s.Replicas
-}
-
-// SyncInfrastructureTemplateCompatibility keeps the deprecated infrastructureTemplate alias
-// and the Cluster API machineTemplate.infrastructureRef field aligned when only one is set.
-func (s *TalosControlPlaneSpec) SyncInfrastructureTemplateCompatibility() {
-	syncInfrastructureTemplateCompatibility(&s.MachineTemplate, &s.InfrastructureTemplate)
-}
-
-// InfrastructureTemplateRef returns the resolved infrastructure machine template reference.
-func (s *TalosControlPlaneSpec) InfrastructureTemplateRef() corev1.ObjectReference {
-	return resolvedInfrastructureTemplateRef(s.MachineTemplate, s.InfrastructureTemplate)
-}
-
-// HasInfrastructureTemplateRef reports whether the control plane spec has a resolved infrastructure template reference.
-func (s *TalosControlPlaneSpec) HasInfrastructureTemplateRef() bool {
-	return hasObjectReference(s.InfrastructureTemplateRef())
 }
 
 // RolloutStrategy describes how to replace existing machines
@@ -186,6 +196,16 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
+	// AvailableReplicas is the number of available replicas for this ControlPlane.
+	// A machine is considered available when Machine's Available condition is true.
+	// +optional
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// UpToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane.
+	// A machine is considered up to date when Machine's UpToDate condition is true.
+	// +optional
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+
 	// Total number of unavailable machines targeted by this control plane.
 	// This is the total number of machines that are still required for
 	// the deployment to have 100% available capacity. They may either
@@ -202,6 +222,12 @@ type TalosControlPlaneStatus struct {
 	// uploaded talos-config configmap.
 	// +optional
 	Initialized bool `json:"initialized"`
+
+	// initialization provides observations of the TalosControlPlane initialization process.
+	// NOTE: Fields in this struct are part of the Cluster API contract and are used to orchestrate
+	// initial Machine provisioning.
+	// +optional
+	Initialization TalosControlPlaneInitializationStatus `json:"initialization,omitempty,omitzero"`
 
 	// Ready denotes that the TalosControlPlane API Server is ready to
 	// receive requests.
@@ -228,14 +254,27 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions defines current service state of the KubeadmControlPlane.
+	// Conditions defines the current service state of the TalosControlPlane.
 	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
 	// +optional
 	Version *string `json:"version,omitempty"`
+}
+
+// TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
+// +kubebuilder:validation:MinProperties=1
+type TalosControlPlaneInitializationStatus struct {
+	// controlPlaneInitialized is true when the TalosControlPlane provider reports that the
+	// Kubernetes control plane is initialized; A control plane is considered initialized when
+	// it can accept requests, no matter if this happens before the control plane is fully
+	// provisioned or not.
+	// NOTE: this field is part of the Cluster API contract, and it is used to orchestrate
+	// initial Machine provisioning.
+	// +optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -259,12 +298,12 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
+func (r *TalosControlPlane) GetConditions() []metav1.Condition {
 	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+func (r *TalosControlPlane) SetConditions(conditions []metav1.Condition) {
 	r.Status.Conditions = conditions
 }
 
@@ -279,31 +318,4 @@ type TalosControlPlaneList struct {
 
 func init() {
 	SchemeBuilder.Register(&TalosControlPlane{}, &TalosControlPlaneList{})
-}
-
-func syncInfrastructureTemplateCompatibility(machineTemplate *TalosControlPlaneMachineTemplate, legacy *corev1.ObjectReference) {
-	switch {
-	case !hasObjectReference(machineTemplate.InfrastructureRef) && hasObjectReference(*legacy):
-		machineTemplate.InfrastructureRef = *legacy
-	case hasObjectReference(machineTemplate.InfrastructureRef) && !hasObjectReference(*legacy):
-		*legacy = machineTemplate.InfrastructureRef
-	}
-}
-
-func resolvedInfrastructureTemplateRef(machineTemplate TalosControlPlaneMachineTemplate, legacy corev1.ObjectReference) corev1.ObjectReference {
-	if hasObjectReference(machineTemplate.InfrastructureRef) {
-		return machineTemplate.InfrastructureRef
-	}
-
-	return legacy
-}
-
-func hasObjectReference(ref corev1.ObjectReference) bool {
-	return ref.APIVersion != "" ||
-		ref.Kind != "" ||
-		ref.Name != "" ||
-		ref.Namespace != "" ||
-		ref.ResourceVersion != "" ||
-		ref.FieldPath != "" ||
-		ref.UID != ""
 }
