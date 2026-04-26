@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: taloscontrolplanetemplates.controlplane.cluster.x-k8s.io
 spec:
   group: controlplane.cluster.x-k8s.io
@@ -57,6 +57,7 @@ spec:
                     description: |-
                       Standard object's metadata.
                       More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/metadata/
+                    minProperties: 1
                     properties:
                       annotations:
                         additionalProperties:
@@ -181,140 +182,6 @@ spec:
                         required:
                         - controlplane
                         type: object
-                      infrastructureTemplate:
-                        description: |-
-                          InfrastructureTemplate is kept as a deprecated compatibility alias for older template manifests.
-                          New manifests should use spec.template.spec.machineTemplate.infrastructureRef when an inline
-                          infrastructure reference is required outside of ClusterClass-managed topology.
-                        properties:
-                          apiVersion:
-                            description: API version of the referent.
-                            type: string
-                          fieldPath:
-                            description: |-
-                              If referring to a piece of an object instead of an entire object, this string
-                              should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                              For example, if the object reference is to a container within a pod, this would take on a value like:
-                              "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                              the event) or if no container name is specified "spec.containers[2]" (container with
-                              index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                              referencing a part of an object.
-                            type: string
-                          kind:
-                            description: |-
-                              Kind of the referent.
-                              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                            type: string
-                          name:
-                            description: |-
-                              Name of the referent.
-                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                            type: string
-                          namespace:
-                            description: |-
-                              Namespace of the referent.
-                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                            type: string
-                          resourceVersion:
-                            description: |-
-                              Specific resourceVersion to which this reference is made, if any.
-                              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                            type: string
-                          uid:
-                            description: |-
-                              UID of the referent.
-                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                            type: string
-                        type: object
-                        x-kubernetes-map-type: atomic
-                      machineTemplate:
-                        description: |-
-                          MachineTemplate contains information about how control plane Machines should be shaped.
-                          For ClusterClass / topology, ClusterClass.spec.controlPlane.machineInfrastructure.ref populates
-                          machineTemplate.infrastructureRef when creating a concrete TalosControlPlane.
-                        properties:
-                          infrastructureRef:
-                            description: |-
-                              InfrastructureRef is a reference to a custom resource offered by an infrastructure provider.
-                              For ClusterClass / topology, this field is populated from ClusterClass.spec.controlPlane.machineInfrastructure.ref.
-                            properties:
-                              apiVersion:
-                                description: API version of the referent.
-                                type: string
-                              fieldPath:
-                                description: |-
-                                  If referring to a piece of an object instead of an entire object, this string
-                                  should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                                  For example, if the object reference is to a container within a pod, this would take on a value like:
-                                  "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                                  the event) or if no container name is specified "spec.containers[2]" (container with
-                                  index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                                  referencing a part of an object.
-                                type: string
-                              kind:
-                                description: |-
-                                  Kind of the referent.
-                                  More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                                type: string
-                              name:
-                                description: |-
-                                  Name of the referent.
-                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                                type: string
-                              namespace:
-                                description: |-
-                                  Namespace of the referent.
-                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                                type: string
-                              resourceVersion:
-                                description: |-
-                                  Specific resourceVersion to which this reference is made, if any.
-                                  More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                                type: string
-                              uid:
-                                description: |-
-                                  UID of the referent.
-                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                                type: string
-                            type: object
-                            x-kubernetes-map-type: atomic
-                          metadata:
-                            description: Metadata is the standard object's metadata.
-                            properties:
-                              annotations:
-                                additionalProperties:
-                                  type: string
-                                type: object
-                              labels:
-                                additionalProperties:
-                                  type: string
-                                type: object
-                            type: object
-                          nodeDeletionTimeout:
-                            description: NodeDeletionTimeout defines how long the controller will attempt to delete the Node that is hosted by a Machine.
-                            type: string
-                          nodeDrainTimeout:
-                            description: NodeDrainTimeout is the total amount of time that the controller will spend draining a control plane node.
-                            type: string
-                          nodeVolumeDetachTimeout:
-                            description: NodeVolumeDetachTimeout is the total amount of time that the controller will spend waiting for volumes to be detached.
-                            type: string
-                          readinessGates:
-                            description: ReadinessGates specifies additional conditions to include when evaluating Machine Ready condition.
-                            items:
-                              properties:
-                                conditionType:
-                                  type: string
-                              required:
-                              - conditionType
-                              type: object
-                            maxItems: 32
-                            minItems: 1
-                            type: array
-                            x-kubernetes-list-map-keys:
-                            - conditionType
-                            x-kubernetes-list-type: map
-                        type: object
                       machineNamingStrategy:
                         description: |-
                           MachineNamingStrategy allows changing the naming pattern used when creating control plane Machines.
@@ -333,6 +200,76 @@ spec:
                             maxLength: 256
                             minLength: 1
                             type: string
+                        type: object
+                      machineTemplate:
+                        description: |-
+                          MachineTemplate contains information about how control plane Machines should be shaped.
+                          For ClusterClass / topology, ClusterClass.spec.controlPlane.machineInfrastructure.templateRef
+                          populates machineTemplate.spec.infrastructureRef when creating a concrete TalosControlPlane.
+                          The template variant intentionally omits infrastructureRef and readinessGates: those fields
+                          are owned by the topology controller (infrastructureRef) or by individual TalosControlPlane
+                          instances (readinessGates).
+                        properties:
+                          metadata:
+                            description: ObjectMeta is the standard object's metadata.
+                            minProperties: 1
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  annotations is an unstructured key value map stored with a resource that may be
+                                  set by external tools to store and retrieve arbitrary metadata. They are not
+                                  queryable and should be preserved when modifying objects.
+                                  More info: http://kubernetes.io/docs/user-guide/annotations
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  labels is a map of string keys and values that can be used to organize and categorize
+                                  (scope and select) objects. May match selectors of replication controllers
+                                  and services.
+                                  More info: http://kubernetes.io/docs/user-guide/labels
+                                type: object
+                            type: object
+                          spec:
+                            description: Spec is the specification of the desired
+                              behavior of the machine template.
+                            minProperties: 1
+                            properties:
+                              deletion:
+                                description: Deletion contains configuration options
+                                  for Machine deletion.
+                                minProperties: 1
+                                properties:
+                                  nodeDeletionTimeoutSeconds:
+                                    description: |-
+                                      NodeDeletionTimeoutSeconds defines, in seconds, how long the controller will attempt to
+                                      delete the Node that is hosted by a Machine after the Machine is marked for deletion. A
+                                      duration of 0 will retry deletion indefinitely. Defaults to 10 seconds when omitted.
+                                    format: int32
+                                    minimum: 0
+                                    type: integer
+                                  nodeDrainTimeoutSeconds:
+                                    description: |-
+                                      NodeDrainTimeoutSeconds is the total amount of time, in seconds, that the controller will
+                                      spend draining a control plane node. The default value is 0, meaning that the node can be
+                                      drained without any time limitations.
+                                      NOTE: NodeDrainTimeoutSeconds is different from `kubectl drain --timeout`.
+                                    format: int32
+                                    minimum: 0
+                                    type: integer
+                                  nodeVolumeDetachTimeoutSeconds:
+                                    description: |-
+                                      NodeVolumeDetachTimeoutSeconds is the total amount of time, in seconds, that the controller
+                                      will spend waiting for all volumes to be detached. The default value is 0, meaning that the
+                                      volumes can be detached without any time limitations.
+                                    format: int32
+                                    minimum: 0
+                                    type: integer
+                                type: object
+                            type: object
                         type: object
                       rolloutStrategy:
                         default:

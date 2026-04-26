@@ -9,18 +9,14 @@ import (
 	"fmt"
 
 	"github.com/google/go-cmp/cmp"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // SetupWebhookWithManager implements webhook methods.
 func (r *TalosControlPlaneTemplate) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(r).
+	return ctrl.NewWebhookManagedBy(mgr, r).
 		WithDefaulter(r).
 		WithValidator(r).
 		Complete()
@@ -30,55 +26,36 @@ func (r *TalosControlPlaneTemplate) SetupWebhookWithManager(mgr ctrl.Manager) er
 // +kubebuilder:webhook:verbs=create;update;delete,path=/validate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplanetemplate,mutating=false,failurePolicy=fail,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanetemplates,versions=v1alpha3,name=validate.taloscontrolplanetemplate.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
 
 var (
-	_ webhook.CustomDefaulter = &TalosControlPlaneTemplate{}
-	_ webhook.CustomValidator = &TalosControlPlaneTemplate{}
+	_ admission.Defaulter[*TalosControlPlaneTemplate] = &TalosControlPlaneTemplate{}
+	_ admission.Validator[*TalosControlPlaneTemplate] = &TalosControlPlaneTemplate{}
 )
 
-// Default implements webhook.Defaulter so a webhook will be registered for the type.
-func (r *TalosControlPlaneTemplate) Default(_ context.Context, obj runtime.Object) error {
-	r = obj.(*TalosControlPlaneTemplate)
-
-	defaultTalosControlPlaneTemplateSpec(&r.Spec, r.Namespace)
+// Default implements admission.Defaulter so a webhook will be registered for the type.
+func (*TalosControlPlaneTemplate) Default(_ context.Context, obj *TalosControlPlaneTemplate) error {
+	defaultTalosControlPlaneTemplateSpec(&obj.Spec)
 
 	return nil
 }
 
-func defaultTalosControlPlaneTemplateSpec(s *TalosControlPlaneTemplateSpec, namespace string) {
-	s.Template.Spec.SyncInfrastructureTemplateCompatibility()
-	defaultObjectReferenceNamespace(&s.Template.Spec.MachineTemplate.InfrastructureRef, namespace)
-	defaultObjectReferenceNamespace(&s.Template.Spec.InfrastructureTemplate, namespace)
-	s.Template.Spec.SyncInfrastructureTemplateCompatibility()
-
+func defaultTalosControlPlaneTemplateSpec(s *TalosControlPlaneTemplateSpec) {
 	s.Template.Spec.RolloutStrategy = defaultRolloutStrategy(s.Template.Spec.RolloutStrategy)
 }
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlaneTemplate) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	r = obj.(*TalosControlPlaneTemplate)
-
-	return r.validate()
+// ValidateCreate implements admission.Validator so a webhook will be registered for the type.
+func (*TalosControlPlaneTemplate) ValidateCreate(_ context.Context, obj *TalosControlPlaneTemplate) (admission.Warnings, error) {
+	return obj.validate()
 }
 
-// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlaneTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	oldTemplate, ok := oldObj.(*TalosControlPlaneTemplate)
-	if !ok {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a TalosControlPlaneTemplate but got a %T", oldObj))
-	}
-
-	newTemplate, ok := newObj.(*TalosControlPlaneTemplate)
-	if !ok {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a TalosControlPlaneTemplate but got a %T", newObj))
-	}
-
-	oldTemplate = oldTemplate.DeepCopy()
-	newTemplate = newTemplate.DeepCopy()
+// ValidateUpdate implements admission.Validator so a webhook will be registered for the type.
+func (r *TalosControlPlaneTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj *TalosControlPlaneTemplate) (admission.Warnings, error) {
+	oldTemplate := oldObj.DeepCopy()
+	newTemplate := newObj.DeepCopy()
 
 	if err := r.Default(ctx, oldTemplate); err != nil {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("failed to compare old and new TalosControlPlaneTemplate: failed to default old object: %v", err))
+		return nil, fmt.Errorf("failed to compare old and new TalosControlPlaneTemplate: failed to default old object: %w", err)
 	}
 	if err := r.Default(ctx, newTemplate); err != nil {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("failed to compare old and new TalosControlPlaneTemplate: failed to default new object: %v", err))
+		return nil, fmt.Errorf("failed to compare old and new TalosControlPlaneTemplate: failed to default new object: %w", err)
 	}
 
 	if diff := cmp.Diff(oldTemplate.Spec.Template.Spec, newTemplate.Spec.Template.Spec); diff != "" {
@@ -94,18 +71,14 @@ func (r *TalosControlPlaneTemplate) ValidateUpdate(ctx context.Context, oldObj, 
 	return nil, nil
 }
 
-// ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (r *TalosControlPlaneTemplate) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+// ValidateDelete implements admission.Validator so a webhook will be registered for the type.
+func (*TalosControlPlaneTemplate) ValidateDelete(_ context.Context, _ *TalosControlPlaneTemplate) (admission.Warnings, error) {
 	return nil, nil
 }
 
 func (r *TalosControlPlaneTemplate) validate() (admission.Warnings, error) {
-	allErrs := validateInfrastructureTemplateCompatibility(
-		r.Spec.Template.Spec.MachineTemplate,
-		r.Spec.Template.Spec.InfrastructureTemplate,
-		field.NewPath("spec", "template", "spec"),
-		false,
-	)
+	allErrs := field.ErrorList{}
+
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.Template.Spec.MachineNamingStrategy, field.NewPath("spec", "template", "spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.Template.Spec.RolloutStrategy, field.NewPath("spec", "template", "spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {

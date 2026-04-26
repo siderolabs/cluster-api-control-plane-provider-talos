@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -115,10 +116,12 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.31.0",
 			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-					Kind:       "DockerMachineTemplate",
-					Name:       "cp-template",
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+						Kind:     "DockerMachineTemplate",
+						Name:     "cp-template",
+					},
 				},
 			},
 			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{
@@ -127,75 +130,31 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(ctx, direct); err != nil {
-		t.Fatalf("expected TalosControlPlane create with machineTemplate.infrastructureRef to succeed: %v", err)
+		t.Fatalf("expected TalosControlPlane create with machineTemplate.spec.infrastructureRef to succeed: %v", err)
 	}
 
 	persistedDirect := &controlplanev1.TalosControlPlane{}
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(direct), persistedDirect); err != nil {
 		t.Fatalf("failed to get persisted TalosControlPlane: %v", err)
 	}
-	if got := persistedDirect.Spec.MachineTemplate.InfrastructureRef.Namespace; got != namespace.Name {
-		t.Fatalf("expected machineTemplate.infrastructureRef namespace to default to %q, got %q", namespace.Name, got)
-	}
-	if persistedDirect.Spec.InfrastructureTemplate.Name != persistedDirect.Spec.MachineTemplate.InfrastructureRef.Name {
-		t.Fatalf("expected legacy infrastructureTemplate to stay in sync with machineTemplate.infrastructureRef")
+	if got := persistedDirect.Spec.MachineTemplate.Spec.InfrastructureRef.Name; got != "cp-template" {
+		t.Fatalf("expected machineTemplate.spec.infrastructureRef name %q, got %q", "cp-template", got)
 	}
 
-	legacyDirect := &controlplanev1.TalosControlPlane{
+	missingRef := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "direct-legacy-template",
+			Name:      "direct-missing-ref",
 			Namespace: namespace.Name,
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.31.0",
-			InfrastructureTemplate: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "DockerMachineTemplate",
-				Name:       "cp-template",
-			},
 			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{
 				ControlPlaneConfig: talosConfigSpec("controlplane", nil),
 			},
 		},
 	}
-	if err := k8sClient.Create(ctx, legacyDirect); err != nil {
-		t.Fatalf("expected TalosControlPlane create with legacy infrastructureTemplate to succeed: %v", err)
-	}
-
-	persistedLegacyDirect := &controlplanev1.TalosControlPlane{}
-	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(legacyDirect), persistedLegacyDirect); err != nil {
-		t.Fatalf("failed to get persisted legacy TalosControlPlane: %v", err)
-	}
-	if persistedLegacyDirect.Spec.MachineTemplate.InfrastructureRef.Name != persistedLegacyDirect.Spec.InfrastructureTemplate.Name {
-		t.Fatalf("expected machineTemplate.infrastructureRef to be backfilled from legacy infrastructureTemplate")
-	}
-
-	conflictingDirect := &controlplanev1.TalosControlPlane{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "direct-conflicting-template",
-			Namespace: namespace.Name,
-		},
-		Spec: controlplanev1.TalosControlPlaneSpec{
-			Version: "v1.31.0",
-			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-					Kind:       "DockerMachineTemplate",
-					Name:       "cp-template-a",
-				},
-			},
-			InfrastructureTemplate: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "DockerMachineTemplate",
-				Name:       "cp-template-b",
-			},
-			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{
-				ControlPlaneConfig: talosConfigSpec("controlplane", nil),
-			},
-		},
-	}
-	if err := k8sClient.Create(ctx, conflictingDirect); err == nil {
-		t.Fatalf("expected conflicting TalosControlPlane infrastructure references to be rejected")
+	if err := k8sClient.Create(ctx, missingRef); err == nil {
+		t.Fatalf("expected TalosControlPlane without machineTemplate.spec.infrastructureRef to be rejected")
 	}
 
 	topologyTemplate := &controlplanev1.TalosControlPlaneTemplate{
@@ -224,13 +183,26 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		},
 		Spec: controlplanev1.TalosControlPlaneTemplateSpec{
 			Template: controlplanev1.TalosControlPlaneTemplateResource{
+				ObjectMeta: clusterv1.ObjectMeta{
+					Labels: map[string]string{
+						"cluster.x-k8s.io/cluster-class-name": "talos-cp",
+					},
+				},
 				Spec: controlplanev1.TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
-						InfrastructureRef: corev1.ObjectReference{
-							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-							Kind:       "DockerMachineTemplate",
-							Name:       "cp-template",
+					MachineTemplate: controlplanev1.TalosControlPlaneTemplateMachineTemplate{
+						ObjectMeta: clusterv1.ObjectMeta{
+							Labels: map[string]string{
+								"cluster.x-k8s.io/cluster-class-name": "talos-cp",
+							},
 						},
+						Spec: controlplanev1.TalosControlPlaneTemplateMachineTemplateSpec{
+							Deletion: controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
+								NodeDeletionTimeoutSeconds: func() *int32 { v := int32(60); return &v }(),
+							},
+						},
+					},
+					ControlPlaneConfig: controlplanev1.ControlPlaneConfig{
+						ControlPlaneConfig: talosConfigSpec("controlplane", nil),
 					},
 				},
 			},
@@ -246,12 +218,6 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		t.Fatalf("failed to get persisted template: %v", err)
 	}
 
-	if got := persisted.Spec.Template.Spec.MachineTemplate.InfrastructureRef.Namespace; got != namespace.Name {
-		t.Fatalf("expected machineTemplate.infrastructureRef namespace to default to %q, got %q", namespace.Name, got)
-	}
-	if persisted.Spec.Template.Spec.InfrastructureTemplate.Name != persisted.Spec.Template.Spec.MachineTemplate.InfrastructureRef.Name {
-		t.Fatalf("expected legacy infrastructureTemplate to stay in sync with machineTemplate.infrastructureRef")
-	}
 	if persisted.Spec.Template.Spec.RolloutStrategy == nil {
 		t.Fatalf("expected rollout strategy defaults to be persisted")
 	}
@@ -270,13 +236,6 @@ func TestTalosControlPlaneTemplateWebhookIntegration(t *testing.T) {
 		Spec: controlplanev1.TalosControlPlaneTemplateSpec{
 			Template: controlplanev1.TalosControlPlaneTemplateResource{
 				Spec: controlplanev1.TalosControlPlaneTemplateResourceSpec{
-					MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
-						InfrastructureRef: corev1.ObjectReference{
-							APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-							Kind:       "DockerMachineTemplate",
-							Name:       "cp-template",
-						},
-					},
 					RolloutStrategy: &controlplanev1.RolloutStrategy{Type: controlplanev1.RolloutStrategyType("Invalid")},
 				},
 			},

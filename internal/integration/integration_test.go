@@ -391,8 +391,8 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 			return err
 		}
 
-		if !conditions.Has(&tcp, controlplanev1.ResizedCondition) &&
-			conditions.GetMessage(&tcp, controlplanev1.ResizedCondition) != "Cannot scale down control plane nodes to 0" {
+		if !conditions.Has(&tcp, string(controlplanev1.ResizedCondition)) &&
+			conditions.GetMessage(&tcp, string(controlplanev1.ResizedCondition)) != "Cannot scale down control plane nodes to 0" {
 			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
 		}
 

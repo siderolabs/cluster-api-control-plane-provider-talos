@@ -6,13 +6,13 @@
 // +groupName=controlplane.cluster.x-k8s.io
 package v1alpha3
 
-import clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 // Conditions and condition Reasons for the TalosControlPlane object
 
 const (
-	// MachinesReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
-	MachinesReadyCondition clusterv1.ConditionType = "MachinesReady"
+	// MachinesAllReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
+	MachinesAllReadyCondition clusterv1.ConditionType = "MachinesAllReady"
 )
 
 const (
@@ -22,6 +22,9 @@ const (
 	// WaitingForMachinesReason (Severity=Info) documents a TalosControlPlane bootstrap is waiting
 	// for all control plane nodes to be created.
 	WaitingForMachinesReason = "WaitingForMachines"
+
+	// MachinesBootstrappedReason documents that all control plane machines have been bootstrapped.
+	MachinesBootstrappedReason = "MachinesBootstrapped"
 )
 
 const (
@@ -36,6 +39,9 @@ const (
 	// InvalidControlPlaneConfigReason (Severity=Error) documents that controlplane config is invalid and the provider
 	// can not proceed with the bootstrap.
 	InvalidControlPlaneConfigReason = "InvalidControlPlaneConfig"
+
+	// AvailableReason documents that the TalosControlPlane is available.
+	AvailableReason = "Available"
 )
 
 const (
@@ -46,6 +52,9 @@ const (
 	// RollingUpdateInProgressReason (Severity=Warning) documents a TalosControlPlane object executing a
 	// rolling upgrade for aligning the machines spec to the desired state.
 	RollingUpdateInProgressReason = "RollingUpdateInProgress"
+
+	// MachinesSpecUpToDateReason documents that the spec of all machines controlled by the TalosControlPlane is up to date.
+	MachinesSpecUpToDateReason = "MachinesSpecUpToDate"
 )
 
 const (
@@ -57,6 +66,9 @@ const (
 
 	// ScalingDownReason (Severity=Info) documents a TalosControlPlane that is decreasing the number of replicas.
 	ScalingDownReason = "ScalingDown"
+
+	// ResizedReason documents that the TalosControlPlane has reached the desired number of replicas.
+	ResizedReason = "Resized"
 )
 
 const (
@@ -70,6 +82,9 @@ const (
 
 	// ControlPlaneComponentsInspectionFailedReason documents a failure in inspecting the control plane component status.
 	ControlPlaneComponentsInspectionFailedReason = "ControlPlaneComponentsInspectionFailed"
+
+	// ControlPlaneComponentsHealthyReason documents that all control plane components are healthy.
+	ControlPlaneComponentsHealthyReason = "ControlPlaneComponentsHealthy"
 )
 
 const (
@@ -78,6 +93,9 @@ const (
 
 	// EtcdClusterUnhealthyReason (Severity=Error) is set when the etcd cluster is unhealthy.
 	EtcdClusterUnhealthyReason = "EtcdClusterUnhealthy"
+
+	// EtcdClusterHealthyReason documents that the etcd cluster is healthy.
+	EtcdClusterHealthyReason = "EtcdClusterHealthy"
 )
 
 const (
@@ -97,4 +115,7 @@ const (
 	// MachineGenerationFailedReason (Severity=Error) documents a TalosControlPlane failing to
 	// generate a machine object.
 	MachineGenerationFailedReason = "MachineGenerationFailed"
+
+	// MachinesCreatedReason documents that the TalosControlPlane has successfully created all required machines.
+	MachinesCreatedReason = "MachinesCreated"
 )

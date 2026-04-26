@@ -14,11 +14,16 @@ import (
 	"github.com/pkg/errors"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util/collections"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -38,7 +43,7 @@ type ControlPlane struct {
 
 // newControlPlane returns an instantiated ControlPlane.
 func newControlPlane(ctx context.Context, client client.Client, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines collections.Machines) (*ControlPlane, error) {
-	infraObjects, err := getInfraResources(ctx, client, machines)
+	infraObjects, err := getInfraResources(ctx, client, machines, cluster.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +102,55 @@ func (c *ControlPlane) MachinesWithOutdatedRolloutSpec() collections.Machines {
 	)
 }
 
+// reconcileMachineUpToDateConditions sets the v1beta2 UpToDate condition on each
+// non-deleting control plane Machine based on whether its rollout-requiring spec
+// matches the desired TalosControlPlane spec, and patches each Machine.
+//
+// The core Machine controller intentionally does not compute UpToDate for
+// stand-alone Machines (see sigs.k8s.io/cluster-api/internal/controllers/machine
+// setUpToDateCondition); control plane providers are responsible for setting it
+// on Machines they own. Without this, KCP-style consumers (MachineDeployment
+// rollout gating, Cluster status aggregation) treat the control plane as not
+// up-to-date and stall dependent rollouts.
+func (c *ControlPlane) reconcileMachineUpToDateConditions(ctx context.Context, cl client.Client) error {
+	outdated := c.MachinesWithOutdatedRolloutSpec()
+	nonDeleting := c.Machines.Filter(collections.Not(collections.HasDeletionTimestamp))
+
+	var errs []error
+	for _, machine := range nonDeleting {
+		helper, err := patch.NewHelper(machine, cl)
+		if err != nil {
+			errs = append(errs, errors.Wrapf(err, "failed to create patch helper for machine %s", machine.Name))
+			continue
+		}
+
+		if _, isOutdated := outdated[machine.Name]; isOutdated {
+			conditions.Set(machine, metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionFalse,
+				Reason: clusterv1.MachineNotUpToDateReason,
+			})
+		} else {
+			conditions.Set(machine, metav1.Condition{
+				Type:   clusterv1.MachineUpToDateCondition,
+				Status: metav1.ConditionTrue,
+				Reason: clusterv1.MachineUpToDateReason,
+			})
+		}
+
+		if err := helper.Patch(ctx, machine); err != nil {
+			errs = append(errs, errors.Wrapf(err, "failed to patch machine %s", machine.Name))
+		}
+	}
+
+	return kerrors.NewAggregate(errs)
+}
+
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.
-func getInfraResources(ctx context.Context, cl client.Client, machines collections.Machines) (map[string]*unstructured.Unstructured, error) {
+func getInfraResources(ctx context.Context, cl client.Client, machines collections.Machines, namespace string) (map[string]*unstructured.Unstructured, error) {
 	result := map[string]*unstructured.Unstructured{}
 	for _, m := range machines {
-		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef)
+		infraObj, err := external.GetObjectFromContractVersionedRef(ctx, cl, m.Spec.InfrastructureRef, namespace)
 		if err != nil {
 			if apierrors.IsNotFound(errors.Cause(err)) {
 				continue
@@ -119,7 +168,7 @@ func getTalosConfigs(ctx context.Context, cl client.Client, machines collections
 
 	for _, m := range machines {
 		bootstrapRef := m.Spec.Bootstrap.ConfigRef
-		if bootstrapRef == nil {
+		if !bootstrapRef.IsDefined() {
 			continue
 		}
 
@@ -163,11 +212,11 @@ func MatchesTemplateClonedFrom(infraConfigs map[string]*unstructured.Unstructure
 			return true
 		}
 
-		templateRef := tcp.Spec.InfrastructureTemplateRef()
+		templateRef := tcp.Spec.MachineTemplate.Spec.InfrastructureRef
 
 		// Check if the machine's infrastructure reference has been created from the current TCP infrastructure template.
-		if clonedFromName != templateRef.Name ||
-			clonedFromGroupKind != templateRef.GroupVersionKind().GroupKind().String() {
+		templateGroupKind := schema.GroupKind{Group: templateRef.APIGroup, Kind: templateRef.Kind}.String()
+		if clonedFromName != templateRef.Name || clonedFromGroupKind != templateGroupKind {
 			return false
 		}
 
