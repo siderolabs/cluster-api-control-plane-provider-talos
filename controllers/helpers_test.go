@@ -187,7 +187,7 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 		},
 		Status: clusterv1.MachineStatus{
 			NodeRef: clusterv1.MachineNodeReference{
-				Name:       name,
+				Name: name,
 			},
 			Addresses: clusterv1.MachineAddresses{
 				{

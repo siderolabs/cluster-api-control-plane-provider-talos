@@ -700,7 +700,7 @@ func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client
 						},
 					}
 					machine.Status.NodeRef = clusterv1.MachineNodeReference{
-						Name:       machine.Name,
+						Name: machine.Name,
 					}
 
 					g.Expect(err).To(BeNil())
