@@ -5,6 +5,9 @@ resources:
   kind: TalosControlPlane
   version: v1alpha3
 - group: controlplane
+  kind: TalosControlPlane
+  version: v1beta1
+- group: controlplane
   kind: TalosControlPlaneTemplate
-  version: v1alpha3
+  version: v1beta1
 version: "2"

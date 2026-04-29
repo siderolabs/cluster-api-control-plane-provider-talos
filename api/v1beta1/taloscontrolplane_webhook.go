@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package v1alpha3
+package v1beta1
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -26,8 +27,8 @@ func (r *TalosControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/mutate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplane,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1alpha3,name=default.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
-//+kubebuilder:webhook:verbs=create;update;delete,path=/validate-controlplane-cluster-x-k8s-io-v1alpha3-taloscontrolplane,mutating=false,failurePolicy=fail,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1alpha3,name=validate.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-controlplane-cluster-x-k8s-io-v1beta1-taloscontrolplane,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1beta1,name=default.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-controlplane-cluster-x-k8s-io-v1beta1-taloscontrolplane,mutating=false,failurePolicy=fail,groups=controlplane.cluster.x-k8s.io,resources=taloscontrolplanes,versions=v1beta1,name=validate.taloscontrolplane.controlplane.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
 
 var (
 	_ admission.Defaulter[*TalosControlPlane] = &TalosControlPlane{}
@@ -95,15 +96,7 @@ func (*TalosControlPlane) ValidateDelete(_ context.Context, _ *TalosControlPlane
 func (r *TalosControlPlane) validate() (admission.Warnings, error) {
 	allErrs := field.ErrorList{}
 
-	if r.Spec.MachineTemplate.Spec.InfrastructureRef.Name == "" {
-		allErrs = append(allErrs,
-			field.Required(
-				field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"),
-				"infrastructureRef is required",
-			),
-		)
-	}
-
+	allErrs = append(allErrs, validateInfrastructureRef(r.Spec.MachineTemplate.Spec.InfrastructureRef, field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"))...)
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
 	if len(allErrs) == 0 {
@@ -111,6 +104,22 @@ func (r *TalosControlPlane) validate() (admission.Warnings, error) {
 	}
 
 	return nil, newInvalidTalosControlPlaneError("TalosControlPlane", r.Name, allErrs)
+}
+
+func validateInfrastructureRef(ref clusterv1.ContractVersionedObjectReference, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if ref.Name == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("name"), "name is required"))
+	}
+	if ref.Kind == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("kind"), "kind is required"))
+	}
+	if ref.APIGroup == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("apiGroup"), "apiGroup is required"))
+	}
+
+	return allErrs
 }
 
 func validateRolloutStrategy(rolloutStrategy *RolloutStrategy, fldPath *field.Path) field.ErrorList {
@@ -135,6 +144,15 @@ func validateRolloutStrategy(rolloutStrategy *RolloutStrategy, fldPath *field.Pa
 	return allErrs
 }
 
+// validateMachineNamingStrategy validates that strategy.Template renders successfully
+// and that its output varies with .random.
+//
+// The .random check is heuristic: the template is rendered twice with different random
+// inputs and the outputs are compared. This accepts any whitespace variant of {{ .random }}
+// but will reject templates that reference .random yet always produce constant output
+// (e.g. {{ if eq .random "" }}x{{ else }}x{{ end }}, {{ slice .random 0 0 }},
+// {{ printf "%d" (len .random) }}). Such templates are not useful in practice since
+// they would still cause name collisions across machines.
 func validateMachineNamingStrategy(strategy *MachineNamingStrategy, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
@@ -142,9 +160,25 @@ func validateMachineNamingStrategy(strategy *MachineNamingStrategy, fldPath *fie
 		return allErrs
 	}
 
-	if !strings.Contains(strategy.Template, "{{ .random }}") {
+	out1, err := renderTalosControlPlaneMachineName(strategy, "cluster", "talos-control-plane", "AAAAA")
+	if err != nil {
 		allErrs = append(allErrs,
-			field.Invalid(fldPath.Child("template"), strategy.Template, "must contain {{ .random }}"),
+			field.Invalid(fldPath.Child("template"), strategy.Template, err.Error()),
+		)
+
+		return allErrs
+	}
+	out2, err := renderTalosControlPlaneMachineName(strategy, "cluster", "talos-control-plane", "BBBBB")
+	if err != nil {
+		allErrs = append(allErrs,
+			field.Invalid(fldPath.Child("template"), strategy.Template, err.Error()),
+		)
+
+		return allErrs
+	}
+	if out1 == out2 {
+		allErrs = append(allErrs,
+			field.Invalid(fldPath.Child("template"), strategy.Template, "must reference .random"),
 		)
 
 		return allErrs
