@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package v1alpha3
+package v1beta1
 
 import (
 	"bytes"
@@ -45,6 +45,10 @@ func (s *TalosControlPlaneTemplateResourceSpec) GenerateMachineName(clusterName,
 }
 
 func generateTalosControlPlaneMachineName(strategy *MachineNamingStrategy, clusterName, talosControlPlaneName string) (string, error) {
+	return renderTalosControlPlaneMachineName(strategy, clusterName, talosControlPlaneName, utilrand.String(randomLength))
+}
+
+func renderTalosControlPlaneMachineName(strategy *MachineNamingStrategy, clusterName, talosControlPlaneName, random string) (string, error) {
 	templateString := defaultTalosControlPlaneMachineNameTemplate
 	if strategy != nil && strategy.Template != "" {
 		templateString = strategy.Template
@@ -57,7 +61,7 @@ func generateTalosControlPlaneMachineName(strategy *MachineNamingStrategy, clust
 		"talosControlPlane": map[string]interface{}{
 			"name": talosControlPlaneName,
 		},
-		"random": utilrand.String(randomLength),
+		"random": random,
 	}
 
 	tpl, err := template.New("talosControlPlane machine name generator").Option("missingkey=error").Parse(templateString)

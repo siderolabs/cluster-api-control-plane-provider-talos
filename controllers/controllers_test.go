@@ -33,7 +33,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 )
 
@@ -329,7 +329,7 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 	g.Expect(machine.Spec.Bootstrap.ConfigRef.Name).To(Equal(machine.Name))
 
 	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
-	g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
+	g.Expect(tcp.V1Beta1DeprecatedStatus().UpdatedReplicas).To(BeEquivalentTo(1))
 }
 
 func (suite *ControllersSuite) TestReconcileCreatesMachineFromCustomMachineNamingStrategy() {
@@ -478,7 +478,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
-		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.V1Beta1DeprecatedStatus().UpdatedReplicas).To(BeEquivalentTo(1))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
 
@@ -538,7 +538,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
-		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.V1Beta1DeprecatedStatus().UpdatedReplicas).To(BeEquivalentTo(2))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
@@ -643,7 +643,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
-		g.Expect(tcp.Status.UpdatedReplicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.V1Beta1DeprecatedStatus().UpdatedReplicas).To(BeEquivalentTo(3))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
 

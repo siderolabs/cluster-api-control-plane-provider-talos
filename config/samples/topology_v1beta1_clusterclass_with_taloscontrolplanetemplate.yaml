@@ -16,7 +16,7 @@ spec:
     naming:
       template: "{{ .cluster.name }}-control-plane"
     templateRef:
-      apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+      apiVersion: controlplane.cluster.x-k8s.io/v1beta1
       kind: TalosControlPlaneTemplate
       name: talos-cp-template
     machineInfrastructure:

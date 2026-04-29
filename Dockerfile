@@ -44,6 +44,7 @@ COPY --from=manifests-build /src/config /config
 
 FROM build AS generate-build
 RUN --mount=type=cache,target=/.cache controller-gen object:headerFile=./hack/boilerplate.go.txt paths="./..."
+RUN --mount=type=cache,target=/.cache conversion-gen --output-file=zz_generated.conversion.go --go-header-file=./hack/boilerplate.go.txt ./api/v1alpha3
 
 FROM scratch AS generate
 COPY --from=generate-build /src/api /api

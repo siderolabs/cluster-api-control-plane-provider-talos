@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package v1alpha3
+package v1beta1
 
 import (
 	"context"
@@ -94,6 +94,93 @@ func TestTalosControlPlaneValidateCreateRejectsMissingInfrastructureRef(t *testi
 	_, err := tcp.ValidateCreate(context.Background(), tcp)
 	if err == nil {
 		t.Fatal("expected validation error when no infrastructure reference is set")
+	}
+}
+
+func TestTalosControlPlaneValidateCreateRejectsIncompleteInfrastructureRef(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		ref  clusterv1.ContractVersionedObjectReference
+	}{
+		{
+			name: "missing kind",
+			ref: clusterv1.ContractVersionedObjectReference{
+				Name:     "cp-template",
+				APIGroup: "infrastructure.cluster.x-k8s.io",
+			},
+		},
+		{
+			name: "missing apiGroup",
+			ref: clusterv1.ContractVersionedObjectReference{
+				Name: "cp-template",
+				Kind: "DockerMachineTemplate",
+			},
+		},
+		{
+			name: "missing name",
+			ref: clusterv1.ContractVersionedObjectReference{
+				Kind:     "DockerMachineTemplate",
+				APIGroup: "infrastructure.cluster.x-k8s.io",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tcp := &TalosControlPlane{
+				Spec: TalosControlPlaneSpec{
+					Version: "v1.31.0",
+					MachineTemplate: TalosControlPlaneMachineTemplate{
+						Spec: TalosControlPlaneMachineTemplateSpec{
+							InfrastructureRef: tc.ref,
+						},
+					},
+				},
+			}
+
+			_, err := tcp.ValidateCreate(context.Background(), tcp)
+			if err == nil {
+				t.Fatal("expected validation error when infrastructureRef is incomplete")
+			}
+		})
+	}
+}
+
+func TestTalosControlPlaneValidateCreateAcceptsRandomTemplateVariants(t *testing.T) {
+	t.Parallel()
+
+	for _, tpl := range []string{
+		"{{ .talosControlPlane.name }}-{{ .random }}",
+		"{{ .talosControlPlane.name }}-{{.random}}",
+		"{{ .talosControlPlane.name }}-{{- .random -}}",
+		"{{ .talosControlPlane.name }}-{{  .random  }}",
+	} {
+		t.Run(tpl, func(t *testing.T) {
+			t.Parallel()
+
+			tcp := &TalosControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "cp"},
+				Spec: TalosControlPlaneSpec{
+					Version: "v1.31.0",
+					MachineTemplate: TalosControlPlaneMachineTemplate{
+						Spec: TalosControlPlaneMachineTemplateSpec{
+							InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+								Name:     "cp-template",
+								Kind:     "DockerMachineTemplate",
+								APIGroup: "infrastructure.cluster.x-k8s.io",
+							},
+						},
+					},
+					MachineNamingStrategy: &MachineNamingStrategy{Template: tpl},
+				},
+			}
+
+			if _, err := tcp.ValidateCreate(context.Background(), tcp); err != nil {
+				t.Fatalf("expected template %q to be accepted, got error: %v", tpl, err)
+			}
+		})
 	}
 }
 
