@@ -49,7 +49,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
 const requeueDuration = 30 * time.Second
@@ -168,7 +168,8 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Make TCP to requeue in case status is not ready, so we can check for node status without waiting for a full resync (by default 10 minutes).
 		// Only requeue if we are not going in exponential backoff due to error, or if we are not already re-queueing, or if the object has a deletion timestamp.
 		if reterr == nil && !res.Requeue && res.RequeueAfter <= 0 && tcp.ObjectMeta.DeletionTimestamp.IsZero() {
-			if !tcp.Status.Ready || tcp.Status.UnavailableReplicas > 0 {
+			deprecated := tcp.V1Beta1DeprecatedStatus()
+			if !deprecated.Ready || deprecated.UnavailableReplicas > 0 {
 				res = ctrl.Result{RequeueAfter: 20 * time.Second}
 			}
 		}
@@ -631,13 +632,14 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	replicas := int32(nonDeletingMachines.Len())
 
 	// set basic data that does not require interacting with the workload cluster
-	tcp.Status.Ready = false
+	deprecated := tcp.V1Beta1DeprecatedStatus()
+	deprecated.Ready = false
+	deprecated.UpdatedReplicas = 0
+	deprecated.UnavailableReplicas = replicas
 	tcp.Status.Replicas = replicas
 	tcp.Status.ReadyReplicas = 0
-	tcp.Status.UpdatedReplicas = 0
 	tcp.Status.AvailableReplicas = pointer.Int32(0)
 	tcp.Status.UpToDateReplicas = pointer.Int32(0)
-	tcp.Status.UnavailableReplicas = replicas
 
 	// Return early if the deletion timestamp is set, we don't want to try to connect to the workload cluster.
 	if !tcp.DeletionTimestamp.IsZero() {
@@ -653,7 +655,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	if err != nil {
 		r.Log.Info("failed to compute updated replica status", "error", err)
 	} else {
-		tcp.Status.UpdatedReplicas = int32(len(controlPlane.Machines) - len(controlPlane.MachinesWithOutdatedRolloutSpec()))
+		deprecated.UpdatedReplicas = int32(len(controlPlane.Machines) - len(controlPlane.MachinesWithOutdatedRolloutSpec()))
 
 		// Set the v1beta2 UpToDate condition on each owned control plane Machine.
 		// Core Machine controller skips UpToDate for stand-alone Machines, so the
@@ -691,7 +693,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	// if we were able to fetch some resources via control plane endpoint,
 	// workload cluster control plane endpoint is available
-	tcp.Status.Initialized = true
+	deprecated.Initialized = true
 	tcp.Status.Initialization.ControlPlaneInitialized = pointer.Bool(true)
 	conditions.Set(tcp, metav1.Condition{
 		Type:   string(controlplanev1.AvailableCondition),
@@ -709,6 +711,9 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	var upToDateReplicas int32
 	for i := range ownedMachines.Items {
 		machine := &ownedMachines.Items[i]
+		if !machine.DeletionTimestamp.IsZero() {
+			continue
+		}
 		if conditions.IsTrue(machine, clusterv1.MachineAvailableCondition) {
 			availableReplicas++
 		}
@@ -725,10 +730,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		tcp.Status.ReadyReplicas = tcp.Status.Replicas
 	}
 
-	tcp.Status.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
+	deprecated.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
 
 	if tcp.Status.ReadyReplicas > 0 {
-		tcp.Status.Ready = true
+		deprecated.Ready = true
 	}
 
 	r.Log.Info("ready replicas", "count", tcp.Status.ReadyReplicas)
