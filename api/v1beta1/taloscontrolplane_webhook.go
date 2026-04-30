@@ -80,12 +80,33 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 
 // ValidateCreate implements admission.Validator so a webhook will be registered for the type.
 func (*TalosControlPlane) ValidateCreate(_ context.Context, obj *TalosControlPlane) (admission.Warnings, error) {
-	return obj.validate()
+	return nil, obj.toErr(obj.validate())
 }
 
 // ValidateUpdate implements admission.Validator so a webhook will be registered for the type.
-func (*TalosControlPlane) ValidateUpdate(_ context.Context, _, newObj *TalosControlPlane) (admission.Warnings, error) {
-	return newObj.validate()
+func (*TalosControlPlane) ValidateUpdate(_ context.Context, oldObj, newObj *TalosControlPlane) (admission.Warnings, error) {
+	allErrs := validateInfrastructureRefImmutable(
+		oldObj.Spec.MachineTemplate.Spec.InfrastructureRef,
+		newObj.Spec.MachineTemplate.Spec.InfrastructureRef,
+		field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"),
+	)
+	allErrs = append(allErrs, newObj.validate()...)
+
+	return nil, newObj.toErr(allErrs)
+}
+
+// validateInfrastructureRefImmutable enforces that the infrastructure provider (apiGroup + kind)
+// cannot change after creation; swapping providers mid-rollout would orphan in-flight machines.
+// Name remains mutable so users can repoint to a re-templated resource of the same kind.
+func validateInfrastructureRefImmutable(oldRef, newRef clusterv1.ContractVersionedObjectReference, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if oldRef.APIGroup != newRef.APIGroup {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("apiGroup"), "field is immutable"))
+	}
+	if oldRef.Kind != newRef.Kind {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("kind"), "field is immutable"))
+	}
+	return allErrs
 }
 
 // ValidateDelete implements admission.Validator so a webhook will be registered for the type.
@@ -93,17 +114,21 @@ func (*TalosControlPlane) ValidateDelete(_ context.Context, _ *TalosControlPlane
 	return nil, nil
 }
 
-func (r *TalosControlPlane) validate() (admission.Warnings, error) {
+func (r *TalosControlPlane) toErr(allErrs field.ErrorList) error {
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return newInvalidTalosControlPlaneError("TalosControlPlane", r.Name, allErrs)
+}
+
+func (r *TalosControlPlane) validate() field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateInfrastructureRef(r.Spec.MachineTemplate.Spec.InfrastructureRef, field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"))...)
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
-	if len(allErrs) == 0 {
-		return nil, nil
-	}
 
-	return nil, newInvalidTalosControlPlaneError("TalosControlPlane", r.Name, allErrs)
+	return allErrs
 }
 
 func validateInfrastructureRef(ref clusterv1.ContractVersionedObjectReference, fldPath *field.Path) field.ErrorList {

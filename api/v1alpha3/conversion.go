@@ -181,13 +181,12 @@ func Convert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneStatus
 		out.FailureMessage = in.Deprecated.V1Beta1.FailureMessage
 		out.UnavailableReplicas = in.Deprecated.V1Beta1.UnavailableReplicas
 		out.Ready = in.Deprecated.V1Beta1.Ready
-		out.Initialized = in.Deprecated.V1Beta1.Initialized
-	} else {
-		// Fallback when the deprecated holder is absent (older hub data): synthesize
-		// ready from replica counts and initialized from Initialization.ControlPlaneInitialized.
-		out.Ready = out.ReadyReplicas > 0
-		out.Initialized = ptr.Deref(in.Initialization.ControlPlaneInitialized, false)
 	}
+
+	// Initialized always derives from Initialization.ControlPlaneInitialized; this keeps the
+	// legacy v1alpha3 surface consistent with the v1beta2 source of truth even when the
+	// v1beta1 deprecated holder is absent (e.g. fresh hub objects that never round-tripped).
+	out.Initialized = ptr.Deref(in.Initialization.ControlPlaneInitialized, false)
 
 	// Move new conditions (v1beta2) to the v1beta2 field.
 	if in.Conditions == nil {

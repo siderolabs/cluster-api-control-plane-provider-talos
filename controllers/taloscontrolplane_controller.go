@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
@@ -398,6 +398,12 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Message: fmt.Sprintf("Failed to retrieve infrastructure template: %v", err),
 		})
 
+		// A missing template is a user-recoverable misconfiguration; back off instead of
+		// returning the error so the controller does not hot-loop at MaxConcurrentReconciles.
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
 		return ctrl.Result{}, err
 	}
 
@@ -581,7 +587,7 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 		Kind:               "TalosControlPlane",
 		Name:               tcp.Name,
 		UID:                tcp.UID,
-		BlockOwnerDeletion: pointer.Bool(true),
+		BlockOwnerDeletion: ptr.To(true),
 	}
 
 	bootstrapConfig := &cabptv1.TalosConfig{
@@ -638,8 +644,8 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	deprecated.UnavailableReplicas = replicas
 	tcp.Status.Replicas = replicas
 	tcp.Status.ReadyReplicas = 0
-	tcp.Status.AvailableReplicas = pointer.Int32(0)
-	tcp.Status.UpToDateReplicas = pointer.Int32(0)
+	tcp.Status.AvailableReplicas = ptr.To[int32](0)
+	tcp.Status.UpToDateReplicas = ptr.To[int32](0)
 
 	// Return early if the deletion timestamp is set, we don't want to try to connect to the workload cluster.
 	if !tcp.DeletionTimestamp.IsZero() {
@@ -666,6 +672,37 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		}
 	}
 
+	// Count replica states from owned Machine conditions. This is the source of truth and
+	// is independent of workload-cluster reachability, so AvailableReplicas / UpToDateReplicas /
+	// ReadyReplicas remain consistent with Replicas even when the workload API is unreachable.
+	var availableReplicas, upToDateReplicas, readyReplicas int32
+	for i := range ownedMachines.Items {
+		machine := &ownedMachines.Items[i]
+		if !machine.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if conditions.IsTrue(machine, clusterv1.MachineAvailableCondition) {
+			availableReplicas++
+		}
+		if conditions.IsTrue(machine, clusterv1.MachineUpToDateCondition) {
+			upToDateReplicas++
+		}
+		if conditions.IsTrue(machine, clusterv1.MachineReadyCondition) {
+			readyReplicas++
+		}
+	}
+
+	tcp.Status.AvailableReplicas = ptr.To(availableReplicas)
+	tcp.Status.UpToDateReplicas = ptr.To(upToDateReplicas)
+	tcp.Status.ReadyReplicas = readyReplicas
+
+	deprecated.UnavailableReplicas = replicas - readyReplicas
+	if readyReplicas > 0 {
+		deprecated.Ready = true
+	}
+
+	// Probe workload cluster reachability to set Initialized + AvailableCondition. Failure here
+	// only suppresses the AvailableCondition; replica counters stay accurate.
 	c, err := r.ClusterCache.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		r.Log.Info("failed to get kubeconfig for the cluster", "error", err)
@@ -679,13 +716,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		return err
 	}
 
-	var nodes corev1.NodeList
-
-	err = c.List(ctx, &nodes, &client.ListOptions{
-		LabelSelector: nodeSelector.Add(*req),
-	})
-
-	if err != nil {
+	if err := c.List(ctx, &corev1.NodeList{}, &client.ListOptions{LabelSelector: nodeSelector.Add(*req)}); err != nil {
 		r.Log.Info("failed to list controlplane nodes", "error", err)
 
 		return nil
@@ -694,47 +725,12 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	// if we were able to fetch some resources via control plane endpoint,
 	// workload cluster control plane endpoint is available
 	deprecated.Initialized = true
-	tcp.Status.Initialization.ControlPlaneInitialized = pointer.Bool(true)
+	tcp.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
 	conditions.Set(tcp, metav1.Condition{
 		Type:   string(controlplanev1.AvailableCondition),
 		Status: metav1.ConditionTrue,
 		Reason: controlplanev1.AvailableReason,
 	})
-
-	for _, node := range nodes.Items {
-		if util.IsNodeReady(&node) {
-			tcp.Status.ReadyReplicas++
-		}
-	}
-
-	var availableReplicas int32
-	var upToDateReplicas int32
-	for i := range ownedMachines.Items {
-		machine := &ownedMachines.Items[i]
-		if !machine.DeletionTimestamp.IsZero() {
-			continue
-		}
-		if conditions.IsTrue(machine, clusterv1.MachineAvailableCondition) {
-			availableReplicas++
-		}
-		if conditions.IsTrue(machine, clusterv1.MachineUpToDateCondition) {
-			upToDateReplicas++
-		}
-	}
-
-	tcp.Status.AvailableReplicas = pointer.Int32(availableReplicas)
-	tcp.Status.UpToDateReplicas = pointer.Int32(upToDateReplicas)
-
-	// fix the case then some Node objects are still visible which were deleted
-	if tcp.Status.ReadyReplicas > tcp.Status.Replicas {
-		tcp.Status.ReadyReplicas = tcp.Status.Replicas
-	}
-
-	deprecated.UnavailableReplicas = replicas - tcp.Status.ReadyReplicas
-
-	if tcp.Status.ReadyReplicas > 0 {
-		deprecated.Ready = true
-	}
 
 	r.Log.Info("ready replicas", "count", tcp.Status.ReadyReplicas)
 

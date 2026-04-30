@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -71,9 +71,9 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 						{ConditionType: "APIServerReady"},
 					},
 					Deletion: controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
-						NodeDrainTimeoutSeconds:        pointer.Int32(20),
-						NodeVolumeDetachTimeoutSeconds: pointer.Int32(30),
-						NodeDeletionTimeoutSeconds:     pointer.Int32(40),
+						NodeDrainTimeoutSeconds:        ptr.To[int32](20),
+						NodeVolumeDetachTimeoutSeconds: ptr.To[int32](30),
+						NodeDeletionTimeoutSeconds:     ptr.To[int32](40),
 					},
 				},
 			},
