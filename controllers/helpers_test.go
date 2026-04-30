@@ -42,7 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -181,7 +181,7 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 				Name:     name,
 			},
 			Deletion: clusterv1.MachineDeletionSpec{
-				NodeDeletionTimeoutSeconds: pointer.Int32(10),
+				NodeDeletionTimeoutSeconds: ptr.To[int32](10),
 			},
 			Version: "v1.16.6",
 		},
@@ -283,11 +283,11 @@ func untypedCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefi
 	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
 		"spec": {
 			Type:                   "object",
-			XPreserveUnknownFields: pointer.Bool(true),
+			XPreserveUnknownFields: ptr.To(true),
 		},
 		"status": {
 			Type:                   "object",
-			XPreserveUnknownFields: pointer.Bool(true),
+			XPreserveUnknownFields: ptr.To(true),
 		},
 	})
 }

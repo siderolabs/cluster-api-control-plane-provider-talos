@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -138,7 +138,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
-	cluster.Spec.Paused = pointer.Bool(true)
+	cluster.Spec.Paused = ptr.To(true)
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceDefault,
@@ -178,7 +178,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = pointer.Bool(false)
+	cluster.Spec.Paused = ptr.To(false)
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -271,7 +271,7 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateContract() {
 	fakeClient := newFakeClient()
 
-	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-template-contract", pointer.Int32(1))
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-template-contract", ptr.To[int32](1))
 
 	g := NewWithT(suite.T())
 
@@ -293,9 +293,9 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 				{ConditionType: "APIServerReady"},
 			},
 			Deletion: controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
-				NodeDrainTimeoutSeconds:        pointer.Int32(30),
-				NodeVolumeDetachTimeoutSeconds: pointer.Int32(40),
-				NodeDeletionTimeoutSeconds:     pointer.Int32(50),
+				NodeDrainTimeoutSeconds:        ptr.To[int32](30),
+				NodeVolumeDetachTimeoutSeconds: ptr.To[int32](40),
+				NodeDeletionTimeoutSeconds:     ptr.To[int32](50),
 			},
 		},
 	}
@@ -335,7 +335,7 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 func (suite *ControllersSuite) TestReconcileCreatesMachineFromCustomMachineNamingStrategy() {
 	fakeClient := newFakeClient()
 
-	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-naming-strategy", pointer.Int32(1))
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-machine-naming-strategy", ptr.To[int32](1))
 
 	g := NewWithT(suite.T())
 
@@ -370,7 +370,7 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromCustomMachineNamin
 func (suite *ControllersSuite) TestReconcileMigratesLegacyFinalizer() {
 	fakeClient := newFakeClient()
 
-	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-migrate-legacy-finalizer", pointer.Int32(1))
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-migrate-legacy-finalizer", ptr.To[int32](1))
 
 	g := NewWithT(suite.T())
 
@@ -463,6 +463,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
 		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
@@ -494,7 +495,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 func (suite *ControllersSuite) TestRollingUpdate() {
 	fakeClient := newFakeClient()
 
-	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-rolling-update", pointer.Int32(2))
+	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-rolling-update", ptr.To[int32](2))
 
 	g := NewWithT(suite.T())
 
@@ -523,6 +524,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
 		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
@@ -559,6 +561,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
@@ -583,6 +586,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
@@ -599,7 +603,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 func (suite *ControllersSuite) TestUppercaseHostnames() {
 	fakeClient := newFakeClient()
 
-	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-uppercase-hostnames", pointer.Int32(3))
+	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-uppercase-hostnames", ptr.To[int32](3))
 
 	g := NewWithT(suite.T())
 
@@ -628,6 +632,7 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
 		// Expect the referenced infrastructure template to have a Cluster Owner Reference.
 		g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(infrastructureMachineTemplate), infrastructureMachineTemplate)).To(Succeed())
@@ -727,6 +732,41 @@ func (suite *ControllersSuite) getMachines(fakeClient client.Client, cluster *cl
 	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
 
 	return machineList.Items
+}
+
+// markMachinesReady stamps MachineReadyCondition=True on all owned Machines, simulating the
+// core Machine controller which is not running in the fake-client suite. The TalosControlPlane
+// status loop now derives ReadyReplicas from this condition rather than from workload-cluster
+// Node listings.
+func (suite *ControllersSuite) markMachinesReady(g Gomega, fakeClient client.Client, namespace string) {
+	machineList := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(namespace))).To(Succeed())
+
+	for i := range machineList.Items {
+		m := &machineList.Items[i]
+		// Only mark machines that runUpdater has finished provisioning (addresses populated).
+		// Otherwise post-Eventually code paths that index Status.Addresses[0] panic on machines
+		// the updater goroutine has not yet caught up to.
+		if len(m.Status.Addresses) == 0 {
+			continue
+		}
+		if conditions.IsTrue(m, clusterv1.MachineReadyCondition) {
+			continue
+		}
+		patchHelper, err := patch.NewHelper(m, fakeClient)
+		g.Expect(err).To(Succeed())
+		conditions.Set(m, metav1.Condition{
+			Type:   clusterv1.MachineReadyCondition,
+			Status: metav1.ConditionTrue,
+			Reason: clusterv1.MachineReadyReason,
+		})
+		conditions.Set(m, metav1.Condition{
+			Type:   clusterv1.MachineAvailableCondition,
+			Status: metav1.ConditionTrue,
+			Reason: clusterv1.MachineAvailableReason,
+		})
+		g.Expect(patchHelper.Patch(suite.ctx, m)).To(Succeed())
+	}
 }
 
 func (suite *ControllersSuite) updateEtcdMembers(fakeClient client.Client, cluster *clusterv1.Cluster) {

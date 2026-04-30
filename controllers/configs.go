@@ -15,7 +15,7 @@ import (
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -31,7 +31,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
-	clusterName := tcp.GetLabels()["cluster.x-k8s.io/cluster-name"]
+	clusterName := tcp.GetLabels()[clusterv1.ClusterNameLabel]
 
 	for _, ref := range tcp.GetOwnerReferences() {
 		if ref.Kind != "Cluster" {
@@ -61,7 +61,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	addrList := []string{}
 
 	var (
-		talosconfigSecret v1.Secret
+		talosconfigSecret corev1.Secret
 	)
 
 	if err := r.Client.Get(ctx,
@@ -123,7 +123,7 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
 		}
 
-		var node v1.Node
+		var node corev1.Node
 
 		// grab all addresses as endpoints
 		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name}, &node)
