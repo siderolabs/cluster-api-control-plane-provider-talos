@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"reflect"
 	"sort"
 	"strings"
@@ -318,16 +317,48 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 }
 
 // getFailureDomain will return a slice of failure domains from the cluster status.
+// Only returns domains where ControlPlane is true (or not explicitly false).
 func (r *TalosControlPlaneReconciler) getFailureDomain(_ context.Context, cluster *clusterv1.Cluster) []string {
 	if cluster.Status.FailureDomains == nil {
 		return nil
 	}
 
 	retList := []string{}
-	for key := range cluster.Status.FailureDomains {
-		retList = append(retList, key)
+	for key, fd := range cluster.Status.FailureDomains {
+		if fd.ControlPlane {
+			retList = append(retList, key)
+		}
 	}
+	sort.Strings(retList)
 	return retList
+}
+
+// pickFailureDomain selects the failure domain with the fewest existing machines.
+// This ensures control plane nodes are spread evenly across availability zones.
+func pickFailureDomain(failureDomains []string, existingMachines []clusterv1.Machine) string {
+	if len(failureDomains) == 0 {
+		return ""
+	}
+
+	// Count existing machines per failure domain.
+	counts := make(map[string]int, len(failureDomains))
+	for _, fd := range failureDomains {
+		counts[fd] = 0
+	}
+	for i := range existingMachines {
+		if existingMachines[i].Spec.FailureDomain != nil {
+			counts[*existingMachines[i].Spec.FailureDomain]++
+		}
+	}
+
+	// Pick the domain with the fewest machines (first in sorted order for determinism).
+	best := failureDomains[0]
+	for _, fd := range failureDomains[1:] {
+		if counts[fd] < counts[best] {
+			best = fd
+		}
+	}
+	return best
 }
 
 func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, first bool) (ctrl.Result, error) {
@@ -396,7 +427,13 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	failureDomains := r.getFailureDomain(ctx, cluster)
 	if len(failureDomains) > 0 {
-		machine.Spec.FailureDomain = &failureDomains[rand.Intn(len(failureDomains))]
+		// Fetch existing CP machines to determine least-used failure domain.
+		existingMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster))
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to get existing machines for failure domain selection")
+		}
+		fd := pickFailureDomain(failureDomains, existingMachines.Items)
+		machine.Spec.FailureDomain = &fd
 	}
 
 	if err := r.Client.Create(ctx, machine); err != nil {
