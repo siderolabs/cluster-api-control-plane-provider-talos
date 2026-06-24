@@ -2,4 +2,4 @@ resources:
 - manager.yaml
 images:
 - name: controller
-  newName: smartdeploy/cluster-api-control-plane-talos-controller
+  newName: ghcr.io/siderolabs/cluster-api-control-plane-talos-controller

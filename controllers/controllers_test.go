@@ -137,8 +137,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
 
-	var paused = false
-	cluster.Spec.Paused = &paused
+	cluster.Spec.Paused = true
 
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -170,7 +169,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = &paused
+	cluster.Spec.Paused = false
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -184,7 +183,7 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	cluster.Status = clusterv1.ClusterStatus{
 		Conditions: []metav1.Condition{
 			{
-				Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
+				Type:   string(clusterv1.InfrastructureReadyCondition),
 				Status: metav1.ConditionTrue,
 			},
 		},

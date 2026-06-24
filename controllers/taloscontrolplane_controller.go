@@ -120,7 +120,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Wait for the cluster infrastructure to be ready before creating machines
-	if !conditions.IsTrue(cluster, string(clusterv1.InfrastructureReadyV1Beta1Condition)) {
+	if !conditions.IsTrue(cluster, string(clusterv1.InfrastructureReadyCondition)) {
 		logger.Info("cluster infra not ready")
 
 		return ctrl.Result{Requeue: true}, nil
@@ -208,38 +208,23 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		return ctrl.Result{}, err
 	}
 
-	var conditionOptions = make([]*metav1.Condition, len(ownedMachines.Items))
-	for i, v := range ownedMachines.Items {
-		var getter conditions.Getter = &v
-
-		condition := conditions.Get(getter, string(clusterv1.MachinesReadyCondition))
-		if condition == nil {
-			conditionOptions[i] = &metav1.Condition{
-				Type:   string(clusterv1.MachinesReadyCondition),
-				Status: metav1.ConditionUnknown,
-			}
-		} else {
-			conditionOptions[i] = condition
-		}
+	// --- START OF CORRECTION ---
+	// Convert the list of Machines into a list of conditions.Getter
+	getters := make([]conditions.Getter, len(ownedMachines.Items))
+	for i := range ownedMachines.Items {
+		getters[i] = &ownedMachines.Items[i]
 	}
 
-	var conditionOptionTypes = make([]string, len(conditionOptions))
-	for i, v := range conditionOptions {
-		conditionOptionTypes[i] = v.Type
-	}
-
-	var summaryOptions conditions.ForConditionTypes = conditionOptionTypes
-	if len(summaryOptions) > 0 {
-		err = conditions.SetSummaryCondition(
-			tcp,
-			tcp,
-			string(controlplanev1.MachinesAllReadyCondition),
-			summaryOptions,
-		)
-		if err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to set summary Machine Ready condition")
-		}
-	}
+	// Aggregate the ReadyCondition from each Machine
+	// into the MachinesAllReadyCondition of the TalosControlPlane
+	conditions.SetAggregate(
+		tcp,
+		controlplanev1.MachinesAllReadyCondition,
+		getters,
+		clusterv1.ReadyCondition,
+		conditions.AddSourceRef(),
+	)
+	// --- END OF CORRECTION ---
 
 	var (
 		errs        error
@@ -319,9 +304,10 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 	}
 
 	conditions.Set(tcp, metav1.Condition{
-		Type:   string(controlplanev1.ResizedCondition),
-		Status: metav1.ConditionFalse,
-		Reason: clusterv1.DeletingReason,
+		Type:    string(controlplanev1.ResizedCondition),
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.DeletingReason,
+		Message: "Deleting TalosControlPlane-owned control plane machines",
 	})
 
 	// Requeue the deletion so we can check to make sure machines got cleaned up
@@ -636,8 +622,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	// workload cluster control plane endpoint is available
 	tcp.Status.Initialized = true
 	conditions.Set(tcp, metav1.Condition{
-		Type:   string(controlplanev1.AvailableCondition),
-		Status: metav1.ConditionTrue,
+		Type:    string(controlplanev1.AvailableCondition),
+		Status:  metav1.ConditionTrue,
+		Reason:  "ControlPlaneEndpointAvailable",
+		Message: "Workload cluster control plane endpoint is available.",
 	})
 
 	for _, node := range nodes.Items {
@@ -756,8 +744,10 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 		errs = kerrors.NewAggregate([]error{errs, err})
 	} else {
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.EtcdClusterHealthyCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.EtcdClusterHealthyCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  controlplanev1.EtcdClusterHealthyReason,
+			Message: fmt.Sprintf("ETCD healthcheck successfull"),
 		})
 	}
 
@@ -786,8 +776,10 @@ func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, c
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 	} else {
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.ControlPlaneComponentsHealthyCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.ControlPlaneComponentsHealthyCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  "ControlPlaneComponentsHealthy",
+			Message: "Control plane components are healthy",
 		})
 	}
 
@@ -875,8 +867,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			tcp.Status.Bootstrapped = true
 
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.MachinesBootstrapped),
+				Status:  metav1.ConditionTrue,
+				Reason:  controlplanev1.MachinesBootstrappedReason,
+				Message: fmt.Sprintf("Control plane bootstrapped successfully"),
 			})
 		}
 
@@ -895,8 +889,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			}
 
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.MachinesBootstrapped),
+				Status:  metav1.ConditionTrue,
+				Reason:  controlplanev1.MachinesBootstrappedReason,
+				Message: fmt.Sprintf("Control plane bootstrapped successfully"),
 			})
 
 			tcp.Status.Bootstrapped = true
@@ -904,14 +900,18 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		if conditions.Has(tcp, string(controlplanev1.MachinesAllReadyCondition)) {
 			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.ResizedCondition),
-				Status: metav1.ConditionTrue,
+				Type:    string(controlplanev1.ResizedCondition),
+				Status:  metav1.ConditionTrue,
+				Reason:  controlplanev1.ResizedReason,
+				Message: fmt.Sprintf("ControlPlade successfully resized"),
 			})
 		}
 
 		conditions.Set(tcp, metav1.Condition{
-			Type:   string(controlplanev1.MachinesCreatedCondition),
-			Status: metav1.ConditionTrue,
+			Type:    string(controlplanev1.MachinesCreatedCondition),
+			Status:  metav1.ConditionTrue,
+			Reason:  controlplanev1.MachinesCreatedReason,
+			Message: fmt.Sprintf("Machine has beens succesfully created"),
 		})
 	}
 

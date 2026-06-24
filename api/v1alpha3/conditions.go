@@ -22,6 +22,9 @@ const (
 	// WaitingForMachinesReason (Severity=Info) documents a TalosControlPlane bootstrap is waiting
 	// for all control plane nodes to be created.
 	WaitingForMachinesReason = "WaitingForMachines"
+
+	// MachinesBootstrapped documents control planes bootstrap status.
+	MachinesBootstrappedReason = "ControlPlaneBootstrapped"
 )
 
 const (
@@ -57,6 +60,9 @@ const (
 
 	// ScalingDownReason (Severity=Info) documents a TalosControlPlane that is decreasing the number of replicas.
 	ScalingDownReason = "ScalingDown"
+
+	// ResizedReason documents a TalosControlPlane that has been resized.
+	ResizedReason = "Resized"
 )
 
 const (
@@ -68,6 +74,9 @@ const (
 	// ControlPlaneComponentsUnhealthyReason (Severity=Error) documents a control plane component not healthy.
 	ControlPlaneComponentsUnhealthyReason = "ControlPlaneComponentsUnhealthy"
 
+	// ControlPlaneComponentsUnhealthyReason documents a control plane component healthy.
+	ControlPlaneComponentsHealthyReason = "ControlPlaneComponentsHealthy"
+
 	// ControlPlaneComponentsInspectionFailedReason documents a failure in inspecting the control plane component status.
 	ControlPlaneComponentsInspectionFailedReason = "ControlPlaneComponentsInspectionFailed"
 )
@@ -78,6 +87,9 @@ const (
 
 	// EtcdClusterUnhealthyReason (Severity=Error) is set when the etcd cluster is unhealthy.
 	EtcdClusterUnhealthyReason = "EtcdClusterUnhealthy"
+
+	// EtcdClusterHealthyReason is set when the etcd cluster is healthy.
+	EtcdClusterHealthyReason = "EtcdClusterHealthy"
 )
 
 const (
@@ -85,6 +97,8 @@ const (
 	// When this condition is false, it indicates that there was an error when cloning the infrastructure/bootstrap template or
 	// when generating the machine object.
 	MachinesCreatedCondition clusterv1.ConditionType = "MachinesCreated"
+
+	MachinesCreatedReason = "MachinesCreated"
 
 	// InfrastructureTemplateCloningFailedReason (Severity=Error) documents a TalosControlPlane failing to
 	// clone the infrastructure template.

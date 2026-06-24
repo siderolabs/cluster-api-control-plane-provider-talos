@@ -80,10 +80,14 @@ func newReconciler(controllerClient client.Client, opts ...reconcilerOption) *co
 		opt(&options)
 	}
 
-	clusterCache := clustercache.NewFakeClusterCache(controllerClient, client.ObjectKey{
-		Namespace: options.cluster.Namespace,
-		Name:      options.cluster.Name,
-	})
+	clusterKey := client.ObjectKey{}
+	if options.cluster != nil {
+		clusterKey = client.ObjectKey{
+			Namespace: options.cluster.Namespace,
+			Name:      options.cluster.Name,
+		}
+	}
+	clusterCache := clustercache.NewFakeClusterCache(controllerClient, clusterKey)
 
 	return &controllers.TalosControlPlaneReconciler{
 		Client:       controllerClient,

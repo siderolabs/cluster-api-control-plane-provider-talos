@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes"
 	clusterv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	logf "sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -59,36 +58,6 @@ type IntegrationSuite struct {
 	finalK8sVersion string
 }
 
-// dockerProvider is a mock to bypass the missing "docker" support in capi-utils NewProvider
-type dockerProvider struct {
-	infrastructure.Provider
-	version   string
-	installed bool
-}
-
-func (d dockerProvider) Name() string                       { return "docker" }
-func (d dockerProvider) Version() string                    { return d.version }
-func (d dockerProvider) Setup(ctx context.Context) error    { return nil }
-func (d dockerProvider) Teardown(ctx context.Context) error { return nil }
-
-func (d dockerProvider) IsInstalled(ctx context.Context, c *kubernetes.Clientset) (bool, error) {
-	return d.installed, nil
-}
-
-// Ajout de la méthode ProviderVars pour éviter le nil pointer
-func (d dockerProvider) ProviderVars() (infrastructure.Variables, error) {
-	return infrastructure.Variables{}, nil
-}
-
-func (d dockerProvider) Namespace() string {
-	return "capd-system"
-}
-
-func (d dockerProvider) WaitReady(ctx context.Context, c *kubernetes.Clientset) error {
-	// Les pods sont déjà gérés, on valide directement sans erreur
-	return nil
-}
-
 func (suite *IntegrationSuite) SetupSuite() {
 	suite.ctx, suite.cancel = context.WithTimeout(context.Background(), 1*time.Hour)
 	verbosity := 6
@@ -105,25 +74,11 @@ func (suite *IntegrationSuite) SetupSuite() {
 		return def
 	}
 
-	// Changé de aws à docker
-	providerType := env("PROVIDER", "docker:v1.9.0")
+	providerType := env("PROVIDER", "aws:v1.1.0")
 	suite.finalK8sVersion = os.Getenv("UPGRADE_K8S_VERSION")
 
-	var provider infrastructure.Provider
-	if strings.HasPrefix(providerType, "docker") {
-		// Bypass NewProvider and use our mock for Docker
-		parts := strings.Split(providerType, ":")
-		version := "v1.9.0" // Fallback par défaut
-		if len(parts) > 1 {
-			version = parts[1]
-		}
-		provider = dockerProvider{version: version}
-	} else {
-		// Fallback to the original capi-utils factory for AWS, GCP, etc.
-		var err error
-		provider, err = infrastructure.NewProvider(providerType)
-		suite.Require().NoError(err)
-	}
+	provider, err := infrastructure.NewProvider(providerType)
+	suite.Require().NoError(err)
 
 	var (
 		clusterctlConfigPath string
@@ -206,8 +161,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		// Changement de l'URL du template aws vers docker
-		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/docker/standard/standard.yaml"),
+		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)

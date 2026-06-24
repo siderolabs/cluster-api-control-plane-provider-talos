@@ -161,7 +161,7 @@ func main() {
 	})
 
 	if err != nil {
-		setupLog.Error(err, "unable to create cluster cache tracker")
+		setupLog.Error(err, "unable to create cluster cache")
 		os.Exit(1)
 	}
 	if err = (&controllers.TalosControlPlaneReconciler{
