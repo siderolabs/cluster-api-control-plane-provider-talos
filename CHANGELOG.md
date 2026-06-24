@@ -1,3 +1,45 @@
+## [CAPI Control Plane Provider Talos 0.5.13](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.13) (2026-04-27)
+
+Welcome to the v0.5.13 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Talos Linux
+
+CACPPT updated for Talos 1.13.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Kyle Tse
+* Paul Thuriot
+
+### Changes
+<details><summary>4 commits</summary>
+<p>
+
+* [`5eeb00b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/5eeb00b432aa65eb80448afa5af456beb306fc4c) feat: update Talos to 1.13.0
+* [`dd6aab3`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/dd6aab3de41c1a83cf03da19ea2e3c24d2c6cd98) feat: update Talos to v1.13.0-rc.0
+* [`6c6303b`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/6c6303b3347ec1881495912eae50ad6e505ff685) fix: prevent etcd deadlock when reconciliation crashes during scale-down
+* [`6254d39`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/6254d39cf77ce5c30f2ae1a18e53579117f23419) fix: add WithDefaultGRPCDialOptions to Talos client creation
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/siderolabs/cluster-api-bootstrap-provider-talos**  v0.6.11 -> v0.6.12
+* **github.com/siderolabs/crypto**                                v0.6.4 -> v0.6.5
+* **github.com/siderolabs/talos/pkg/machinery**                   v1.12.0 -> v1.13.0
+* **golang.org/x/sync**                                           v0.18.0 -> v0.20.0
+* **google.golang.org/grpc**                                      v1.76.0 -> v1.80.0
+* **google.golang.org/protobuf**                                  v1.36.10 -> f2248ac996af
+
+Previous release can be found at [v0.5.12](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.12)
+
 ## [CAPI Control Plane Provider Talos 0.5.12](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.12) (2025-12-24)
 
 Welcome to the v0.5.12 release of CAPI Control Plane Provider Talos!

@@ -18,9 +18,12 @@ import (
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const etcdLeavingAnnotation = "controlplane.cluster.x-k8s.io/etcd-leaving"
 
 func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane) (ctrl.Result, error) {
 	numMachines := len(controlPlane.Machines)
@@ -130,6 +133,25 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 	defer c.Close() //nolint:errcheck
 
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
+
+	// Mark machine as leaving etcd so health check skips it even if reconciliation
+	// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
+	// stopped etcd without DeletionTimestamp fails health checks forever).
+	patchHelper, err := patch.NewHelper(deleteMachine, r.Client)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	}
+
+	annotations := deleteMachine.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[etcdLeavingAnnotation] = "true"
+	deleteMachine.SetAnnotations(annotations)
+
+	if err := patchHelper.Patch(ctx, deleteMachine); err != nil {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	}
 
 	leaveErr := r.gracefulEtcdLeave(ctx, c, *deleteMachine)
 

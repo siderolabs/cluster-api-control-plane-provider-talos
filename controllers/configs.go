@@ -96,7 +96,11 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	// with talosconfigFromWorkloadCluster which doesn't rely on Machine's Addresses
 	//
 	// once we're done with Sidero and `init` nodes, we can switch to use `WithNodes` and proper Machine IPs
-	return talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))
+	return talosclient.New(ctx,
+		talosclient.WithDefaultGRPCDialOptions(),
+		talosclient.WithEndpoints(addrList...),
+		talosclient.WithConfig(t),
+	)
 }
 
 // talosconfigFromWorkloadCluster gets talosconfig and populates endoints using workload cluster nodes.
@@ -169,5 +173,9 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 		}
 	}
 
-	return talosclient.New(ctx, talosclient.WithEndpoints(addrList...), talosclient.WithConfig(t))
+	return talosclient.New(ctx,
+		talosclient.WithDefaultGRPCDialOptions(),
+		talosclient.WithEndpoints(addrList...),
+		talosclient.WithConfig(t),
+	)
 }
