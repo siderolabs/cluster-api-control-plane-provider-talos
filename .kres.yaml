@@ -22,10 +22,24 @@ spec:
         // License, v. 2.0. If a copy of the MPL was not distributed with this
         // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
+kind: common.SOPS
+spec:
+  enabled: true
+  config: |-
+    creation_rules:
+      - age: age1xrpa9ujxxcj2u2gzfrzv8mxak4rts94a6y60ypurv6rs5cpr4e4sg95f0k
+        # order: Andrey, Noel, Artem, Utku, Spencer
+        pgp: >-
+          4F8E31286D7997C9625C6F7B322C6F63F594CE7C,
+          CC51116A94490FA6FB3C18EB2401FCAE863A06CA,
+          77D901DDCB59376D9E4131279BAC0E08F5067BB8,
+          11177A43C6E3752E682AC690DBD13117B0A14E93
+---
 kind: common.GHWorkflow
 spec:
   jobs:
     - name: default
+      sops: true
       buildxOptions:
         enabled: true
       runnerGroup: generic
@@ -43,8 +57,6 @@ spec:
           environment:
             REGISTRY: registry.dev.siderolabs.io
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     - name: push
       buildxOptions:
         enabled: true
@@ -62,6 +74,7 @@ spec:
             PLATFORM: linux/amd64,linux/arm64
             PUSH: true
     - name: tag
+      sops: true
       buildxOptions:
         enabled: true
       runnerGroup: generic
