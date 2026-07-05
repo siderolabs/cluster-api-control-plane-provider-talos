@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"reflect"
 	"sort"
 	"strings"
@@ -318,19 +317,69 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 }
 
 // getFailureDomain will return a slice of failure domains from the cluster status.
+//
+// Only returns domains where ControlPlane is true, and falls back to all domains if none are explicitly marked for control plane.
+// The result is sorted for deterministic selection.
 func (r *TalosControlPlaneReconciler) getFailureDomain(_ context.Context, cluster *clusterv1.Cluster) []string {
 	if cluster.Status.FailureDomains == nil {
 		return nil
 	}
 
-	retList := []string{}
-	for key := range cluster.Status.FailureDomains {
-		retList = append(retList, key)
+	var retList []string
+
+	for key, fd := range cluster.Status.FailureDomains {
+		if fd.ControlPlane {
+			retList = append(retList, key)
+		}
 	}
+
+	if len(retList) == 0 {
+		// pick all failure domains if none are explicitly marked for control plane
+		for key := range cluster.Status.FailureDomains {
+			retList = append(retList, key)
+		}
+	}
+
+	sort.Strings(retList)
+
 	return retList
 }
 
-func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, first bool) (ctrl.Result, error) {
+// pickFailureDomain selects the failure domain with the fewest existing machines,
+// matching the spreading behavior of the Cluster API KubeadmControlPlane.
+// This ensures control plane nodes are spread evenly across availability zones.
+func pickFailureDomain(failureDomains []string, existingMachines []clusterv1.Machine) string {
+	if len(failureDomains) == 0 {
+		return ""
+	}
+
+	// Count existing machines per failure domain, ignoring machines being deleted.
+	counts := make(map[string]int, len(failureDomains))
+	for _, fd := range failureDomains {
+		counts[fd] = 0
+	}
+
+	for i := range existingMachines {
+		if existingMachines[i].Spec.FailureDomain != nil && existingMachines[i].DeletionTimestamp.IsZero() {
+			counts[*existingMachines[i].Spec.FailureDomain]++
+		}
+	}
+
+	// Pick the domain with the fewest machines (first in sorted order for determinism).
+	best := failureDomains[0]
+
+	for _, fd := range failureDomains[1:] {
+		if counts[fd] < counts[best] {
+			best = fd
+		}
+	}
+
+	return best
+}
+
+func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane,
+	existingMachines []clusterv1.Machine, first bool,
+) (ctrl.Result, error) {
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
 	// OwnerReference here without the Controller field set
 	infraCloneOwner := &metav1.OwnerReference{
@@ -396,7 +445,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	failureDomains := r.getFailureDomain(ctx, cluster)
 	if len(failureDomains) > 0 {
-		machine.Spec.FailureDomain = &failureDomains[rand.Intn(len(failureDomains))]
+		fd := pickFailureDomain(failureDomains, existingMachines)
+		machine.Spec.FailureDomain = &fd
 	}
 
 	if err := r.Client.Create(ctx, machine); err != nil {
@@ -781,7 +831,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		// Create new Machine w/ init
 		logger.Info("initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		return r.bootControlPlane(ctx, cluster, tcp, true)
+		return r.bootControlPlane(ctx, cluster, tcp, machines.Items, true)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
