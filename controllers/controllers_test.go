@@ -189,11 +189,9 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g := NewWithT(suite.T())
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
-	conditions.Set(cluster, metav1.Condition{
-		Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
-		Status: metav1.ConditionTrue,
-		Reason: clusterv1.ReadyReason,
-	})
+	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
+		InfrastructureProvisioned: ptr.To(true),
+	}
 
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -266,6 +264,126 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	machineList := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(metav1.NamespaceDefault))).To(Succeed())
 	g.Expect(machineList.Items).To(BeEmpty())
+}
+
+func (suite *ControllersSuite) TestReconcileInfrastructureReadyConditionFalse() {
+	g := NewWithT(suite.T())
+
+	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
+	cluster.Spec = clusterv1.ClusterSpec{
+		ControlPlaneEndpoint: clusterv1.APIEndpoint{
+			Host: "test.local",
+			Port: 9999,
+		},
+	}
+	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
+		InfrastructureProvisioned: ptr.To(true),
+	}
+	// The InfrastructureReady condition may go back to false while control plane
+	// machines are still bootstrapping; it must not block reconciliation.
+	conditions.Set(cluster, metav1.Condition{
+		Type:   clusterv1.ClusterInfrastructureReadyCondition,
+		Status: metav1.ConditionFalse,
+		Reason: "LoadBalancerNotReady",
+	})
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: cluster.Namespace,
+			Name:      "foo",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					Kind:       "Cluster",
+					APIVersion: clusterv1.GroupVersion.String(),
+					Name:       cluster.Name,
+				},
+			},
+		},
+		Spec: controlplanev1.TalosControlPlaneSpec{
+			Version: "v1.16.6",
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test.example.com",
+						Name:     "foo",
+					},
+				},
+			},
+		},
+	}
+
+	tcp.Default(suite.T().Context(), tcp)
+	_, err := tcp.ValidateCreate(suite.T().Context(), tcp)
+	g.Expect(err).To(Succeed())
+
+	fakeClient := newFakeClient(tcp.DeepCopy(), cluster.DeepCopy())
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	// the first pass must proceed past the infrastructure gate and add the finalizer
+	g.Expect(result).To(Equal(ctrl.Result{}))
+	g.Expect(r.Client.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+}
+
+func (suite *ControllersSuite) TestReconcileInfrastructureNotProvisioned() {
+	g := NewWithT(suite.T())
+
+	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
+	cluster.Spec = clusterv1.ClusterSpec{
+		ControlPlaneEndpoint: clusterv1.APIEndpoint{
+			Host: "test.local",
+			Port: 9999,
+		},
+	}
+	// A true InfrastructureReady condition alone must not unblock reconciliation
+	// while status.initialization.infrastructureProvisioned is unset.
+	conditions.Set(cluster, metav1.Condition{
+		Type:   clusterv1.ClusterInfrastructureReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.ReadyReason,
+	})
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: cluster.Namespace,
+			Name:      "foo",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					Kind:       "Cluster",
+					APIVersion: clusterv1.GroupVersion.String(),
+					Name:       cluster.Name,
+				},
+			},
+		},
+		Spec: controlplanev1.TalosControlPlaneSpec{
+			Version: "v1.16.6",
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test.example.com",
+						Name:     "foo",
+					},
+				},
+			},
+		},
+	}
+
+	tcp.Default(suite.T().Context(), tcp)
+	_, err := tcp.ValidateCreate(suite.T().Context(), tcp)
+	g.Expect(err).To(Succeed())
+
+	fakeClient := newFakeClient(tcp.DeepCopy(), cluster.DeepCopy())
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
+	g.Expect(r.Client.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(BeEmpty())
 }
 
 func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateContract() {
@@ -910,11 +1028,9 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	g.Expect(fakeClient.Create(suite.ctx, cluster)).To(Succeed())
 	patchHelper, err := patch.NewHelper(cluster, fakeClient)
 	g.Expect(err).To(BeNil())
-	conditions.Set(cluster, metav1.Condition{
-		Type:   string(clusterv1.InfrastructureReadyV1Beta1Condition),
-		Status: metav1.ConditionTrue,
-		Reason: clusterv1.ReadyReason,
-	})
+	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
+		InfrastructureProvisioned: ptr.To(true),
+	}
 	g.Expect(patchHelper.Patch(suite.ctx, cluster)).To(Succeed())
 
 	genericInfrastructureMachineTemplateCRD := untypedCRD(schema.GroupVersionKind{
