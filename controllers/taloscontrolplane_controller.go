@@ -120,9 +120,12 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Wait for the cluster infrastructure to be ready before creating machines.
-	if !conditions.IsTrue(cluster, string(clusterv1.InfrastructureReadyV1Beta1Condition)) {
-		logger.Info("cluster infra not ready")
+	// Wait for the cluster infrastructure to be provisioned before creating machines.
+	// The set-once initialization field is used instead of the InfrastructureReady
+	// condition, as the condition can go back to false during the cluster lifecycle
+	// and would deadlock the control plane bootstrap.
+	if !ptr.Deref(cluster.Status.Initialization.InfrastructureProvisioned, false) {
+		logger.Info("cluster infra not provisioned")
 
 		return ctrl.Result{Requeue: true}, nil
 	}
