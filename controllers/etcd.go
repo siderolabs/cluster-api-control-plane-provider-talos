@@ -14,20 +14,87 @@ import (
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// machinesForEtcdHealthcheck returns the owned machines that should take part in the etcd health
+// check: those that are not being deleted, not leaving etcd (see etcdLeavingAnnotation), and not
+// flagged for remediation by a MachineHealthCheck (MachineOwnerRemediated=False). A machine in any
+// of these states is on its way out, so its stopped or already-removed etcd must not keep
+// EtcdClusterHealthyCondition false and deadlock scale-down, rollout, and remediation.
+func machinesForEtcdHealthcheck(ownedMachines []clusterv1.Machine) []clusterv1.Machine {
+	machines := make([]clusterv1.Machine, 0, len(ownedMachines))
+
+	for _, machine := range ownedMachines {
+		if machine.ObjectMeta.DeletionTimestamp.IsZero() &&
+			machine.Annotations[etcdLeavingAnnotation] != "true" &&
+			!conditions.IsFalse(&machine, clusterv1.MachineOwnerRemediatedCondition) {
+			machines = append(machines, machine)
+		}
+	}
+
+	return machines
+}
+
+// nodeNameForMachine returns the host name used to match a machine against an etcd member: the
+// noderef name, overridden by a MachineHostName address when present, with any domain suffix
+// trimmed (noderef names can be FQDNs, e.g. on AWS). The caller must ensure NodeRef is set.
+func nodeNameForMachine(machine clusterv1.Machine) string {
+	hostname := machine.Status.NodeRef.Name
+
+	for _, address := range machine.Status.Addresses {
+		if address.Type == clusterv1.MachineHostName {
+			hostname = address.Address
+
+			break
+		}
+	}
+
+	// break apart the noderef name in case it's an fqdn (like in AWS)
+	hostname, _, _ = strings.Cut(hostname, ".")
+
+	return hostname
+}
 
 func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, ownedMachines []clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
-	machines := []clusterv1.Machine{}
+	machines := machinesForEtcdHealthcheck(ownedMachines)
+
+	// If every owned machine is on its way out (deleting, leaving, or being remediated) there is
+	// nothing left to verify. Reporting etcd healthy here would open the scale-down/rollout gate
+	// without a single member checked, so treat it as unhealthy until a machine is back in the set.
+	if len(ownedMachines) > 0 && len(machines) == 0 {
+		return fmt.Errorf("all %d owned control plane machines are excluded from the etcd health check", len(ownedMachines))
+	}
+
+	// Node names of the machines that must be etcd members (expectedNodeNames) and of every owned
+	// machine (ownedNodeNames). A member of an excluded machine still matches an owned machine and
+	// is tolerated; a member matching no owned machine is an orphan. Skip the machine-to-member
+	// matching while any machine still lacks a noderef: it is new and gets matched on a later pass,
+	// the same assumption auditEtcd makes.
+	expectedNodeNames := make(map[string]struct{}, len(machines))
+	ownedNodeNames := make(map[string]struct{}, len(ownedMachines))
+	allNodeRefsSet := true
 
 	for _, machine := range ownedMachines {
-		if machine.ObjectMeta.DeletionTimestamp.IsZero() &&
-			machine.Annotations[etcdLeavingAnnotation] != "true" {
-			machines = append(machines, machine)
+		if machine.Status.NodeRef == nil {
+			allNodeRefsSet = false
+
+			continue
 		}
+
+		ownedNodeNames[strings.ToLower(nodeNameForMachine(machine))] = struct{}{}
+	}
+
+	for _, machine := range machines {
+		if machine.Status.NodeRef == nil {
+			continue
+		}
+
+		expectedNodeNames[strings.ToLower(nodeNameForMachine(machine))] = struct{}{}
 	}
 
 	params := make([]any, 0, len(machines)*2)
@@ -81,23 +148,37 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 			}
 
 			for _, message := range resp.Messages {
-				actualMembers := len(message.Members)
-				expectedMembers := len(machines)
-
 				node := message.Metadata.GetHostname()
 
-				// check that the count of members is the same on all nodes
-				if actualMembers != expectedMembers {
-					return fmt.Errorf("%s: expected to have %d members, got %d", node, expectedMembers, actualMembers)
-				}
+				present := make(map[string]struct{}, len(message.Members))
 
-				// check that member list is the same on all nodes
 				for _, member := range message.Members {
+					present[strings.ToLower(member.Hostname)] = struct{}{}
+
+					// check that the member list is the same on all nodes
 					if _, found := members[member.Hostname]; i > 0 && !found {
 						return fmt.Errorf("%s: found extra etcd member %s", node, member.Hostname)
 					}
 
 					members[member.Hostname] = struct{}{}
+
+					// A member matching no owned machine is an orphan (auditEtcd force-removes
+					// these). A member of an excluded machine still matches an owned machine, so
+					// it is tolerated. Skipped while a machine lacks a noderef and can't be matched.
+					if allNodeRefsSet {
+						if _, ok := ownedNodeNames[strings.ToLower(member.Hostname)]; !ok {
+							return fmt.Errorf("%s: etcd member %q does not match any control plane machine", node, member.Hostname)
+						}
+					}
+				}
+
+				// Every machine that must be a member has to have one: a missing member means the
+				// etcd cluster is short a node. An excluded machine's member may already be gone,
+				// which is expected, so those are not required here.
+				for name := range expectedNodeNames {
+					if _, ok := present[name]; !ok {
+						return fmt.Errorf("%s: etcd is missing a member for control plane machine %q", node, name)
+					}
 				}
 			}
 
@@ -225,20 +306,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 
 		present := false
 		for _, machine := range machines.Items {
-			hostname := machine.Status.NodeRef.Name
-
-			for _, address := range machine.Status.Addresses {
-				if address.Type == clusterv1.MachineHostName {
-					hostname = address.Address
-
-					break
-				}
-			}
-
-			// break apart the noderef name in case it's an fqdn (like in AWS)
-			hostname, _, _ = strings.Cut(hostname, ".")
-
-			if strings.EqualFold(hostname, member.Hostname) {
+			if strings.EqualFold(nodeNameForMachine(machine), member.Hostname) {
 				present = true
 
 				break
