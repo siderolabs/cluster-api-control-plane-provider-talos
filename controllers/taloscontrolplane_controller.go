@@ -210,20 +210,21 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 
 	// --- START OF CORRECTION ---
 	// Convert the list of Machines into a list of conditions.Getter
-	getters := make([]conditions.Getter, len(ownedMachines.Items))
+	getters := make([]*clusterv1.Machine, len(ownedMachines.Items))
 	for i := range ownedMachines.Items {
 		getters[i] = &ownedMachines.Items[i]
 	}
 
 	// Aggregate the ReadyCondition from each Machine
 	// into the MachinesAllReadyCondition of the TalosControlPlane
-	conditions.SetAggregate(
-		tcp,
-		controlplanev1.MachinesAllReadyCondition,
+	if err := conditions.SetAggregateCondition(
 		getters,
-		clusterv1.ReadyCondition,
-		conditions.AddSourceRef(),
-	)
+		tcp,
+		string(clusterv1.ReadyCondition),
+		conditions.TargetConditionType(string(controlplanev1.MachinesAllReadyCondition)),
+	); err != nil {
+		logger.V(4).Info("Failed to set aggregate condition", "error", err)
+	}
 	// --- END OF CORRECTION ---
 
 	var (
