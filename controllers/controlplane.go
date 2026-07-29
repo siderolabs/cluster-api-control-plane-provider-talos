@@ -19,6 +19,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util/collections"
+	"sigs.k8s.io/cluster-api/util/failuredomains"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -96,6 +97,48 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 			),
 		),
 	)
+}
+
+// UpToDateMachines returns the machines which do not need to be rolled out.
+func (c *ControlPlane) UpToDateMachines() collections.Machines {
+	return c.Machines.Difference(c.MachinesNeedingRollout())
+}
+
+// FailureDomains returns the failure domains the control plane machines can be placed in.
+//
+// Only the domains explicitly marked for the control plane are returned. If the infrastructure
+// provider marks none of them, all the cluster failure domains are returned instead: unlike the
+// KubeadmControlPlane, which filters strictly, falling back keeps the spreading working with
+// providers which leave the flag unset.
+func (c *ControlPlane) FailureDomains() clusterv1.FailureDomains {
+	if len(c.Cluster.Status.FailureDomains) == 0 {
+		return nil
+	}
+
+	if controlPlaneDomains := c.Cluster.Status.FailureDomains.FilterControlPlane(); len(controlPlaneDomains) > 0 {
+		return controlPlaneDomains
+	}
+
+	return c.Cluster.Status.FailureDomains
+}
+
+// NextFailureDomainForScaleUp returns the failure domain to place a new control plane machine in,
+// which is the one with the fewest up-to-date, not deleted machines.
+//
+// Spreading the up-to-date machines takes priority, so that the machines end up evenly spread once
+// a rollout completes. Ties are broken by the fewest number of machines overall, which keeps the
+// machines spread while the rollout is still in progress.
+//
+// Returns nil if the cluster has no failure domain to place the machine in.
+func (c *ControlPlane) NextFailureDomainForScaleUp(ctx context.Context) *string {
+	failureDomains := c.FailureDomains()
+	if len(failureDomains) == 0 {
+		return nil
+	}
+
+	upToDateMachines := c.UpToDateMachines().Filter(collections.Not(collections.HasDeletionTimestamp))
+
+	return failuredomains.PickFewest(ctx, failureDomains, c.Machines, upToDateMachines)
 }
 
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.
