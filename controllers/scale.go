@@ -158,7 +158,8 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	node := deleteMachine.Status.NodeRef
 
-	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
+	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name,
+		"failureDomain", deleteMachine.Spec.FailureDomain)
 
 	if err := r.removeFromEtcdAndDelete(ctx, tcp, deleteMachine, controlPlane.Machines.UnsortedList()); err != nil {
 		return ctrl.Result{}, err
