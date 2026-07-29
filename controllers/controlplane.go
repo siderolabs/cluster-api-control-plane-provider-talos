@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"reflect"
+	"slices"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 
@@ -154,6 +155,57 @@ func (c *ControlPlane) NextFailureDomainForScaleUp(ctx context.Context) string {
 	upToDateMachines := c.UpToDateMachines().Filter(collections.Not(collections.HasDeletionTimestamp))
 
 	return failuredomains.PickFewest(ctx, failureDomains, c.Machines, upToDateMachines)
+}
+
+// FailureDomainWithMostMachines returns the failure domain to remove a control plane machine from,
+// which is the one with the most machines and at least one eligible machine in it.
+//
+// Machines which are not in one of the current failure domains take precedence: getting rid of a
+// machine placed in a domain which is gone from the cluster status is more valuable than balancing
+// the remaining ones.
+func (c *ControlPlane) FailureDomainWithMostMachines(ctx context.Context, eligibleMachines collections.Machines) string {
+	failureDomains := c.FailureDomains()
+
+	notInFailureDomains := eligibleMachines.Filter(
+		collections.Not(collections.InFailureDomains(failureDomainNames(failureDomains)...)),
+	)
+
+	if len(notInFailureDomains) > 0 {
+		// return the failure domain of the oldest machine, which may well be empty for a machine
+		// which never had one assigned.
+		return notInFailureDomains.Oldest().Spec.FailureDomain
+	}
+
+	return failuredomains.PickMost(ctx, failureDomains, c.Machines, eligibleMachines)
+}
+
+// failureDomainNames returns the names of the given failure domains, sorted.
+func failureDomainNames(failureDomains []clusterv1.FailureDomain) []string {
+	names := make([]string, 0, len(failureDomains))
+
+	for _, failureDomain := range failureDomains {
+		names = append(names, failureDomain.Name)
+	}
+
+	slices.Sort(names)
+
+	return names
+}
+
+// MachineInFailureDomainWithMostMachines returns the oldest eligible machine in the failure domain
+// holding the most control plane machines.
+//
+// Removing machines from the most crowded domain is what keeps the control plane spread across
+// failure domains during a rollout, where every scale up is followed by a scale down.
+func (c *ControlPlane) MachineInFailureDomainWithMostMachines(ctx context.Context, eligibleMachines collections.Machines) (*clusterv1.Machine, error) {
+	failureDomain := c.FailureDomainWithMostMachines(ctx, eligibleMachines)
+
+	machineToDelete := eligibleMachines.Filter(collections.InFailureDomains(failureDomain)).Oldest()
+	if machineToDelete == nil {
+		return nil, errors.New("failed to pick a control plane machine to delete")
+	}
+
+	return machineToDelete, nil
 }
 
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.

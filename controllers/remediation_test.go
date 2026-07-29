@@ -1912,9 +1912,13 @@ func TestSelectMachineForScaleDownPrefersUnhealthyMachines(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			controlPlane := &ControlPlane{Machines: collections.FromMachines(tc.machines...)}
+			// no failure domains, so the selection falls back to the oldest eligible machine
+			controlPlane := &ControlPlane{
+				Cluster:  &clusterv1.Cluster{},
+				Machines: collections.FromMachines(tc.machines...),
+			}
 
-			machine, err := selectMachineForScaleDown(controlPlane, collections.FromMachines(tc.outdated...))
+			machine, err := selectMachineForScaleDown(context.Background(), controlPlane, collections.FromMachines(tc.outdated...))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(machine.Name).To(Equal(tc.want))
 		})
