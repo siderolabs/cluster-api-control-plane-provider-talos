@@ -20,3 +20,14 @@ preface = """\
         description = """\
 Core CAPI contract updated to v1beta2.
 """
+
+[notes.failuredomains]
+    title = "Failure Domain Spreading"
+        description = """\
+Control plane machines now stay spread across failure domains during a rollout, not only when
+the cluster is first created. A new machine goes to the domain holding the fewest up-to-date
+machines, ties are broken by the fewest machines overall, and scaling down removes a machine
+from the domain holding the most, so a rolling update no longer drains a domain.
+
+The failure domain chosen for each machine is logged along with the domains that were eligible.
+"""

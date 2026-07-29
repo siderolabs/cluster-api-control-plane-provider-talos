@@ -38,7 +38,7 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	// Create a new Machine w/ join
 	r.Log.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-	return r.bootControlPlane(ctx, cluster, tcp, false)
+	return r.bootControlPlane(ctx, cluster, tcp, controlPlane, false)
 }
 
 func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
@@ -126,7 +126,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	deleteMachine, err := selectMachineForScaleDown(controlPlane, machinesRequireUpgrade)
+	deleteMachine, err := selectMachineForScaleDown(ctx, controlPlane, machinesRequireUpgrade)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -158,7 +158,8 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	node := deleteMachine.Status.NodeRef
 
-	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
+	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name,
+		"failureDomain", deleteMachine.Spec.FailureDomain)
 
 	if err := r.removeFromEtcdAndDelete(ctx, tcp, deleteMachine, controlPlane.Machines.UnsortedList()); err != nil {
 		return ctrl.Result{}, err
@@ -222,7 +223,11 @@ func (r *TalosControlPlaneReconciler) deleteNode(ctx context.Context, client cli
 	return ctrl.Result{}, nil
 }
 
-func selectMachineForScaleDown(controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
+// selectMachineForScaleDown picks the machine to remove: one the user annotated for deletion first,
+// then one a MachineHealthCheck flagged for remediation (removing anything else while that member is
+// down could cost etcd its quorum), then an outdated one, and any machine otherwise. Among the
+// candidates left, the one in the failure domain holding the most machines is removed.
+func selectMachineForScaleDown(ctx context.Context, controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
 	machines := controlPlane.Machines
 	switch {
 	case controlPlane.MachineWithDeleteAnnotation(outdatedMachines).Len() > 0:
@@ -237,5 +242,5 @@ func selectMachineForScaleDown(controlPlane *ControlPlane, outdatedMachines coll
 		machines = outdatedMachines
 	}
 
-	return machines.Oldest(), nil
+	return controlPlane.MachineInFailureDomainWithMostMachines(ctx, machines)
 }
