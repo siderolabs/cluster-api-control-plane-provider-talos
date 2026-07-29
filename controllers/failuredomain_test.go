@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -281,6 +282,160 @@ func TestNextFailureDomainForScaleUp(t *testing.T) {
 			assert.Contains(t, tt.expected, *actual)
 		})
 	}
+}
+
+func TestMachineInFailureDomainWithMostMachines(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name           string
+		failureDomains clusterv1.FailureDomains
+		machines       []*clusterv1.Machine
+		eligible       []string
+		expected       string
+		expectedError  string
+	}{
+		{
+			name:           "no eligible machine",
+			failureDomains: controlPlaneDomains("a"),
+			machines:       []*clusterv1.Machine{newControlPlaneMachine("cp-1", inFailureDomain("a"), createdAt(0))},
+			eligible:       []string{},
+			expectedError:  "failed to pick a control plane machine to delete",
+		},
+		{
+			name:           "picks the oldest machine of the most crowded domain",
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newControlPlaneMachine("cp-1", inFailureDomain("b"), createdAt(0)),
+				newControlPlaneMachine("cp-2", inFailureDomain("a"), createdAt(time.Minute)),
+				newControlPlaneMachine("cp-3", inFailureDomain("a"), createdAt(2*time.Minute)),
+			},
+			eligible: []string{"cp-1", "cp-2", "cp-3"},
+			// cp-1 is older, but removing it would leave both machines in "a".
+			expected: "cp-2",
+		},
+		{
+			name:           "counts machines which are not eligible towards the crowding",
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newControlPlaneMachine("cp-1", inFailureDomain("a"), createdAt(0)),
+				newControlPlaneMachine("cp-2", inFailureDomain("a"), createdAt(time.Minute)),
+				newControlPlaneMachine("cp-3", inFailureDomain("b"), createdAt(2*time.Minute)),
+			},
+			eligible: []string{"cp-2", "cp-3"},
+			expected: "cp-2",
+		},
+		{
+			name:           "removes machines outside the current failure domains first",
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newControlPlaneMachine("cp-1", inFailureDomain("a"), createdAt(0)),
+				newControlPlaneMachine("cp-2", inFailureDomain("a"), createdAt(time.Minute)),
+				newControlPlaneMachine("cp-3", inFailureDomain("gone"), createdAt(2*time.Minute)),
+			},
+			eligible: []string{"cp-1", "cp-2", "cp-3"},
+			expected: "cp-3",
+		},
+		{
+			name:           "falls back to the oldest machine when the cluster has no failure domains",
+			failureDomains: nil,
+			machines: []*clusterv1.Machine{
+				newControlPlaneMachine("cp-1", createdAt(0)),
+				newControlPlaneMachine("cp-2", createdAt(time.Minute)),
+			},
+			eligible: []string{"cp-1", "cp-2"},
+			expected: "cp-1",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			controlPlane := newControlPlaneForTest(tt.failureDomains, tt.machines...)
+
+			eligible := collections.New()
+
+			for _, machine := range tt.machines {
+				if slices.Contains(tt.eligible, machine.Name) {
+					eligible.Insert(machine)
+				}
+			}
+
+			actual, err := controlPlane.MachineInFailureDomainWithMostMachines(context.Background(), eligible)
+
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, actual)
+			assert.Equal(t, tt.expected, actual.Name)
+		})
+	}
+}
+
+// TestRolloutPreservesFailureDomainSpreading replays a full rolling update of an evenly spread
+// control plane and asserts the machines are still evenly spread once every one of them has been
+// replaced.
+//
+// Scaling down by simply removing the oldest machine passes the initial spreading test but drains a
+// failure domain over the course of a rollout, leaving two of three machines sharing a domain.
+func TestRolloutPreservesFailureDomainSpreading(t *testing.T) {
+	t.Parallel()
+
+	const (
+		replicas = 3
+		maxSurge = 1
+	)
+
+	ctx := context.Background()
+	failureDomains := controlPlaneDomains("a", "b", "c")
+
+	machines := []*clusterv1.Machine{
+		newControlPlaneMachine("cp-1", inFailureDomain("a"), outdated(), createdAt(0)),
+		newControlPlaneMachine("cp-2", inFailureDomain("b"), outdated(), createdAt(time.Minute)),
+		newControlPlaneMachine("cp-3", inFailureDomain("c"), outdated(), createdAt(2*time.Minute)),
+	}
+
+	created := len(machines)
+	rolledOut := false
+
+	// mirrors upgradeControlPlane: surge one machine, then remove one which still needs a rollout.
+	for range 2 * (replicas + maxSurge) {
+		controlPlane := newControlPlaneForTest(failureDomains, machines...)
+
+		needRollout := controlPlane.MachinesNeedingRollout()
+		if needRollout.Len() == 0 {
+			rolledOut = true
+
+			break
+		}
+
+		if controlPlane.Machines.Len() < replicas+maxSurge {
+			failureDomain := controlPlane.NextFailureDomainForScaleUp(ctx)
+			require.NotNil(t, failureDomain)
+
+			created++
+
+			machines = append(machines,
+				newControlPlaneMachine(fmt.Sprintf("cp-%d", created), inFailureDomain(*failureDomain), createdAt(time.Duration(created)*time.Minute)),
+			)
+
+			continue
+		}
+
+		deleteMachine, err := selectMachineForScaleDown(ctx, controlPlane, needRollout)
+		require.NoError(t, err)
+
+		machines = slices.DeleteFunc(machines, func(machine *clusterv1.Machine) bool {
+			return machine.Name == deleteMachine.Name
+		})
+	}
+
+	assert.True(t, rolledOut, "the rollout did not converge")
+	require.Len(t, machines, replicas)
+	assert.Equal(t, map[string]int{"a": 1, "b": 1, "c": 1}, spread(collections.FromMachines(machines...)))
 }
 
 // TestScaleUpSpreadsAcrossFailureDomains walks the initial scale up of a control plane and asserts

@@ -5,6 +5,7 @@
 package controllers
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -74,9 +75,13 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controlPlane := &ControlPlane{Machines: collections.FromMachines(ptrs(tt.machines)...)}
+			// no failure domains, so the selection falls back to the oldest eligible machine
+			controlPlane := &ControlPlane{
+				Cluster:  &clusterv1.Cluster{},
+				Machines: collections.FromMachines(ptrs(tt.machines)...),
+			}
 
-			got, err := selectMachineForScaleDown(controlPlane, collections.FromMachines(ptrs(tt.outdated)...))
+			got, err := selectMachineForScaleDown(context.Background(), controlPlane, collections.FromMachines(ptrs(tt.outdated)...))
 			if err != nil {
 				t.Fatalf("selectMachineForScaleDown() error = %v", err)
 			}
