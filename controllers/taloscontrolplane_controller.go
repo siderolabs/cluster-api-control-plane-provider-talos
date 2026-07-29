@@ -316,6 +316,50 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 	return machineList, nil
 }
 
+// failureDomainIDs returns the sorted failure domain names, for logging.
+func failureDomainIDs(failureDomains clusterv1.FailureDomains) []string {
+	ids := make([]string, 0, len(failureDomains))
+
+	for id := range failureDomains {
+		ids = append(ids, id)
+	}
+
+	sort.Strings(ids)
+
+	return ids
+}
+
+// logFailureDomainSelection reports where a new control plane machine is about to be placed, and
+// whether the cluster offers enough failure domains to spread the control plane at all.
+//
+// A control plane which cannot be spread comes from how the infrastructure provider populates the
+// cluster failure domains rather than from this controller, and it is next to impossible to
+// diagnose from the outside, so it is worth a log line on every machine creation.
+func (r *TalosControlPlaneReconciler) logFailureDomainSelection(tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane, machine *clusterv1.Machine) {
+	logger := r.Log.WithValues("namespace", tcp.Namespace, "talosControlPlane", tcp.Name, "machine", machine.Name)
+
+	if machine.Spec.FailureDomain == nil {
+		logger.Info("cluster reports no failure domains, control plane machines will not be spread")
+
+		return
+	}
+
+	eligible := failureDomainIDs(controlPlane.FailureDomains())
+
+	logger = logger.WithValues("failureDomain", *machine.Spec.FailureDomain, "eligibleFailureDomains", eligible)
+
+	logger.Info("picked failure domain for the new control plane machine")
+
+	if len(controlPlane.Cluster.Status.FailureDomains.FilterControlPlane()) == 0 {
+		logger.Info("no failure domain is marked for the control plane, falling back to all cluster failure domains")
+	}
+
+	if desiredReplicas := int(tcp.Spec.GetReplicas()); len(eligible) < desiredReplicas {
+		logger.Info("fewer control plane failure domains than desired replicas, the control plane cannot be fully spread",
+			"desiredReplicas", desiredReplicas)
+	}
+}
+
 func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane,
 	controlPlane *ControlPlane, first bool,
 ) (ctrl.Result, error) {
@@ -383,6 +427,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	machine.Spec.FailureDomain = controlPlane.NextFailureDomainForScaleUp(ctx)
+
+	r.logFailureDomainSelection(tcp, controlPlane, machine)
 
 	if err := r.Client.Create(ctx, machine); err != nil {
 		conditions.MarkFalse(tcp, controlplanev1.MachinesCreatedCondition, controlplanev1.MachineGenerationFailedReason,
