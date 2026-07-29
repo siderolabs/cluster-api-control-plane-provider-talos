@@ -147,7 +147,7 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 	g.Expect(c.Get(ctx, client.ObjectKeyFromObject(template), template)).To(Succeed())
 	g.Expect(template.GetOwnerReferences()).To(ContainElement(HaveField("UID", cluster.UID)))
 
-	_, err = r.bootControlPlane(ctx, cluster, tcp, false)
+	_, err = r.bootControlPlane(ctx, cluster, tcp, &ControlPlane{TCP: tcp, Cluster: cluster}, false)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	machines := &clusterv1.MachineList{}
