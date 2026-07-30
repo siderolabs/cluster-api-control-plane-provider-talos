@@ -3,7 +3,7 @@ module github.com/siderolabs/cluster-api-control-plane-provider-talos
 go 1.26.1
 
 // compatibility with kube-apiserver v0.32.3, should be dropped once kube-apiserver dependency is updated
-replace github.com/google/cel-go => github.com/google/cel-go v0.22.0
+replace github.com/google/cel-go => github.com/google/cel-go v0.29.0
 
 require (
 	github.com/coreos/go-semver v0.3.1
