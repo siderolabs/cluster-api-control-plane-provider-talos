@@ -196,7 +196,6 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-
 	// V1Beta2 holds fields required by the v1beta2 CAPI contract
 	// +optional
 	V1Beta2 *TalosControlPlaneV1Beta2Status `json:"v1beta2,omitempty"`
@@ -209,7 +208,6 @@ type TalosControlPlaneStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=taloscontrolplanes,shortName=tcp,scope=Namespaced,categories=cluster-api
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=".status.ready",description="TalosControlPlane API Server is ready to receive requests"

@@ -11,6 +11,7 @@ import (
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1beta2 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta2"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,6 +55,7 @@ func init() {
 	_ = clusterv1.AddToScheme(scheme)
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
+	_ = controlplanev1beta2.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
