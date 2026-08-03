@@ -444,6 +444,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		r.reconcileNodeHealth,
 		r.reconcileConditions,
 		r.reconcileKubeconfig,
+		r.reconcileUnhealthyMachinesPhase,
 		r.reconcileMachines,
 	} {
 		phaseResult, err = phase(ctx, cluster, tcp, &ownedMachines)
@@ -1032,6 +1033,17 @@ func (r *TalosControlPlaneReconciler) reconcileConditions(ctx context.Context, c
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// reconcileUnhealthyMachinesPhase adapts reconcileUnhealthyMachines to the
+// phase function signature used by the reconcile loop.
+func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachinesPhase(
+	ctx context.Context,
+	cluster *clusterv1.Cluster,
+	tcp *controlplanev1.TalosControlPlane,
+	ownedMachines *clusterv1.MachineList,
+) (ctrl.Result, error) {
+	return r.reconcileUnhealthyMachines(ctx, tcp, cluster, ownedMachines.Items)
 }
 
 func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (res ctrl.Result, err error) {
