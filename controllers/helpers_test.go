@@ -14,7 +14,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
@@ -44,8 +43,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/controllers/remote"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -71,7 +70,7 @@ func withCluster(key types.NamespacedName) reconcilerOption {
 	}
 }
 
-func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.TalosControlPlaneReconciler {
+func newReconciler(controllerClient client.Client, opts ...reconcilerOption) *controllers.TalosControlPlaneReconciler {
 	logger := zap.New(zap.WriteTo(os.Stdout))
 	logf.SetLogger(logger)
 
@@ -81,16 +80,20 @@ func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.
 		opt(&options)
 	}
 
-	var tracker *remote.ClusterCacheTracker
+	clusterKey := client.ObjectKey{}
 	if options.cluster != nil {
-		tracker = remote.NewTestClusterCacheTracker(logger, client, client, fakeScheme, *options.cluster)
+		clusterKey = client.ObjectKey{
+			Namespace: options.cluster.Namespace,
+			Name:      options.cluster.Name,
+		}
 	}
+	clusterCache := clustercache.NewFakeClusterCache(controllerClient, clusterKey)
 
 	return &controllers.TalosControlPlaneReconciler{
-		Client:    client,
-		Log:       logger,
-		APIReader: client,
-		Tracker:   tracker,
+		Client:       controllerClient,
+		Log:          logger,
+		APIReader:    controllerClient,
+		ClusterCache: clusterCache,
 	}
 }
 
@@ -172,20 +175,19 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				Kind:       GenericInfrastructureMachineCRD.Kind,
-				APIVersion: GenericInfrastructureMachineCRD.APIVersion,
-				Name:       GenericInfrastructureMachineCRD.Name,
-				Namespace:  GenericInfrastructureMachineCRD.Namespace,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Kind:     GenericInfrastructureMachineCRD.Kind,
+				APIGroup: GenericInfrastructureMachineCRD.Spec.Group,
+				Name:     GenericInfrastructureMachineCRD.Name,
 			},
-			NodeDeletionTimeout: &metav1.Duration{Duration: 10 * time.Second},
-			Version:             pointer.String("v1.16.6"),
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDrainTimeoutSeconds: pointer.Int32(10),
+			},
+			Version: "v1.16.6",
 		},
 		Status: clusterv1.MachineStatus{
-			NodeRef: &corev1.ObjectReference{
-				Kind:       "Node",
-				APIVersion: corev1.SchemeGroupVersion.String(),
-				Name:       name,
+			NodeRef: clusterv1.MachineNodeReference{
+				Name: name,
 			},
 			Addresses: clusterv1.MachineAddresses{
 				{
@@ -268,7 +270,7 @@ func MustFormatValue(str string) string {
 
 var (
 	// InfrastructureGroupVersion is group version used for infrastructure objects.
-	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta1"}
+	InfrastructureGroupVersion = schema.GroupVersion{Group: "infrastructure.cluster.x-k8s.io", Version: "v1beta2"}
 
 	// GenericInfrastructureMachineKind is the Kind for the GenericInfrastructureMachine.
 	GenericInfrastructureMachineKind = "GenericInfrastructureMachine"
@@ -299,7 +301,7 @@ func generateCRD(gvk schema.GroupVersionKind, properties map[string]apiextension
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group),
 			Labels: map[string]string{
-				clusterv1.GroupVersion.String(): "v1beta1",
+				clusterv1.GroupVersion.String(): "v1beta2",
 			},
 		},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{

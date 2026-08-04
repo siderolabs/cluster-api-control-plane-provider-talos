@@ -2,10 +2,55 @@
 
 Welcome to the v0.5.13 release of CAPI Control Plane Provider Talos!
 
-
-
 Please try out the release binaries and report any issues at
 https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### ClusterAPI Control Plane Provider Talos
+
+### Contributors
+
+* [SNCF](https://github.com/SNCFdevelopers)
+* [InsideGroup](https://github.com/InsideCommunity)
+* [mstrohl](https://github.com/mstrohl)
+* [bephinix](https://github.com/bephinix)
+* [steffen-karlsson](https://github.com/steffen-karlsson)
+
+## [Unreleased]
+
+### Changed
+
+- **CI/Integration tests migrated from AWS to Docker (CAPD)**: the end-to-end test suite no longer requires AWS credentials or cloud infrastructure. Tests now run against a local [Cluster API Provider Docker (CAPD)](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/infrastructure/docker) management cluster created via `talosctl cluster create docker`. A new `DockerProvider` implementation (`internal/integration/docker_provider_test.go`) satisfies the `infrastructure.Provider` interface for CAPD, replacing the AWS-only `infrastructure.NewProvider` factory from the upstream `capi-utils` fork. The `hack/test/e2e-docker.sh` script handles cluster lifecycle, an ephemeral local registry (dev) or CI registry mirrors, and clusterctl configuration. The former `hack/test/e2e-aws.sh` entrypoint is preserved as `make integration-test-aws` for reference.
+
+### Added
+
+- `api/v1beta2/groupversion_info.go`: new package registering `controlplane.cluster.x-k8s.io/v1beta2` group/version with controller-runtime scheme builder.
+- `api/v1beta2/taloscontrolplane_types.go`: v1beta2 hub type implementing `Hub()` marker; introduces `TalosControlPlaneV1Beta2Status` with `readyReplicas`, `availableReplicas`, `upToDateReplicas` and `conditions` fields; carries `+kubebuilder:storageversion`.
+- `api/v1alpha3/conversion.go`: passthrough `ConvertTo` / `ConvertFrom` implementation targeting the v1beta2 hub; performs a full field-by-field copy of Spec and Status with no data loss.
+- `controllers/taloscontrolplane_controller.go` — `reconcileTalosControlPlaneStatus`: new function populating `status.v1beta2.{readyReplicas,availableReplicas,upToDateReplicas}` on every reconcile loop; called from `updateStatus`.
+- `controllers/taloscontrolplane_controller.go` — `reconcileMachineUpToDateConditions`: new function writing the `UpToDate` condition on each owned `Machine` so that CAPI core can aggregate `ControlPlaneMachinesUpToDate`.
+- `controllers/taloscontrolplane_controller.go` — `computeSpecHash`: FNV-32a hash over `{Version, ControlPlaneConfig}` used to detect spec drift on machines.
+- `api/v1alpha3/taloscontrolplane_types.go`: new field `MinReadySeconds *int32`; new constant `SpecHashAnnotation = "controlplane.cluster.x-k8s.io/spec-hash"`.
+
+### Changed
+
+- `api/v1alpha3/taloscontrolplane_types.go`: removed `+kubebuilder:storageversion` marker (moved to v1beta2).
+- `main.go`: registered `controlplanev1beta2` scheme; controller-runtime now auto-registers the `/convert` webhook handler at startup.
+- `Makefile`: bumped `CONTROLLER_GEN_VERSION` from `v0.17.0` to `v0.21.0` to fix panic `types.Type is nil, not *types.Named` with Go 1.26.x.
+- `controllers/taloscontrolplane_controller.go`: replaced incorrect `controlplanev1.{Available,MachinesReady,MachinesUpToDate}Condition` references with the correct `clusterv1` package constants.
+- `controllers/taloscontrolplane_controller.go`: replaced non-existent `conditions.SetStatusCondition` calls with `apimeta.SetStatusCondition` from `k8s.io/apimachinery/pkg/api/meta`.
+- `controllers/taloscontrolplane_controller.go`: fixed `MachinesSpecUpToDateCondition` call — added mandatory `Reason` and `Message` fields (empty message rejected by CRD validation).
+- `controllers/taloscontrolplane_controller.go`: `SpecHashAnnotation` is now stamped on each `Machine` at creation time to enable accurate `upToDateReplicas` counting.
+- CRD `taloscontrolplanes.controlplane.cluster.x-k8s.io`: regenerated via `make manifests` — now declares two versions: `v1alpha3` (storage: false) and `v1beta2` (storage: true); conversion strategy set to `Webhook` with endpoint `/convert` on `cacppt-webhook-service:443`.
+
+### Fixed
+
+- `status.controlPlane` on `Cluster` was never populated (`availableReplicas`, `upToDateReplicas` missing) because the CRD lacked a proper v1beta2 version and the conversion webhook was not configured.
+- `upToDateReplicas` was always 0 because `SpecHashAnnotation` was never written on machines; fixed by stamping the annotation at machine creation and backfilling existing machines.
+- `ControlPlaneMachinesUpToDate` was `False` because the `UpToDate` condition was never written on `Machine` objects; fixed by `reconcileMachineUpToDateConditions`.
+- `ControlPlaneAvailable` was reporting `InternalError` due to stale pod state; resolved after controller rollout with new image.
+- `kubectl apply` on the CRD was a no-op (missing `status.v1beta2` schema silently dropped written fields); fixed by using `kubectl replace`.
+- `reconcileTalosControlPlaneStatus` was defined but never called from `updateStatus`; call added before final `return nil`.
+
 
 ### Talos Linux
 

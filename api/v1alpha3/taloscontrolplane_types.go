@@ -9,11 +9,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 const (
 	TalosControlPlaneFinalizer = "talos.controlplane.cluster.x-k8s.io"
+
+	SpecHashAnnotation = "controlplane.cluster.x-k8s.io/spec-hash"
 )
 
 type ControlPlaneConfig struct {
@@ -60,6 +61,29 @@ type TalosControlPlaneSpec struct {
 	// +optional
 	// +kubebuilder:default={type: "RollingUpdate", rollingUpdate: {maxSurge: 1}}
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
+
+	// MinReadySeconds is the minimum number of seconds a machine must be Ready
+	// before it is considered available.
+	// +optional
+	MinReadySeconds *int32 `json:"minReadySeconds,omitempty"`
+}
+
+// TalosControlPlaneV1Beta2Status holds the v1beta2 contract fields required by Cluster API
+type TalosControlPlaneV1Beta2Status struct {
+	// ReadyReplicas is the number of machines with a Ready Condition
+	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
+
+	// AvailableReplicas is the number of machines that are both Ready and have passed
+	// MinReadySeconds threshold. This counts machines actively serving requests
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// UpToDateReplicas is the number of machines whose configuration matches the current
+	// TalosControlPlane spec. Machines with mismatched hashes are undergoing rollout
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+
+	// Conditions represent the observations of the TalosControlPlane's state
+	// Uses metav1.Condition (not clusterv1.Condition) per v1beta2 contract
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // GetReplicas reads spec replicas in a safe way.
@@ -122,6 +146,14 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
+	// availableReplicas is the number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
+	// +optional
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered available when Machine's  UpToDate condition is true.
+	// +optional
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+
 	// Total number of unavailable machines targeted by this control plane.
 	// This is the total number of machines that are still required for
 	// the deployment to have 100% available capacity. They may either
@@ -162,7 +194,11 @@ type TalosControlPlaneStatus struct {
 
 	// Conditions defines current service state of the KubeadmControlPlane.
 	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// V1Beta2 holds fields required by the v1beta2 CAPI contract
+	// +optional
+	V1Beta2 *TalosControlPlaneV1Beta2Status `json:"v1beta2,omitempty"`
 
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
@@ -172,7 +208,6 @@ type TalosControlPlaneStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=taloscontrolplanes,shortName=tcp,scope=Namespaced,categories=cluster-api
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=".status.ready",description="TalosControlPlane API Server is ready to receive requests"
@@ -191,12 +226,12 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
+func (r *TalosControlPlane) GetConditions() []metav1.Condition {
 	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+func (r *TalosControlPlane) SetConditions(conditions []metav1.Condition) {
 	r.Status.Conditions = conditions
 }
 
