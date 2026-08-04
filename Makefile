@@ -137,8 +137,38 @@ clean:
 integration-test-build:
 	@$(MAKE) local-integration-test DEST=./_out/ PLATFORM=linux/amd64
 
+# Loads the controller image into the local Docker daemon (dev/local only).
+# In CI the image is already pushed to the registry by the 'all' step.
+.PHONY: integration-test-load-image
+integration-test-load-image:
+	@if [ "$(CI)" != "true" ]; then \
+		echo "Loading controller image into local Docker daemon..."; \
+		$(MAKE) docker-container TARGET_ARGS="--load"; \
+	fi
+
+# integration-test runs against Docker/CAPD — no cloud credentials needed.
+# In CI the image is pulled from the registry; locally an ephemeral registry:2
+# container is started automatically by e2e-docker.sh.
 .PHONY: integration-test
-integration-test: integration-test-build
+integration-test: integration-test-build integration-test-load-image
+	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) \
+		bash hack/test/e2e-docker.sh
+
+.PHONY: local-e2e-clean
+local-e2e-clean: ## Remove all leftover CAPD clusters, Docker networks, Talos state and tmp dirs from previous e2e runs.
+	@for cluster in $$(docker ps -aq --filter "name=cacppt-test" --format "{{.Names}}" | sed 's/-controlplane-[0-9]*//g' | sort -u); do \
+		echo "Removing containers for $${cluster}..."; \
+		docker ps -aq --filter "name=$${cluster}" | xargs -r docker rm -f; \
+		docker network rm "$${cluster}" 2>/dev/null && echo "  network $${cluster} removed" || true; \
+		rm -rf ~/.talos/clusters/"$${cluster}" && echo "  talos dir $${cluster} removed" || true; \
+	done
+	@rm -rf /tmp/cacppt-e2e
+	@docker network rm kind 2>/dev/null && echo "Docker network 'kind' removed" || true
+	@echo "Done."
+
+# Kept for reference – runs the legacy AWS-based e2e suite.
+.PHONY: integration-test-aws
+integration-test-aws: integration-test-build
 	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh
 
 .PHONY: unit-tests

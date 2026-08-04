@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Changed
+
+- **CI/Integration tests migrated from AWS to Docker (CAPD)**: the end-to-end test suite no longer requires AWS credentials or cloud infrastructure. Tests now run against a local [Cluster API Provider Docker (CAPD)](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/infrastructure/docker) management cluster created via `talosctl cluster create docker`. A new `DockerProvider` implementation (`internal/integration/docker_provider_test.go`) satisfies the `infrastructure.Provider` interface for CAPD, replacing the AWS-only `infrastructure.NewProvider` factory from the upstream `capi-utils` fork. The `hack/test/e2e-docker.sh` script handles cluster lifecycle, an ephemeral local registry (dev) or CI registry mirrors, and clusterctl configuration. The former `hack/test/e2e-aws.sh` entrypoint is preserved as `make integration-test-aws` for reference.
+
 ## [CAPI Control Plane Provider Talos 0.5.12](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.12) (2025-12-24)
 
 Welcome to the v0.5.12 release of CAPI Control Plane Provider Talos!
