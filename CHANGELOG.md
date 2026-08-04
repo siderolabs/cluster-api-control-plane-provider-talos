@@ -17,6 +17,10 @@ https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues
 
 ## [Unreleased]
 
+### Changed
+
+- **CI/Integration tests migrated from AWS to Docker (CAPD)**: the end-to-end test suite no longer requires AWS credentials or cloud infrastructure. Tests now run against a local [Cluster API Provider Docker (CAPD)](https://github.com/kubernetes-sigs/cluster-api/tree/main/test/infrastructure/docker) management cluster created via `talosctl cluster create docker`. A new `DockerProvider` implementation (`internal/integration/docker_provider_test.go`) satisfies the `infrastructure.Provider` interface for CAPD, replacing the AWS-only `infrastructure.NewProvider` factory from the upstream `capi-utils` fork. The `hack/test/e2e-docker.sh` script handles cluster lifecycle, an ephemeral local registry (dev) or CI registry mirrors, and clusterctl configuration. The former `hack/test/e2e-aws.sh` entrypoint is preserved as `make integration-test-aws` for reference.
+
 ### Added
 
 - `api/v1beta2/groupversion_info.go`: new package registering `controlplane.cluster.x-k8s.io/v1beta2` group/version with controller-runtime scheme builder.

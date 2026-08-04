@@ -87,8 +87,11 @@ jobs:
           make unit-tests
       - name: integration-test
         env:
+          CI: "true"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY: registry.dev.siderolabs.io
+          # Image was already pushed to the registry in the 'all' step;
+          # no local registry needed.  No cloud credentials required.
         run: |
           make integration-test
   push:

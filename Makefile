@@ -11,7 +11,7 @@ TESTPKGS ?= ./controllers/...
 
 KRES_IMAGE ?= ghcr.io/siderolabs/kres:latest
 
-CONTROLLER_GEN_VERSION ?= v0.17.0
+CONTROLLER_GEN_VERSION ?= v0.21.0
 CONVERSION_GEN_VERSION ?= v0.32.3
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
@@ -137,8 +137,26 @@ clean:
 integration-test-build:
 	@$(MAKE) local-integration-test DEST=./_out/ PLATFORM=linux/amd64
 
+# Loads the controller image into the local Docker daemon (dev/local only).
+# In CI the image is already pushed to the registry by the 'all' step.
+.PHONY: integration-test-load-image
+integration-test-load-image:
+	@if [ "$(CI)" != "true" ]; then \
+		echo "Loading controller image into local Docker daemon..."; \
+		$(MAKE) docker-container TARGET_ARGS="--load"; \
+	fi
+
+# integration-test runs against Docker/CAPD — no cloud credentials needed.
+# In CI the image is pulled from the registry; locally an ephemeral registry:2
+# container is started automatically by e2e-docker.sh.
 .PHONY: integration-test
-integration-test: integration-test-build
+integration-test: integration-test-build integration-test-load-image
+	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) \
+		bash hack/test/e2e-docker.sh
+
+# Kept for reference – runs the legacy AWS-based e2e suite.
+.PHONY: integration-test-aws
+integration-test-aws: integration-test-build
 	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh
 
 .PHONY: unit-tests
