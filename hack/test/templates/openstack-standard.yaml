@@ -85,6 +85,10 @@ spec:
       identityRef:
         name: ${CLUSTER_NAME}-cloud-config
         cloudName: ${OPENSTACK_CLOUD}
+<<<<<<< HEAD
+=======
+      ${OPENSTACK_CONTROL_PLANE_ROOT_VOLUME}
+>>>>>>> dd52fd3 (  feat: add OpenStack e2e test path via CAPO)
 ---
 apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
 kind: TalosControlPlane
@@ -186,6 +190,10 @@ spec:
       identityRef:
         name: ${CLUSTER_NAME}-cloud-config
         cloudName: ${OPENSTACK_CLOUD}
+<<<<<<< HEAD
+=======
+      ${OPENSTACK_NODE_ROOT_VOLUME}
+>>>>>>> dd52fd3 (  feat: add OpenStack e2e test path via CAPO)
 ---
 ## Health check for workers
 apiVersion: cluster.x-k8s.io/v1beta1

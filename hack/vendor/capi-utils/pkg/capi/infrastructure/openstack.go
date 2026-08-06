@@ -7,6 +7,7 @@ package infrastructure
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/siderolabs/go-retry/retry"
@@ -18,6 +19,49 @@ import (
 
 	"github.com/siderolabs/capi-utils/pkg/constants"
 )
+
+// rootVolumeChildIndent/rootVolumeGrandchildIndent are the absolute
+// indentation levels (in spaces) required for lines nested under the
+// generated "rootVolume:" block once it is spliced into
+// openstack-standard.yaml's OpenStackMachineTemplate.spec.template.spec,
+// where "rootVolume:" itself lands at 6 spaces (a sibling of "flavor:" /
+// "identityRef:"). envsubst performs plain text substitution, so
+// continuation lines must carry their own indentation - the template can
+// only supply indentation for the first line.
+const (
+	rootVolumeChildIndent      = "        "   // 8 spaces: sizeGiB/type/availabilityZone
+	rootVolumeGrandchildIndent = "          " // 10 spaces: availabilityZone.name
+)
+
+// renderRootVolume returns the YAML fragment for OpenStackMachineTemplate's
+// optional "rootVolume" field, driven by a Cinder volume type (backend) name
+// and size. When sizeGiB is not positive, no rootVolume is requested, and a
+// harmless YAML comment is returned instead so the machine keeps using
+// ephemeral (local, hypervisor-backed) storage - CAPO's default when
+// rootVolume is omitted entirely.
+func renderRootVolume(sizeGiB int, volumeType, availabilityZone string) string {
+	if sizeGiB <= 0 {
+		return "# ephemeral storage (no rootVolume configured)"
+	}
+
+	lines := []string{
+		"rootVolume:",
+		fmt.Sprintf("%ssizeGiB: %d", rootVolumeChildIndent, sizeGiB),
+	}
+
+	if volumeType != "" {
+		lines = append(lines, fmt.Sprintf("%stype: %s", rootVolumeChildIndent, volumeType))
+	}
+
+	if availabilityZone != "" {
+		lines = append(lines,
+			fmt.Sprintf("%savailabilityZone:", rootVolumeChildIndent),
+			fmt.Sprintf("%sname: %s", rootVolumeGrandchildIndent, availabilityZone),
+		)
+	}
+
+	return strings.Join(lines, "\n")
+}
 
 // NewOpenStackProvider creates new OpenStack infrastructure provider.
 func NewOpenStackProvider(version, providerNS, watchingNS string) (*OpenStackProvider, error) {
@@ -71,6 +115,27 @@ type OpenStackDeployOptions struct {
 	NodeMachineFlavor         string
 	CloudProviderVersion      string
 	CalicoVersion             string
+
+	// ControlPlaneVolumeType/NodeVolumeType name a Cinder volume type
+	// (backend) to boot control plane/worker machines from a Cinder-backed
+	// root volume instead of the hypervisor's local ephemeral storage. Only
+	// used when the matching *SizeGiB field is > 0; when empty, CAPO falls
+	// back to the cloud's default Cinder volume type.
+	ControlPlaneVolumeType string
+	NodeVolumeType         string
+
+	// ControlPlaneVolumeSizeGiB/NodeVolumeSizeGiB is the size, in GiB, of
+	// the Cinder root volume for control plane/worker machines. Leaving
+	// this at 0 (the default) keeps machines on ephemeral storage - no
+	// rootVolume is requested at all.
+	ControlPlaneVolumeSizeGiB int
+	NodeVolumeSizeGiB         int
+
+	// ControlPlaneVolumeAvailabilityZone/NodeVolumeAvailabilityZone
+	// optionally pins the Cinder root volume to a specific availability
+	// zone. Only meaningful alongside a positive *VolumeSizeGiB.
+	ControlPlaneVolumeAvailabilityZone string
+	NodeVolumeAvailabilityZone         string
 }
 
 // NewOpenStackDeployOptions returns default deploy options for the OpenStack infra provider.
@@ -176,6 +241,16 @@ func (s *OpenStackProvider) ClusterVars(opts any) (Variables, error) {
 		"OPENSTACK_NODE_MACHINE_FLAVOR":          deployOptions.NodeMachineFlavor,
 		"OPENSTACK_CLOUD_PROVIDER_VERSION":       deployOptions.CloudProviderVersion,
 		"CALICO_VERSION":                         deployOptions.CalicoVersion,
+		"OPENSTACK_CONTROL_PLANE_ROOT_VOLUME": renderRootVolume(
+			deployOptions.ControlPlaneVolumeSizeGiB,
+			deployOptions.ControlPlaneVolumeType,
+			deployOptions.ControlPlaneVolumeAvailabilityZone,
+		),
+		"OPENSTACK_NODE_ROOT_VOLUME": renderRootVolume(
+			deployOptions.NodeVolumeSizeGiB,
+			deployOptions.NodeVolumeType,
+			deployOptions.NodeVolumeAvailabilityZone,
+		),
 	}
 
 	return vars, nil

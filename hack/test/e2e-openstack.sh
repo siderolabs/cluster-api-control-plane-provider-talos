@@ -143,6 +143,28 @@ function cluster {
   export KUBECONFIG=${TMP}/kubeconfig
 }
 
+# openstack-resource-controller (ORC) provides CRDs (e.g. Image.openstack.k-orc.cloud)
+# that CAPO >=v0.12 watches for image resolution. It isn't a clusterctl provider,
+# so `manager.Install()` (clusterctl-based) never installs it. Without these CRDs
+# present *before* CAPO starts, its OpenStackServer controller fails to start an
+# informer on the Image kind and never starts its reconcile workers -- meaning no
+# OpenStack VM ever gets created, even though OpenStackCluster/network/LB resources
+# reconcile fine. Install it here, directly into the management cluster, before CAPO
+# gets installed by the test binary.
+ORC_VERSION="${ORC_VERSION:-v2.6.0}"
+
+function install_orc {
+  if ${KUBECTL} get ns orc-system >/dev/null 2>&1; then
+    echo "openstack-resource-controller already installed, skipping"
+    return
+  fi
+
+  echo "installing openstack-resource-controller ${ORC_VERSION}"
+  ${KUBECTL} apply --server-side -f "https://github.com/k-orc/openstack-resource-controller/releases/download/${ORC_VERSION}/install.yaml"
+
+  ${KUBECTL} wait --for=condition=Available --timeout=120s -n orc-system deployment/orc-controller-manager
+}
+
 # openstack_setup configures the workload cluster's target: an existing
 # OpenStack cloud reachable via clouds.yaml. Unlike AWS, no AMI lookup is
 # needed here - OPENSTACK_IMAGE_NAME just names an already-imported Talos
@@ -169,6 +191,19 @@ function openstack_setup {
   ## Control plane / worker vars
   export OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR=${OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR:-m1.large}
   export OPENSTACK_NODE_MACHINE_FLAVOR=${OPENSTACK_NODE_MACHINE_FLAVOR:-m1.large}
+
+  ## Optional Cinder-backed root volumes. Leaving the *_VOLUME_SIZE_GIB vars
+  ## unset (the default) keeps machines on ephemeral (hypervisor-local)
+  ## storage. Set e.g. OPENSTACK_CONTROL_PLANE_VOLUME_SIZE_GIB=15 and
+  ## OPENSTACK_CONTROL_PLANE_VOLUME_TYPE=<cinder-backend-name> to boot control
+  ## plane machines from a Cinder volume on that backend instead; same for
+  ## workers via the OPENSTACK_NODE_VOLUME_* variables.
+  export OPENSTACK_CONTROL_PLANE_VOLUME_TYPE=${OPENSTACK_CONTROL_PLANE_VOLUME_TYPE:-}
+  export OPENSTACK_CONTROL_PLANE_VOLUME_SIZE_GIB=${OPENSTACK_CONTROL_PLANE_VOLUME_SIZE_GIB:-}
+  export OPENSTACK_CONTROL_PLANE_VOLUME_AVAILABILITY_ZONE=${OPENSTACK_CONTROL_PLANE_VOLUME_AVAILABILITY_ZONE:-}
+  export OPENSTACK_NODE_VOLUME_TYPE=${OPENSTACK_NODE_VOLUME_TYPE:-}
+  export OPENSTACK_NODE_VOLUME_SIZE_GIB=${OPENSTACK_NODE_VOLUME_SIZE_GIB:-}
+  export OPENSTACK_NODE_VOLUME_AVAILABILITY_ZONE=${OPENSTACK_NODE_VOLUME_AVAILABILITY_ZONE:-}
 }
 
 function tests {
@@ -179,5 +214,6 @@ function tests {
 build_registry_mirrors
 config
 cluster
+install_orc
 openstack_setup
 tests
