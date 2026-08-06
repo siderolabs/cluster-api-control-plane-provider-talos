@@ -64,7 +64,6 @@ type OpenStackDeployOptions struct {
 	CloudName                 string
 	ExternalNetworkID         string
 	ImageName                 string
-	SSHKeyName                string
 	FailureDomain             string
 	DNSNameservers            string
 	NodeCIDR                  string
@@ -170,7 +169,6 @@ func (s *OpenStackProvider) ClusterVars(opts any) (Variables, error) {
 		"OPENSTACK_CLOUD":                        deployOptions.CloudName,
 		"OPENSTACK_EXTERNAL_NETWORK_ID":          deployOptions.ExternalNetworkID,
 		"OPENSTACK_IMAGE_NAME":                   deployOptions.ImageName,
-		"OPENSTACK_SSH_KEY_NAME":                 deployOptions.SSHKeyName,
 		"OPENSTACK_FAILURE_DOMAIN":               deployOptions.FailureDomain,
 		"OPENSTACK_DNS_NAMESERVERS":              deployOptions.DNSNameservers,
 		"OPENSTACK_NODE_CIDR":                    deployOptions.NodeCIDR,

@@ -80,6 +80,13 @@ func (suite *IntegrationSuite) SetupSuite() {
 	provider, err := infrastructure.NewProvider(providerType)
 	suite.Require().NoError(err)
 
+	defaultTemplateFiles := map[string]string{
+		"aws":       "https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml",
+		"openstack": "hack/test/templates/openstack-standard.yaml",
+	}
+
+	templateFile := env("TEMPLATE_FILE", defaultTemplateFiles[strings.SplitN(providerType, ":", 2)[0]])
+
 	var (
 		clusterctlConfigPath string
 		clusterctlConfigs    = &clusterctlConfig{}
@@ -161,7 +168,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
+		capi.WithTemplateFile(templateFile),
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)

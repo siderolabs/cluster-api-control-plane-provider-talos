@@ -1,0 +1,209 @@
+## Cloud config secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${CLUSTER_NAME}-cloud-config
+  namespace: ${NAMESPACE}
+  labels:
+    clusterctl.cluster.x-k8s.io/move: "true"
+type: Opaque
+data:
+  cacert: ${OPENSTACK_CLOUD_CACERT_B64}
+  clouds.yaml: ${OPENSTACK_CLOUD_YAML_B64}
+---
+## Cluster configs
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: OpenStackCluster
+    name: ${CLUSTER_NAME}
+    namespace: ${NAMESPACE}
+  controlPlaneRef:
+    kind: TalosControlPlane
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+    name: ${CLUSTER_NAME}-controlplane
+    namespace: ${NAMESPACE}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  identityRef:
+    name: ${CLUSTER_NAME}-cloud-config
+    cloudName: ${OPENSTACK_CLOUD}
+  apiServerLoadBalancer:
+    enabled: true
+  managedSubnets:
+    - cidr: ${OPENSTACK_NODE_CIDR}
+      dnsNameservers:
+        - ${OPENSTACK_DNS_NAMESERVERS}
+  externalNetwork:
+    id: ${OPENSTACK_EXTERNAL_NETWORK_ID}
+  managedSecurityGroups:
+    allNodesSecurityGroupRules:
+      - remoteManagedGroups:
+          - controlplane
+          - worker
+        direction: ingress
+        etherType: IPv4
+        name: BGP (calico)
+        portRangeMin: 179
+        portRangeMax: 179
+        protocol: tcp
+      - remoteManagedGroups:
+          - controlplane
+          - worker
+        direction: ingress
+        etherType: IPv4
+        name: IP-in-IP (calico)
+        protocol: "4"
+---
+## Control plane configs
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-controlplane
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      flavor: ${OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR}
+      image:
+        filter:
+          name: ${OPENSTACK_IMAGE_NAME}
+      identityRef:
+        name: ${CLUSTER_NAME}-cloud-config
+        cloudName: ${OPENSTACK_CLOUD}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-controlplane
+  namespace: ${NAMESPACE}
+spec:
+  version: v${KUBERNETES_VERSION}
+  replicas: ${CONTROL_PLANE_MACHINE_COUNT}
+  infrastructureTemplate:
+    kind: OpenStackMachineTemplate
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    name: ${CLUSTER_NAME}-controlplane
+    namespace: ${NAMESPACE}
+  controlPlaneConfig:
+    controlplane:
+      generateType: controlplane
+      talosVersion: ${TALOS_VERSION}
+      strategicPatches:
+        - |
+          machine:
+            kubelet:
+              registerWithFQDN: true
+        - |
+          cluster:
+            externalCloudProvider:
+              enabled: true
+              manifests:
+                - https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/master/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+---
+## Worker deployment configs
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      generateType: join
+      talosVersion: ${TALOS_VERSION}
+      strategicPatches:
+        - |
+          machine:
+            kubelet:
+              registerWithFQDN: true
+        - |
+          cluster:
+            externalCloudProvider:
+              enabled: true
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+    nodepool: nodepool-a
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_MACHINE_COUNT}
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+      nodepool: nodepool-a
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+        nodepool: nodepool-a
+    spec:
+      clusterName: ${CLUSTER_NAME}
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: TalosConfigTemplate
+          name: ${CLUSTER_NAME}-workers
+          namespace: ${NAMESPACE}
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: OpenStackMachineTemplate
+        name: ${CLUSTER_NAME}-workers
+        namespace: ${NAMESPACE}
+      version: ${KUBERNETES_VERSION}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: OpenStackMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      flavor: ${OPENSTACK_NODE_MACHINE_FLAVOR}
+      image:
+        filter:
+          name: ${OPENSTACK_IMAGE_NAME}
+      identityRef:
+        name: ${CLUSTER_NAME}-cloud-config
+        cloudName: ${OPENSTACK_CLOUD}
+---
+## Health check for workers
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: ${CLUSTER_NAME}-worker-hc
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  maxUnhealthy: 40%
+  nodeStartupTimeout: 20m
+  selector:
+    matchLabels:
+      nodepool: nodepool-a
+  unhealthyConditions:
+    - type: Ready
+      status: Unknown
+      timeout: 300s
+    - type: Ready
+      status: "False"
+      timeout: 300s
