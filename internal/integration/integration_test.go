@@ -33,7 +33,7 @@ import (
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	runtimelog "sigs.k8s.io/controller-runtime/pkg/log"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
 var talosVersion *semver.Version
@@ -391,8 +391,8 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 			return err
 		}
 
-		if !conditions.Has(&tcp, controlplanev1.ResizedCondition) &&
-			conditions.GetMessage(&tcp, controlplanev1.ResizedCondition) != "Cannot scale down control plane nodes to 0" {
+		if !conditions.Has(&tcp, string(controlplanev1.ResizedCondition)) &&
+			conditions.GetMessage(&tcp, string(controlplanev1.ResizedCondition)) != "Cannot scale down control plane nodes to 0" {
 			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
 		}
 

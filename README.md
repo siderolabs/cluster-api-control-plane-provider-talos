@@ -26,12 +26,16 @@ There are a few corequisites and assumptions that go into using this project:
 
 This provider's versions are compatible with the following versions of Cluster API:
 
-|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.x) |
-| -------------------------------------------- | --------------- | --------------- | -------------- |
-| Control Plane Provider Talos v1alpha3 (v0.2) | ✓               |                 |                |
-| Control Plane Provider Talos v1alpha3 (v0.3) |                 | ✓               |                |
-| Control Plane Provider Talos v1alpha3 (v0.4) |                 |                 | ✓              |
-| Control Plane Provider Talos v1alpha3 (v0.5) |                 |                 | ✓              |
+|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.x) | v1beta2 (v1.12+) |
+| -------------------------------------------- | --------------- | --------------- | -------------- | ---------------- |
+| Control Plane Provider Talos v1alpha3 (v0.2) | ✓               |                 |                |                  |
+| Control Plane Provider Talos v1alpha3 (v0.3) |                 | ✓               |                |                  |
+| Control Plane Provider Talos v1alpha3 (v0.4) |                 |                 | ✓              |                  |
+| Control Plane Provider Talos v1alpha3 (v0.5) |                 |                 | ✓              |                  |
+| Control Plane Provider Talos v1alpha3 (v0.6) |                 |                 |                | ✓                |
+
+The `v0.6.x` release series targets the Cluster API `v1beta2` contract (CAPI core `v1.12+`, currently tested with `v1.13.0`).
+Released `v0.5.x` artifacts remain on `v1beta1`; `config/metadata/metadata.yaml` advertises the `v0.6` series as `v1beta2`.
 
 This provider's versions are able to install and manage the following versions of Kubernetes:
 
@@ -41,6 +45,7 @@ This provider's versions are able to install and manage the following versions o
 | Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.4) |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.5) |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.6) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 This provider's versions are compatible with the following versions of Talos:
 
@@ -50,6 +55,7 @@ This provider's versions are compatible with the following versions of Talos:
 | Control Plane Provider Talos v1alpha3 (v0.3) | ✓     | ✓      | ✓     |       |       |       |       |       |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.4) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.5) |       |        |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.6) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 ## Building and Installing
 
@@ -86,12 +92,13 @@ If you are going to use this provider as part of Sidero management plane, please
 on how to install and configure it.
 
 This project can be built simply by running `make release` from the root directory.
+Building requires Go 1.26+ (the `v0.6.x` series depends on CAPI `v1.13.0` / controller-runtime `v0.23`).
 Doing so will create a file called `_out/control-plane-components.yaml`.
 If you wish, you can tweak settings by editing the release yaml.
 This file can then be installed into your management cluster with `kubectl apply -f _out/control-plane-components.yaml`.
 
 Note that CACPPT should be deployed as part of a set of controllers for Cluster API.
-You will need at least the upstream CAPI components, the Talos bootstrap provider, and an infrastructure provider for v1beta1 CAPI capabilities.
+You will need at least the upstream CAPI components, the Talos bootstrap provider, and an infrastructure provider for v1beta2 CAPI capabilities.
 
 CACPPT plays the following role in the whole Cluster API architecture:
 
@@ -109,8 +116,12 @@ It contains templates for `AWS` and `GCP`, which are verified by the integration
 
 If you wish to craft your own manifests, here is some important info.
 
-CACPPT supports a single API type, a TalosControlPlane.
-You can create YAML definitions of a TalosControlPlane and `kubectl apply` them as part of a larger CAPI cluster deployment.
+CACPPT supports two API types:
+
+- `TalosControlPlane` for direct control plane resources.
+- `TalosControlPlaneTemplate` for ClusterClass / managed topology.
+
+You can create YAML definitions of a `TalosControlPlane` and `kubectl apply` them as part of a larger CAPI cluster deployment.
 Below is a bare-minimum example.
 
 A basic config:
@@ -121,34 +132,56 @@ kind: TalosControlPlane
 metadata:
   name: talos-cp
 spec:
-  version: v1.18.1
+  version: v1.31.0
   replicas: 1
-  infrastructureTemplate:
-    kind: MetalMachineTemplate
-    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
-    name: talos-cp
+  machineNamingStrategy:
+    template: "{{ .talosControlPlane.name }}-{{ .random }}"
+  machineTemplate:
+    spec:
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: DockerMachineTemplate
+        name: talos-cp-machine-template
   controlPlaneConfig:
     controlplane:
       generateType: controlplane
+      strategicPatches:
+        - |
+          machine:
+            install:
+              disk: /dev/sda
 ```
 
-Note you must provide an infrastructure template for your control plane.
-See your infrastructure provider for how to craft that.
+Direct `TalosControlPlane` resources must reference an infrastructure machine template via
+`spec.machineTemplate.spec.infrastructureRef`.
+See your infrastructure provider for how to craft the referenced machine template.
+
+`spec.machineNamingStrategy` controls the names used for control plane `Machine` objects.
+The corresponding infrastructure machine and Talos bootstrap config reuse the same name.
+If you omit the field, the default template is `{{ .talosControlPlane.name }}-{{ .random }}`.
+Custom templates must include `{{ .random }}` and can use:
+
+- `.cluster.name`
+- `.talosControlPlane.name`
+- `.random`
+
+`strategicPatches` is an array of strings.
+Each patch must be passed as a YAML string, typically via a block scalar (`- |`), not as an inline object.
 
 Note the generateType mentioned above.
 This is a required value in the spec for both controlplane and worker ("join") nodes.
 For a no-frills control plane config, you can simply specify `controlplane` depending on each config section.
-When creating a TalosControlPlane this way, you can then retrieve the talosconfig file that allows for osctl interaction with your nodes by doing something like `kubectl get talosconfig -o yaml talos-cp-xxxx -o jsonpath='{.status.talosConfig}'` after creation.
+When creating a `TalosControlPlane` this way, you can retrieve the generated Talos client config from the corresponding `TalosConfig` object after creation, for example with `kubectl get talosconfig talos-cp-xxxx -o jsonpath='{.status.talosConfig}'`.
 
 If you wish to do something more complex, we allow for the ability to supply an entire Talos machine config file to the resource.
-This can be done by setting the generateType to `none` and specifying a `data` field.
-This config file can be generated with `talosctl config generate` and the edited to supply the various options you may desire.
-This full config is blindly copied from the `data` section of the spec and presented under `.status.controlPlaneData` so that the upstream CAPI controllers can see it and make use.
+This can be done by setting `controlPlaneConfig.controlplane.generateType` to `none` and specifying a `data` field.
+This config file can be generated with `talosctl gen config` and then edited to supply the various options you may desire.
+When you provide `data` this way, the bootstrap provider uses the supplied Talos machine configuration as-is instead of generating one for you.
 
 An example of a more complex config:
 
 ```yaml
-apiVersion: control-plane.cluster.x-k8s.io/v1alpha2
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
 kind: TalosControlPlane
 metadata:
   name: talos-0
@@ -156,19 +189,94 @@ metadata:
     cluster.x-k8s.io/cluster-name: talos
 spec:
   controlPlaneConfig:
-    init:
-        generateType: none
-        data: |
-            version: v1alpha1
-            machine:
-            type: controlplane
-            token: xxxxxx
-            ...
-            ...
-            ...
-  ...
-  ...
+    controlplane:
+      generateType: none
+      data: |
+        version: v1alpha1
+        machine:
+          type: controlplane
+        cluster:
+          token: xxxxxx
+        ...
 ```
 
-Note that specifying the full config above removes the ability for our control plane provider to generate a talosconfig for use.
-As such, you should keep track of the talosconfig that's generated when running `talosctl config generate`.
+When you manage the full machine configuration yourself, you should also keep track of the Talos client configuration you generated alongside it.
+
+
+### ClusterClass / managed topology
+
+For managed topology, define a `TalosControlPlaneTemplate` and reference it from a `ClusterClass`.
+These examples use `cluster.x-k8s.io/v1beta2`, which matches the contract targeted by the `v0.6.x` release series.
+The template example below intentionally omits `machineTemplate.spec.infrastructureRef`; for ClusterClass-managed topology, that reference comes from `ClusterClass.spec.controlPlane.machineInfrastructure.templateRef`.
+`TalosControlPlaneTemplate.spec.template.spec` is immutable after creation, so create a new template resource when you need to roll out a spec change.
+
+```yaml
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlaneTemplate
+metadata:
+  name: talos-cp-template
+spec:
+  template:
+    spec:
+      machineNamingStrategy:
+        template: "{{ .talosControlPlane.name }}-{{ .random }}"
+      machineTemplate:
+        metadata:
+          labels:
+            example.siderolabs.dev/control-plane: "true"
+      controlPlaneConfig:
+        controlplane:
+          generateType: controlplane
+          strategicPatches:
+            - |
+              machine:
+                install:
+                  disk: /dev/sda
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: ClusterClass
+metadata:
+  name: talos-quickstart
+spec:
+  controlPlane:
+    naming:
+      template: "{{ .cluster.name }}-control-plane"
+    templateRef:
+      apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+      kind: TalosControlPlaneTemplate
+      name: talos-cp-template
+    machineInfrastructure:
+      templateRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: DockerMachineTemplate
+        name: talos-cp-machine-template
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: talos-topology
+spec:
+  topology:
+    classRef:
+      name: talos-quickstart
+    version: v1.31.0
+    controlPlane:
+      replicas: 3
+```
+
+For ClusterClass / topology, the infrastructure machine template is supplied via
+`ClusterClass.spec.controlPlane.machineInfrastructure.templateRef`, and the topology controller
+populates `TalosControlPlane.spec.machineTemplate.spec.infrastructureRef` on the generated
+concrete control plane object.
+
+For naming in managed topology there are two levels:
+
+- `ClusterClass.spec.controlPlane.naming.template` controls the generated `TalosControlPlane` name.
+- `TalosControlPlaneTemplate.spec.template.spec.machineNamingStrategy` controls the generated control plane `Machine`, infrastructure machine, and Talos bootstrap config names.
+
+With the example above, a cluster named `talos-topology` produces a concrete `TalosControlPlane`
+named `talos-topology-control-plane`, and control plane machines named
+`talos-topology-control-plane-xxxxx`.
+
+See `config/samples/topology_v1alpha3_clusterclass_with_taloscontrolplanetemplate.yaml` for a ClusterClass / Cluster fragment including workers.
+That sample assumes the referenced infrastructure and worker bootstrap templates already exist.

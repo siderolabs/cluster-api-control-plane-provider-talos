@@ -11,14 +11,14 @@ import (
 
 	"github.com/pkg/errors"
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -31,7 +31,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
-	clusterName := tcp.GetLabels()["cluster.x-k8s.io/cluster-name"]
+	clusterName := tcp.GetLabels()[clusterv1.ClusterNameLabel]
 
 	for _, ref := range tcp.GetOwnerReferences() {
 		if ref.Kind != "Cluster" {
@@ -61,7 +61,7 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 	addrList := []string{}
 
 	var (
-		talosconfigSecret v1.Secret
+		talosconfigSecret corev1.Secret
 	)
 
 	if err := r.Client.Get(ctx,
@@ -109,7 +109,7 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 		return nil, fmt.Errorf("at least one machine should be provided")
 	}
 
-	c, err := r.Tracker.GetClient(ctx, cluster)
+	c, err := r.ClusterCache.GetClient(ctx, cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +119,14 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 	var t *talosconfig.Config
 
 	for _, machine := range machines {
-		if machine.Status.NodeRef == nil {
+		if !machine.Status.NodeRef.IsDefined() {
 			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
 		}
 
-		var node v1.Node
+		var node corev1.Node
 
 		// grab all addresses as endpoints
-		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name, Namespace: machine.Status.NodeRef.Namespace}, &node)
+		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name}, &node)
 		if err != nil {
 			return nil, err
 		}
