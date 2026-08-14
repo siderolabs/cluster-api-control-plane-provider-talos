@@ -35,7 +35,7 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	// Create a new Machine w/ join
 	r.Log.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-	return r.bootControlPlane(ctx, cluster, tcp, false)
+	return r.bootControlPlane(ctx, cluster, tcp, collections.ToMachineList(controlPlane.Machines).Items, false)
 }
 
 func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
