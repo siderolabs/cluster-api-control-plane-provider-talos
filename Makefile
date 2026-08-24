@@ -137,9 +137,13 @@ clean:
 integration-test-build:
 	@$(MAKE) local-integration-test DEST=./_out/ PLATFORM=linux/amd64
 
+# E2E_PROVIDER selects which hack/test/e2e-<provider>.sh script to run.
+# Defaults to openstack; pass E2E_PROVIDER=aws to run the AWS e2e test instead.
+E2E_PROVIDER ?= openstack
+
 .PHONY: integration-test
-integration-test: integration-test-build
-	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-aws.sh
+integration-test: integration-test-build ## Run the e2e integration test (defaults to OpenStack; use E2E_PROVIDER=aws for AWS).
+	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-$(E2E_PROVIDER).sh
 
 .PHONY: unit-tests
 unit-tests:  ## Performs unit tests

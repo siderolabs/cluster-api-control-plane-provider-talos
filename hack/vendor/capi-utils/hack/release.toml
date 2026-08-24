@@ -1,0 +1,16 @@
+# THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
+#
+# Generated on 2021-08-27T13:59:12Z by kres c09f1a6-dirty.
+
+
+# commit to be tagged for the new release
+commit = "HEAD"
+
+project_name = "capi-utils"
+github_repo = "siderolabs/capi-utils"
+match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
+
+# previous = -
+# pre_release = true
+
+# [notes]

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,11 +75,37 @@ func (suite *IntegrationSuite) SetupSuite() {
 		return def
 	}
 
+	envInt := func(key string, def int) int {
+		val := os.Getenv(key)
+		if val == "" {
+			return def
+		}
+
+		parsed, err := strconv.Atoi(val)
+		if err != nil {
+			return def
+		}
+
+		return parsed
+	}
+
 	providerType := env("PROVIDER", "aws:v1.1.0")
 	suite.finalK8sVersion = os.Getenv("UPGRADE_K8S_VERSION")
 
 	provider, err := infrastructure.NewProvider(providerType)
 	suite.Require().NoError(err)
+
+	defaultTemplateFiles := map[string]string{
+		"aws":       "https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml",
+		"openstack": "hack/test/templates/openstack-standard.yaml",
+	}
+
+<<<<<<< HEAD
+	templateFile := env("TEMPLATE_FILE", defaultTemplateFiles[strings.SplitN(providerType, ":", 2)[0]])
+=======
+	providerName := strings.SplitN(providerType, ":", 2)[0]
+	templateFile := env("TEMPLATE_FILE", defaultTemplateFiles[providerName])
+>>>>>>> dd52fd3 (  feat: add OpenStack e2e test path via CAPO)
 
 	var (
 		clusterctlConfigPath string
@@ -158,12 +185,39 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	id := uuid.New()
 
-	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
+	deployOpts := []capi.DeployOption{
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
+		capi.WithTemplateFile(templateFile),
 		capi.WithControlPlaneNodes(3),
-	)
+	}
+
+	if providerName == "openstack" {
+		openStackOpts := infrastructure.NewOpenStackDeployOptions()
+
+		openStackOpts.CloudName = env("OPENSTACK_CLOUD", openStackOpts.CloudName)
+		openStackOpts.ExternalNetworkID = env("OPENSTACK_EXTERNAL_NETWORK_ID", openStackOpts.ExternalNetworkID)
+		openStackOpts.ImageName = env("OPENSTACK_IMAGE_NAME", openStackOpts.ImageName)
+		openStackOpts.FailureDomain = env("OPENSTACK_FAILURE_DOMAIN", openStackOpts.FailureDomain)
+		openStackOpts.DNSNameservers = env("OPENSTACK_DNS_NAMESERVERS", openStackOpts.DNSNameservers)
+		openStackOpts.NodeCIDR = env("OPENSTACK_NODE_CIDR", openStackOpts.NodeCIDR)
+		openStackOpts.ControlPlaneMachineFlavor = env("OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR", openStackOpts.ControlPlaneMachineFlavor)
+		openStackOpts.NodeMachineFlavor = env("OPENSTACK_NODE_MACHINE_FLAVOR", openStackOpts.NodeMachineFlavor)
+
+		// Cinder-backed root volumes are opt-in: leaving *_VOLUME_SIZE_GIB
+		// unset (or <=0) keeps machines on the hypervisor's local ephemeral
+		// storage, matching CAPO's own default when rootVolume is omitted.
+		openStackOpts.ControlPlaneVolumeType = env("OPENSTACK_CONTROL_PLANE_VOLUME_TYPE", openStackOpts.ControlPlaneVolumeType)
+		openStackOpts.ControlPlaneVolumeSizeGiB = envInt("OPENSTACK_CONTROL_PLANE_VOLUME_SIZE_GIB", openStackOpts.ControlPlaneVolumeSizeGiB)
+		openStackOpts.ControlPlaneVolumeAvailabilityZone = env("OPENSTACK_CONTROL_PLANE_VOLUME_AVAILABILITY_ZONE", openStackOpts.ControlPlaneVolumeAvailabilityZone)
+		openStackOpts.NodeVolumeType = env("OPENSTACK_NODE_VOLUME_TYPE", openStackOpts.NodeVolumeType)
+		openStackOpts.NodeVolumeSizeGiB = envInt("OPENSTACK_NODE_VOLUME_SIZE_GIB", openStackOpts.NodeVolumeSizeGiB)
+		openStackOpts.NodeVolumeAvailabilityZone = env("OPENSTACK_NODE_VOLUME_AVAILABILITY_ZONE", openStackOpts.NodeVolumeAvailabilityZone)
+
+		deployOpts = append(deployOpts, capi.WithProviderOptions(openStackOpts))
+	}
+
+	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]), deployOpts...)
 	suite.Require().NoError(err)
 
 	suite.cluster = cluster

@@ -1,0 +1,162 @@
+# THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
+#
+# Generated on 2025-08-12T17:37:44Z by kres 79636f7.
+
+version: "2"
+
+# options for analysis running
+run:
+  modules-download-mode: readonly
+  issues-exit-code: 1
+  tests: true
+
+# output configuration options
+output:
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: true
+      print-linter-name: true
+  path-prefix: ""
+
+
+linters:
+  default: all
+  disable:
+    - exhaustruct
+    - err113
+    - forbidigo
+    - funcorder
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - godox
+    - gomoddirectives
+    - gosec
+    - inamedparam
+    - ireturn
+    - mnd
+    - nestif
+    - nonamedreturns
+    - paralleltest
+    - tagalign
+    - tagliatelle
+    - thelper
+    - varnamelen
+    - wrapcheck
+    - testifylint # complains about our assert recorder and has a number of false positives for assert.Greater(t, thing, 1)
+    - protogetter # complains about us using Value field on typed spec, instead of GetValue which has a different signature
+    - perfsprint # complains about us using fmt.Sprintf in non-performance critical code, updating just kres took too long
+    - musttag # seems to be broken - goes into imported libraries and reports issues there
+    - nolintlint # gives false positives - disable until https://github.com/golangci/golangci-lint/issues/3228 is resolved
+    - wsl # replaced by wsl_v5
+    - noinlineerr
+    - embeddedstructfieldcheck # fighting in many places with fieldalignment
+  # all available settings of specific linters
+  settings:
+    cyclop:
+      # the maximal code complexity to report
+      max-complexity: 20
+    dogsled:
+      max-blank-identifiers: 2
+    dupl:
+      threshold: 150
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: false
+    gocognit:
+      min-complexity: 30
+    nestif:
+      min-complexity: 5
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      disabled-checks: [ ]
+    gocyclo:
+      min-complexity: 20
+    godot:
+      scope: declarations
+    gomodguard: { }
+    govet:
+      enable-all: true
+    lll:
+      line-length: 200
+      tab-width: 4
+    misspell:
+      locale: US
+    nakedret:
+      max-func-lines: 30
+    prealloc:
+      simple: true
+      range-loops: true # Report preallocation suggestions on range loops, true by default
+      for-loops: false # Report preallocation suggestions on for loops, false by default
+    revive:
+      rules:
+        - name: var-naming # Complains about package names like "common"
+          disabled: true
+    rowserrcheck: { }
+    testpackage: { }
+    unparam:
+      check-exported: false
+    unused:
+      local-variables-are-used: false
+    whitespace:
+      multi-if: false   # Enforces newlines (or comments) after every multi-line if statement
+      multi-func: false # Enforces newlines (or comments) after every multi-line function signature
+    wsl:
+      strict-append: true
+      allow-assign-and-call: true
+      allow-multiline-assign: true
+      allow-trailing-comment: false
+      force-case-trailing-whitespace: 0
+      allow-separated-leading-comment: false
+      allow-cuddle-declarations: false
+      force-err-cuddling: false
+    depguard:
+      rules:
+        prevent_unmaintained_packages:
+          list-mode: lax # allow unless explicitly denied
+          files:
+            - $all
+          deny:
+            - pkg: io/ioutil
+              desc: "replaced by io and os packages since Go 1.16: https://tip.golang.org/doc/go1.16#ioutil"
+
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 10
+  max-same-issues: 3
+  uniq-by-line: true
+  new: false
+
+severity:
+  default: error
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+    gofmt:
+      simplify: true
+    gofumpt:
+      extra-rules: false
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
