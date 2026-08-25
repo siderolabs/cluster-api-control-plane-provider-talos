@@ -13,6 +13,7 @@ import (
 	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	controlplanev1beta1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/runtimeclient"
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,8 +27,10 @@ import (
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/flags"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -57,11 +60,15 @@ func init() {
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
 	_ = controlplanev1beta1.AddToScheme(scheme)
+	// Needed so the in-place update path can read ExtensionConfig resources.
+	_ = runtimev1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
+	feature.MutableGates.AddFlag(fs)
+
 	logsv1.AddFlags(logOptions, fs)
 
 	fs.BoolVar(&enableLeaderElection, "enable-leader-election", false,
@@ -167,12 +174,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The runtime client is only built when in-place updates are enabled; leaving it nil is
+	// what makes the reconciler skip the in-place path entirely.
+	var runtimeCaller runtimeclient.Caller
+	if feature.Gates.Enabled(feature.InPlaceUpdates) {
+		setupLog.Info("in-place updates are enabled")
+
+		runtimeCaller = runtimeclient.New(mgr.GetAPIReader())
+	}
+
 	if err = (&controllers.TalosControlPlaneReconciler{
-		Client:       mgr.GetClient(),
-		APIReader:    mgr.GetAPIReader(),
-		Log:          ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
-		Scheme:       mgr.GetScheme(),
-		ClusterCache: clusterCache,
+		Client:        mgr.GetClient(),
+		APIReader:     mgr.GetAPIReader(),
+		Log:           ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
+		Scheme:        mgr.GetScheme(),
+		ClusterCache:  clusterCache,
+		RuntimeClient: runtimeCaller,
 	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosControlPlane")
 		os.Exit(1)

@@ -50,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/runtimeclient"
 )
 
 const requeueDuration = 30 * time.Second
@@ -61,6 +62,10 @@ type TalosControlPlaneReconciler struct {
 	Log          logr.Logger
 	Scheme       *runtime.Scheme
 	ClusterCache clustercache.ClusterCache
+
+	// RuntimeClient calls Cluster API runtime extensions. It is nil unless the InPlaceUpdates
+	// feature gate is enabled, and in-place updates are skipped when it is.
+	RuntimeClient runtimeclient.Caller
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -75,6 +80,7 @@ func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options
 		Complete(r)
 }
 
+// +kubebuilder:rbac:groups=runtime.cluster.x-k8s.io,resources=extensionconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;patch;update
 // +kubebuilder:rbac:groups=core,resources=configmaps,namespace=kube-system,verbs=get;list;watch;create
@@ -977,6 +983,22 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	}
 
 	needRollout := controlPlane.MachinesNeedingRollout()
+
+	// Offer outdated machines to the in-place update extension first. Anything it claims is
+	// either already updating or has just been triggered, and must not also be rolled out.
+	claimed, err := r.reconcileInPlaceUpdates(ctx, tcp, controlPlane, needRollout)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	for name := range claimed {
+		delete(needRollout, name)
+	}
+
+	if len(claimed) > 0 {
+		logger.Info("machines updating in place", "machines", claimed.Names())
+	}
+
 	if len(needRollout) > 0 {
 		logger.Info("rolling out control plane machines", "needRollout", needRollout.Names())
 		conditions.Set(controlPlane.TCP, metav1.Condition{

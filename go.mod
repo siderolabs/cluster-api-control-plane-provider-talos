@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/coreos/go-semver v0.3.1
+	github.com/evanphx/json-patch v5.9.11+incompatible
 	github.com/go-logr/logr v1.4.3
 	github.com/gobuffalo/flect v1.0.3
 	github.com/google/go-cmp v0.7.0
