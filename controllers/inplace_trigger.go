@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 
+	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/hooks"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/ssa"
 )
@@ -54,6 +56,11 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(ctx context.Context, 
 	// The InfraMachine is written first because it is the call most likely to fail.
 	if plan.desiredInfraMachine != nil {
 		desired := plan.desiredInfraMachine.DeepCopy()
+		// Server-side apply is declarative and must not carry a resourceVersion; these
+		// desired objects are copies of live ones, so it has to be cleared or the apply
+		// conflicts with the annotation patch written above.
+		desired.SetResourceVersion("")
+		desired.SetManagedFields(nil)
 		desired.SetLabels(nil)
 		desired.SetAnnotations(map[string]string{
 			clusterv1.TemplateClonedFromNameAnnotation:      plan.desiredInfraMachine.GetAnnotations()[clusterv1.TemplateClonedFromNameAnnotation],
@@ -68,6 +75,14 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(ctx context.Context, 
 
 	if plan.desiredTalosConfig != nil {
 		desired := plan.desiredTalosConfig.DeepCopy()
+		// Server-side apply refuses an object without apiVersion/kind, and the typed client
+		// strips TypeMeta when it reads one, so it has to be restored here.
+		desired.TypeMeta = metav1.TypeMeta{
+			APIVersion: cabptv1.GroupVersion.String(),
+			Kind:       "TalosConfig",
+		}
+		desired.ResourceVersion = ""
+		desired.ManagedFields = nil
 		desired.Labels = nil
 		desired.Annotations = map[string]string{
 			// CABPT's validating webhook admits a spec change only when this annotation is
@@ -81,6 +96,13 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(ctx context.Context, 
 	}
 
 	if plan.desiredMachine != nil {
+		plan.desiredMachine.TypeMeta = metav1.TypeMeta{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Machine",
+		}
+		plan.desiredMachine.ResourceVersion = ""
+		plan.desiredMachine.ManagedFields = nil
+
 		if err := ssa.Patch(ctx, r.Client, plan.desiredMachine); err != nil {
 			return fmt.Errorf("failed to write desired Machine for %s: %w", klog.KObj(plan.machine), err)
 		}
