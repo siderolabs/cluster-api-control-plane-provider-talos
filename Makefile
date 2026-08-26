@@ -141,9 +141,12 @@ integration-test-build:
 # Defaults to openstack; pass E2E_PROVIDER=aws to run the AWS e2e test instead.
 E2E_PROVIDER ?= openstack
 
-.PHONY: integration-test
-integration-test: integration-test-build ## Run the e2e integration test (defaults to OpenStack; use E2E_PROVIDER=aws for AWS).
+.PHONY: integration-test-run
+integration-test-run: ## Run the e2e integration test against a previously built ./_out/integration.test binary.
 	@REGISTRY_AND_USERNAME=$(REGISTRY_AND_USERNAME) TAG=$(TAG) NAME=$(NAME) bash hack/test/e2e-$(E2E_PROVIDER).sh
+
+.PHONY: integration-test
+integration-test: integration-test-build integration-test-run ## Run the e2e integration test (defaults to OpenStack; use E2E_PROVIDER=aws for AWS).
 
 .PHONY: unit-tests
 unit-tests:  ## Performs unit tests
@@ -152,7 +155,15 @@ unit-tests:  ## Performs unit tests
 check-dirty: ## Verifies that source tree is not dirty
 	@if test -n "`git status --porcelain`"; then echo "Source tree is dirty"; git status; exit 1 ; fi
 
+# ARC_RUNNER_SCALE_SET is the name of the gha-runner-scale-set AutoscalingRunnerSet
+# (find it via `kubectl get autoscalingrunnersets -A` on the ARC cluster) that has
+# network access to the OpenStack cloud. kres can only emit `runs-on: {group: ...}`,
+# never a bare runner name, so this patch rewrites it after every regeneration -
+# it must be reapplied on every `make rekres`, not applied by hand once.
+ARC_RUNNER_SCALE_SET ?= e2e-arc-runner-set
+
 .PHONY: rekres
 rekres:
 	@docker pull $(KRES_IMAGE)
 	@docker run --rm --net=host --user $(shell id -u):$(shell id -g) -v $(PWD):/src -w /src -e GITHUB_TOKEN $(KRES_IMAGE)
+	@yq -i '.jobs.integration-test-openstack.runs-on = "$(ARC_RUNNER_SCALE_SET)"' .github/workflows/ci.yaml

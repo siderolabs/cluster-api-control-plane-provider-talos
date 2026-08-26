@@ -55,10 +55,38 @@ spec:
             PUSH: true
         - name: check-dirty
         - name: unit-tests
-        - name: integration-test
+        - name: integration-test-build
+        - name: upload-integration-test-binary
+          artifactStep:
+            type: upload
+            artifactName: integration-test-binary
+            artifactPath: _out/
+    - name: integration-test-openstack
+      runnerGroup: generic # placeholder, patched to the ARC scale-set name by `make rekres`
+      depends:
+        - default
+      conditions:
+        - on-pull-request
+      steps:
+        - name: download-integration-test-binary
+          artifactStep:
+            type: download
+            artifactName: integration-test-binary
+            artifactPath: _out/
+        - name: integration-test-run
           environment:
             REGISTRY: registry.dev.siderolabs.io
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            CI: false
+            OPENSTACK_CLOUD_YAML_B64: ${{ secrets.OPENSTACK_CLOUD_YAML_B64 }}
+            OPENSTACK_CACERT_B64: ${{ secrets.OPENSTACK_CACERT_B64 }}
+            OPENSTACK_IMAGE_NAME: ${{ secrets.OPENSTACK_IMAGE_NAME }}
+            OPENSTACK_EXTERNAL_NETWORK_ID: ${{ secrets.OPENSTACK_EXTERNAL_NETWORK_ID }}
+            OPENSTACK_FAILURE_DOMAIN: ${{ secrets.OPENSTACK_FAILURE_DOMAIN }}
+            OPENSTACK_DNS_NAMESERVERS: ${{ secrets.OPENSTACK_DNS_NAMESERVERS }}
+            OPENSTACK_NODE_CIDR: ${{ secrets.OPENSTACK_NODE_CIDR }}
+            OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR: ${{ secrets.OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR }}
+            OPENSTACK_NODE_MACHINE_FLAVOR: ${{ secrets.OPENSTACK_NODE_MACHINE_FLAVOR }}
     - name: push
       buildxOptions:
         enabled: true
