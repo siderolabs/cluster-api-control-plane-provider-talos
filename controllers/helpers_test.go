@@ -17,7 +17,7 @@ import (
 
 	"github.com/gobuffalo/flect"
 	"github.com/pkg/errors"
-	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	bootstrapv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/crypto/tls"
 	"github.com/siderolabs/crypto/x509"
 	"github.com/siderolabs/gen/xslices"
@@ -541,5 +541,5 @@ func init() {
 	_ = controlplanev1.AddToScheme(fakeScheme)
 	_ = corev1.AddToScheme(fakeScheme)
 	_ = appsv1.AddToScheme(fakeScheme)
-	_ = bootstrapv1alpha3.AddToScheme(fakeScheme)
+	_ = bootstrapv1.AddToScheme(fakeScheme)
 }

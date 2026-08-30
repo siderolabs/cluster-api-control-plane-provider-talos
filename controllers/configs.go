@@ -10,7 +10,11 @@ import (
 	"reflect"
 
 	"github.com/pkg/errors"
-	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	// The legacy init-node path below reads TalosConfigStatus.TalosConfig, which exists only in
+	// v1alpha3: v1beta1 dropped it in favour of the <cluster>-talosconfig secret. Reading a
+	// v1alpha3-only field requires the v1alpha3 client, so this file pins that version
+	// deliberately while the rest of the provider uses the v1beta1 hub.
+	cabptv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -143,8 +147,8 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 
 		if t == nil {
 			var (
-				cfgs  cabptv1.TalosConfigList
-				found *cabptv1.TalosConfig
+				cfgs  cabptv1alpha3.TalosConfigList
+				found *cabptv1alpha3.TalosConfig
 			)
 
 			// find talosconfig in the machine's namespace

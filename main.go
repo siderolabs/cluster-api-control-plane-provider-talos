@@ -10,6 +10,7 @@ import (
 	"os"
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	bootstrapv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	controlplanev1beta1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
@@ -57,6 +58,8 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
+	_ = bootstrapv1.AddToScheme(scheme)
+	// The legacy init-node talosconfig path still reads a v1alpha3-only status field.
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
 	_ = controlplanev1beta1.AddToScheme(scheme)

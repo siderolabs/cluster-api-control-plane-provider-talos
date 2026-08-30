@@ -12,6 +12,8 @@ package v1alpha3
 import (
 	unsafe "unsafe"
 
+	apiv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	apiv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	v1beta1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,6 +91,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddConversionFunc((*apiv1alpha3.TalosConfigSpec)(nil), (*apiv1beta1.TalosConfigSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha3_TalosConfigSpec_To_v1beta1_TalosConfigSpec(a.(*apiv1alpha3.TalosConfigSpec), b.(*apiv1beta1.TalosConfigSpec), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddConversionFunc((*TalosControlPlaneSpec)(nil), (*v1beta1.TalosControlPlaneSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha3_TalosControlPlaneSpec_To_v1beta1_TalosControlPlaneSpec(a.(*TalosControlPlaneSpec), b.(*v1beta1.TalosControlPlaneSpec), scope)
 	}); err != nil {
@@ -101,6 +108,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddConversionFunc((*corev1beta1.Condition)(nil), (*v1.Condition)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_Condition_To_v1_Condition(a.(*corev1beta1.Condition), b.(*v1.Condition), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*apiv1beta1.TalosConfigSpec)(nil), (*apiv1alpha3.TalosConfigSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(a.(*apiv1beta1.TalosConfigSpec), b.(*apiv1alpha3.TalosConfigSpec), scope)
 	}); err != nil {
 		return err
 	}
@@ -123,8 +135,12 @@ func RegisterConversions(s *runtime.Scheme) error {
 }
 
 func autoConvert_v1alpha3_ControlPlaneConfig_To_v1beta1_ControlPlaneConfig(in *ControlPlaneConfig, out *v1beta1.ControlPlaneConfig, s conversion.Scope) error {
-	out.InitConfig = in.InitConfig
-	out.ControlPlaneConfig = in.ControlPlaneConfig
+	if err := Convert_v1alpha3_TalosConfigSpec_To_v1beta1_TalosConfigSpec(&in.InitConfig, &out.InitConfig, s); err != nil {
+		return err
+	}
+	if err := Convert_v1alpha3_TalosConfigSpec_To_v1beta1_TalosConfigSpec(&in.ControlPlaneConfig, &out.ControlPlaneConfig, s); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -134,8 +150,12 @@ func Convert_v1alpha3_ControlPlaneConfig_To_v1beta1_ControlPlaneConfig(in *Contr
 }
 
 func autoConvert_v1beta1_ControlPlaneConfig_To_v1alpha3_ControlPlaneConfig(in *v1beta1.ControlPlaneConfig, out *ControlPlaneConfig, s conversion.Scope) error {
-	out.InitConfig = in.InitConfig
-	out.ControlPlaneConfig = in.ControlPlaneConfig
+	if err := Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(&in.InitConfig, &out.InitConfig, s); err != nil {
+		return err
+	}
+	if err := Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(&in.ControlPlaneConfig, &out.ControlPlaneConfig, s); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -8,7 +8,7 @@ import (
 	"context"
 	"reflect"
 
-	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"

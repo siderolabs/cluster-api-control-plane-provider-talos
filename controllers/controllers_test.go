@@ -11,7 +11,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	bootstrapv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/config"
@@ -690,7 +690,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 	}, time.Minute).Should(Succeed())
 
 	for _, machine := range suite.getMachines(fakeClient, cluster) {
-		talosconfig := &bootstrapv1alpha3.TalosConfig{}
+		talosconfig := &bootstrapv1.TalosConfig{}
 
 		g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: machine.Namespace}, talosconfig)).NotTo(HaveOccurred())
 

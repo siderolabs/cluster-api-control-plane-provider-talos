@@ -521,6 +521,7 @@ spec:
                     description: TalosConfigSpec defines the desired state of TalosConfig
                     properties:
                       configPatches:
+                        description: RFC6902 JSON patches to apply to machine configuration.
                         items:
                           properties:
                             op:
@@ -535,8 +536,17 @@ spec:
                           type: object
                         type: array
                       data:
+                        description: Machine configuration in case generateType=none.
                         type: string
                       generateType:
+                        description: |-
+                          Talos machine configuration type to generate: Supported values are:
+                          controlplane, worker, init (deprecated), none (configuration must be then provided in data field).
+                        enum:
+                        - controlplane
+                        - worker
+                        - init
+                        - none
                         type: string
                       hostname:
                         description: Set hostname in the machine configuration to
@@ -558,6 +568,10 @@ spec:
                           type: string
                         type: array
                       talosVersion:
+                        description: |-
+                          Version of Talos to generate machine configuration for, i.e. v1.0 (patch version may be omitted).
+                          Defaults to the latest supported version if unspecified.
+                          It is recommended to set this field explicitly to avoid unexpected issues during provider upgrades.
                         type: string
                     required:
                     - generateType
@@ -567,6 +581,7 @@ spec:
                       doesn''t use init configs.'
                     properties:
                       configPatches:
+                        description: RFC6902 JSON patches to apply to machine configuration.
                         items:
                           properties:
                             op:
@@ -581,8 +596,17 @@ spec:
                           type: object
                         type: array
                       data:
+                        description: Machine configuration in case generateType=none.
                         type: string
                       generateType:
+                        description: |-
+                          Talos machine configuration type to generate: Supported values are:
+                          controlplane, worker, init (deprecated), none (configuration must be then provided in data field).
+                        enum:
+                        - controlplane
+                        - worker
+                        - init
+                        - none
                         type: string
                       hostname:
                         description: Set hostname in the machine configuration to
@@ -604,6 +628,10 @@ spec:
                           type: string
                         type: array
                       talosVersion:
+                        description: |-
+                          Version of Talos to generate machine configuration for, i.e. v1.0 (patch version may be omitted).
+                          Defaults to the latest supported version if unspecified.
+                          It is recommended to set this field explicitly to avoid unexpected issues during provider upgrades.
                         type: string
                     required:
                     - generateType
