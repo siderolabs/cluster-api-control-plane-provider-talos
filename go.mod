@@ -159,3 +159,9 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 )
+
+// The bootstrap provider fork keeps the upstream module path, so it is consumed through a
+// replace. In-place control plane updates only work against the forked CABPT: this provider
+// stamps UpdateInProgressAnnotation, and the forked bootstrap provider is what reacts to it
+// by regenerating the machine configuration. Upstream is no longer developed.
+replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.7.1

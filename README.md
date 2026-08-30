@@ -19,8 +19,8 @@ Given some basic info, this provider will generate control plane configurations 
 There are a few corequisites and assumptions that go into using this project:
 
 - [Cluster API](https://github.com/kubernetes-sigs/cluster-api)
-- [Cluster API Bootstrap Provider Talos](https://github.com/talos-systems/cluster-api-bootstrap-provider-talos)
-- [Cluster API Provider Metal](https://github.com/talos-systems/cluster-api-provider-metal) (optional)
+- [Cluster API Bootstrap Provider Talos](https://github.com/sidero-community/cluster-api-bootstrap-provider-talos)
+- [Cluster API Provider Metal](https://github.com/siderolabs/cluster-api-provider-metal) (optional)
 
 ## Compatibility with Cluster API and Kubernetes Versions
 
@@ -78,10 +78,10 @@ This can be worked around by adding the following to `~/.cluster-api/clusterctl.
 ```yaml
 providers:
   - name: "talos"
-    url: "https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml"
+    url: "https://github.com/sidero-community/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml"
     type: "BootstrapProvider"
   - name: "talos"
-    url: "https://github.com/siderolabs/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml"
+    url: "https://github.com/sidero-community/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml"
     type: "ControlPlaneProvider"
   - name: "sidero"
     url: "https://github.com/siderolabs/sidero/releases/latest/infrastructure-components.yaml"
