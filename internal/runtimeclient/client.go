@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -185,7 +186,13 @@ func (c *Client) CallExtension(ctx context.Context, hook runtimecatalog.Hook, _ 
 // from the handler name alone reaches the server and comes back 404.
 func endpointFor(config *runtimev1.ExtensionConfig, handler *runtimev1.ExtensionHandler, gvh runtimecatalog.GroupVersionHook) (string, error) {
 	clientConfig := config.Spec.ClientConfig
-	hookPath := runtimecatalog.GVHToPath(gvh, handler.Name)
+
+	// Discovery reports a handler as "<name>.<ExtensionConfig name>", but the server registers it
+	// under the bare name it was added with, so the suffix has to come back off before building
+	// the path. Core Cluster API does the same before calling.
+	name := strings.TrimSuffix(handler.Name, "."+config.Name)
+
+	hookPath := runtimecatalog.GVHToPath(gvh, name)
 
 	switch {
 	case clientConfig.URL != "":
