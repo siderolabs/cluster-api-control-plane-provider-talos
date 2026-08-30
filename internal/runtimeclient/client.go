@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
+	"path"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,7 +125,12 @@ func (c *Client) CallExtension(ctx context.Context, hook runtimecatalog.Hook, _ 
 		return fmt.Errorf("no extension handler %q registered for the hook", name)
 	}
 
-	endpoint, err := endpointFor(config, handler)
+	gvh, err := c.catalog.GroupVersionHook(hook)
+	if err != nil {
+		return fmt.Errorf("hook is not in the catalog: %w", err)
+	}
+
+	endpoint, err := endpointFor(config, handler, gvh)
 	if err != nil {
 		return err
 	}
@@ -174,8 +179,13 @@ func (c *Client) CallExtension(ctx context.Context, hook runtimecatalog.Hook, _ 
 }
 
 // endpointFor builds the URL of a handler from its ExtensionConfig client config.
-func endpointFor(config *runtimev1.ExtensionConfig, handler *runtimev1.ExtensionHandler) (string, error) {
+//
+// The path is built with the catalog's own helper rather than by hand. A runtime extension server
+// registers each handler under /<group>/<version>/<hook>/<name>, all lower cased, so a URL made
+// from the handler name alone reaches the server and comes back 404.
+func endpointFor(config *runtimev1.ExtensionConfig, handler *runtimev1.ExtensionHandler, gvh runtimecatalog.GroupVersionHook) (string, error) {
 	clientConfig := config.Spec.ClientConfig
+	hookPath := runtimecatalog.GVHToPath(gvh, handler.Name)
 
 	switch {
 	case clientConfig.URL != "":
@@ -184,7 +194,7 @@ func endpointFor(config *runtimev1.ExtensionConfig, handler *runtimev1.Extension
 			return "", fmt.Errorf("invalid extension URL %q: %w", clientConfig.URL, err)
 		}
 
-		base.Path = joinPath(base.Path, handler.Name)
+		base.Path = path.Join(base.Path, hookPath)
 
 		return base.String(), nil
 
@@ -201,18 +211,12 @@ func endpointFor(config *runtimev1.ExtensionConfig, handler *runtimev1.Extension
 		return (&url.URL{
 			Scheme: "https",
 			Host:   host,
-			Path:   joinPath(svc.Path, handler.Name),
+			Path:   path.Join(svc.Path, hookPath),
 		}).String(), nil
 
 	default:
 		return "", fmt.Errorf("ExtensionConfig %s specifies neither url nor service", config.Name)
 	}
-}
-
-func joinPath(prefix, name string) string {
-	prefix = strings.TrimSuffix(prefix, "/")
-
-	return prefix + "/" + name
 }
 
 // clientFor builds an HTTPS client trusting the CA bundle the ExtensionConfig advertises.
