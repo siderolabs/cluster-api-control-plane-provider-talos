@@ -160,8 +160,11 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{}, err
 	}
 
+	// The machine is deleted either way -- the etcd member is the part that failed -- but the
+	// failure is reported instead of being swallowed, so the next reconcile retries rather than
+	// leaving auditEtcd to discover the orphan on its own.
 	if leaveErr != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, leaveErr
 	}
 
 	result, err := r.deleteNode(ctx, client, deleteMachine)
