@@ -690,6 +690,55 @@ func TestReconcileDelete_ReleasesHooksAndConverges(t *testing.T) {
 	assert.NotContains(t, f.tcp.Finalizers, controlplanev1.TalosControlPlaneFinalizer)
 }
 
+// A deleting machine without our hook has unknown etcd state, so nothing else may have its
+// member removed until that machine is gone: doing both at once is how a three-member cluster
+// ends up one-live-of-two and loses quorum.
+func TestPreTerminateHook_HoldsWhileAnUnhookedMachineIsDeleting(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	now := time.Now()
+
+	hooked := newPTMachine(tcp, "cp-hooked", ptHooked, ptDeleting(now.Add(-time.Minute), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	unhooked := newPTMachine(tcp, "cp-unhooked", ptDeleting(now, clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-peer", ptHooked)
+
+	f := newPreTerminateFixture(t, hooked, unhooked, peer)
+	f.dialer.clients["cp-peer"] = &fakeEtcdCalls{
+		name:    "cp-peer",
+		members: []*machineapi.EtcdMember{{Id: 1, Hostname: "cp-hooked"}, {Id: 2, Hostname: "cp-unhooked"}, {Id: 3, Hostname: "cp-peer"}},
+	}
+	f.dialer.clients["cp-hooked"] = &fakeEtcdCalls{name: "cp-hooked", services: runningEtcd()}
+
+	res, err := f.run(context.Background())
+	require.NoError(t, err)
+
+	assert.Positive(t, res.RequeueAfter)
+	assert.True(t, f.hasHook(t, "cp-hooked"), "the hooked machine waits its turn")
+	assert.Zero(t, f.dialer.totalEtcdCalls(), "no membership change while another member's fate is unknown")
+}
+
+// A stamp patch that keeps failing must not park a deletion that is already in flight.
+func TestPreTerminateHook_StampFailureDoesNotBlockServicing(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	victim := newPTMachine(tcp, "cp-1", ptHooked, ptDeleting(time.Now(), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-2", ptHooked)
+
+	f := newPreTerminateFixture(t, victim, peer)
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{
+		name:    "cp-2",
+		members: []*machineapi.EtcdMember{{Id: 2, Hostname: "cp-2"}},
+	}
+
+	// A machine the reconcile sees but the API server does not: stamping it patches an object
+	// that is not there, which fails the way a persistently rejected patch would.
+	phantom := newPTMachine(tcp, "cp-3")
+	f.machines.Items = append(f.machines.Items, *phantom)
+
+	_, err := f.run(context.Background())
+	require.Error(t, err, "the stamping failure is still reported")
+
+	assert.False(t, f.hasHook(t, "cp-1"), "the in-flight deletion is serviced regardless")
+}
+
 // --- 1H.9: last member -----------------------------------------------------
 
 func TestPreTerminateHook_SkipsLeaveForLastMember(t *testing.T) {
@@ -805,4 +854,30 @@ func TestReconcile_ServicesHooksBeforeTheControlPlaneEndpointGate(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.False(t, f.hasHook(t, "cp-1"))
+}
+
+// Same, for the infrastructure template: a control plane whose template has been deleted still
+// has to be able to finish a machine deletion. Before the handler ran first, this parked the
+// deletion forever with the fail-open clock never started.
+func TestReconcile_ServicesHooksWhenTheInfraTemplateIsMissing(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+		APIGroup: "infrastructure.cluster.x-k8s.io",
+		Kind:     "GenericInfrastructureMachineTemplate",
+		Name:     "deleted-template",
+	}
+
+	victim := newPTMachine(tcp, "cp-1", ptHooked, ptDeleting(time.Now(), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-2", ptHooked)
+
+	f := newPreTerminateFixtureWithTCP(t, tcp, victim, peer)
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{
+		name:    "cp-2",
+		members: []*machineapi.EtcdMember{{Id: 2, Hostname: "cp-2"}},
+	}
+
+	_, err := f.r.reconcile(context.Background(), f.cluster, f.tcp)
+	require.Error(t, err, "the unresolvable template is still reported")
+
+	assert.False(t, f.hasHook(t, "cp-1"), "the deletion is serviced before the template gate")
 }

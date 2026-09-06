@@ -213,11 +213,6 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	logger := ctrl.LoggerFrom(ctx, "cluster", cluster.Name)
 	logger.Info("reconcile TalosControlPlane")
 
-	// Update ownerrefs on infra templates
-	if err := r.reconcileExternalReference(ctx, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, cluster); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// TODO: handle proper adoption of Machines
 	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
@@ -226,13 +221,21 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		return ctrl.Result{}, err
 	}
 
-	// Machine deletion hooks are serviced first, ahead of every gate below: a Machine parked at
-	// the pre-terminate phase blocks its InfraMachine from being deleted, and the control plane
-	// endpoint, node health and etcd health can all be failing exactly when a control plane
-	// Machine is on its way out.
+	// Machine deletion hooks are serviced before anything else in this reconcile. A Machine held
+	// at the pre-terminate phase blocks its InfraMachine from being deleted, and every gate below
+	// -- a missing or unresolvable infrastructure template, an unpublished control plane
+	// endpoint, unhealthy nodes or etcd -- can be failing exactly when a control plane Machine is
+	// on its way out. Returning ahead of the handler would park such a deletion indefinitely,
+	// with the fail-open deadline never even started. Nothing the handler needs comes from those
+	// gates: it works off the Machines and their status addresses alone.
 	hookResult, hookErr := r.reconcileMachinePreTerminateHooks(ctx, cluster, tcp, &ownedMachines)
 	if hookErr != nil {
 		logger.Error(hookErr, "failed to reconcile machine pre-terminate hooks")
+	}
+
+	// Update ownerrefs on infra templates
+	if err := r.reconcileExternalReference(ctx, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, cluster); err != nil {
+		return ctrl.Result{}, kerrors.NewAggregate([]error{hookErr, err})
 	}
 
 	// If ControlPlaneEndpoint is not set, return early

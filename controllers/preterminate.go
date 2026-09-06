@@ -102,11 +102,37 @@ func (r *TalosControlPlaneReconciler) reconcileMachinePreTerminateHooks(
 ) (ctrl.Result, error) {
 	owned := ownedControlPlaneMachines(tcp, machines)
 
-	if err := r.stampPreTerminateHooks(ctx, owned); err != nil {
-		return ctrl.Result{}, err
+	// Adopting machines is best-effort on this pass: a stamp patch that keeps failing must not
+	// park a deletion that is already in flight behind it, so its error is carried alongside the
+	// servicing below instead of returned ahead of it.
+	stampErr := r.stampPreTerminateHooks(ctx, owned)
+
+	result, err := r.servicePreTerminateHooks(ctx, cluster, tcp, owned)
+
+	return result, kerrors.NewAggregate([]error{stampErr, err})
+}
+
+// servicePreTerminateHooks picks the one deleting Machine to act on this pass and acts on it.
+func (r *TalosControlPlaneReconciler) servicePreTerminateHooks(
+	ctx context.Context,
+	cluster *clusterv1.Cluster,
+	tcp *controlplanev1.TalosControlPlane,
+	owned []*clusterv1.Machine,
+) (ctrl.Result, error) {
+	deleting, unhooked := deletingMachines(owned)
+
+	// A deleting Machine without our hook is already past the point where its etcd membership
+	// could be resolved, so whether its member is still in the cluster is unknown. Removing a
+	// second member while that one is unaccounted for is how a three-member cluster ends up with
+	// one live member out of two and loses quorum. Wait for it to go away first.
+	// Mirrors KCP (controlplane/kubeadm/internal/controllers/controller.go:1344-1348).
+	if unhooked != nil {
+		r.Log.Info("waiting for a deleting control plane machine without the pre-terminate hook to go away",
+			"machine", unhooked.Name)
+
+		return ctrl.Result{RequeueAfter: preTerminateRequeueAfter}, nil
 	}
 
-	deleting := hookedDeletingMachines(owned)
 	if len(deleting) == 0 {
 		return ctrl.Result{}, nil
 	}
@@ -114,6 +140,11 @@ func (r *TalosControlPlaneReconciler) reconcileMachinePreTerminateHooks(
 	// Serialization: etcd tolerates exactly one membership change at a time, so only the
 	// Machine with the oldest deletionTimestamp is serviced on this pass. The rest are picked
 	// up on a later one, which keeps the handler deterministic and re-entrant.
+	//
+	// Note that the fail-open deadline is therefore a per-serviced-machine promise, not a
+	// per-machine one: an oldest Machine stuck earlier in its deletion (draining, say) holds up
+	// younger hooked Machines without their clocks having started. That matches KCP, and Cluster
+	// API's own nodeDrainTimeoutSeconds is what bounds the case that causes it.
 	result, err := r.reconcilePreTerminateHookForMachine(ctx, cluster, tcp, deleting[0], owned)
 	if err != nil {
 		return result, err
@@ -162,10 +193,10 @@ func (r *TalosControlPlaneReconciler) reconcilePreTerminateHookForMachine(
 	// Whole-cluster or whole-control-plane teardown: every member is going away, so removing
 	// them one at a time is both wrong (the last member cannot forfeit leadership to anyone)
 	// and slow. Mirrors KCP's reconcileDelete.
+	//
+	// The Cluster is never nil here: Reconcile returns before reaching this code when the owner
+	// Cluster is missing or has not set its OwnerRef yet.
 	switch {
-	case cluster == nil:
-		return r.releasePreTerminateHookWithEvent(ctx, victim, corev1.EventTypeNormal, etcdCleanupSkippedEvent,
-			"cluster is gone, skipping etcd member removal")
 	case !cluster.DeletionTimestamp.IsZero():
 		return r.releasePreTerminateHookWithEvent(ctx, victim, corev1.EventTypeNormal, etcdCleanupSkippedEvent,
 			"cluster is being deleted, skipping etcd member removal")
@@ -488,17 +519,22 @@ func ownedControlPlaneMachines(tcp *controlplanev1.TalosControlPlane, machines *
 	return owned
 }
 
-// hookedDeletingMachines returns the deleting machines that carry our hook, oldest
-// deletionTimestamp first, name as the tie-break.
-func hookedDeletingMachines(owned []*clusterv1.Machine) []*clusterv1.Machine {
-	var deleting []*clusterv1.Machine
+// deletingMachines splits the owned machines that are being deleted into the ones carrying our
+// hook -- oldest deletionTimestamp first, name as the tie-break -- and the first one found
+// without it. The caller is name-ordered, so the unhooked machine reported is deterministic.
+func deletingMachines(owned []*clusterv1.Machine) (hooked []*clusterv1.Machine, unhooked *clusterv1.Machine) {
+	deleting := []*clusterv1.Machine{}
 
 	for _, machine := range owned {
 		if machine.DeletionTimestamp.IsZero() {
 			continue
 		}
 
-		if _, hooked := machine.Annotations[PreTerminateHookCleanupAnnotation]; !hooked {
+		if _, ok := machine.Annotations[PreTerminateHookCleanupAnnotation]; !ok {
+			if unhooked == nil {
+				unhooked = machine
+			}
+
 			continue
 		}
 
@@ -513,7 +549,7 @@ func hookedDeletingMachines(owned []*clusterv1.Machine) []*clusterv1.Machine {
 		return deleting[i].Name < deleting[j].Name
 	})
 
-	return deleting
+	return deleting, unhooked
 }
 
 // etcdCleanupObservedAt reads the fail-open deadline anchor off the Machine.

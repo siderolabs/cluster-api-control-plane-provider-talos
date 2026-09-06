@@ -285,7 +285,11 @@ That sample assumes the referenced infrastructure and worker bootstrap templates
 
 Every control plane `Machine` this provider owns is created with the Cluster API pre-terminate
 lifecycle hook `pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup`. Machines that
-predate the hook are adopted on the next reconcile.
+predate the hook are adopted on the next reconcile — with one deliberate exception: a Machine that
+is *already* being deleted is never stamped, because it may have moved past the pre-terminate phase
+already. Those take the older path, where the provider's own scale-down removes the etcd member
+before requesting the deletion. So during an upgrade, control plane Machines already in flight
+finish the old way and everything after them is covered by the hook.
 
 While that annotation is present, the core Machine controller holds the `Machine` at the
 pre-terminate phase — after the node has been drained and its volumes detached, and before the
