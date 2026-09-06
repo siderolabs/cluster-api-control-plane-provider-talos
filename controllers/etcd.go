@@ -12,7 +12,6 @@ import (
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
-	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -112,7 +111,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
-func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, machineToLeave clusterv1.Machine) error {
+func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c etcdCalls, machineToLeave clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
@@ -147,7 +146,7 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.
 // This is used in times when the machine was deleted out from under us.
-func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *talosclient.Client, member *machineapi.EtcdMember) error {
+func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c etcdCalls, member *machineapi.EtcdMember) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
@@ -225,20 +224,7 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 
 		present := false
 		for _, machine := range machines.Items {
-			hostname := machine.Status.NodeRef.Name
-
-			for _, address := range machine.Status.Addresses {
-				if address.Type == clusterv1.MachineHostName {
-					hostname = address.Address
-
-					break
-				}
-			}
-
-			// break apart the noderef name in case it's an fqdn (like in AWS)
-			hostname, _, _ = strings.Cut(hostname, ".")
-
-			if strings.EqualFold(hostname, member.Hostname) {
+			if strings.EqualFold(machineHostName(&machine), member.Hostname) {
 				present = true
 
 				break

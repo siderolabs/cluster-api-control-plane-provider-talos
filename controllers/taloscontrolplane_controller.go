@@ -66,6 +66,10 @@ type TalosControlPlaneReconciler struct {
 	// RuntimeClient calls Cluster API runtime extensions. It is nil unless the InPlaceUpdates
 	// feature gate is enabled, and in-place updates are skipped when it is.
 	RuntimeClient runtimeclient.Caller
+
+	// etcdDialer overrides how Talos clients are opened for etcd operations. Nil in production,
+	// where talosconfigForMachines is used; tests set it to inject a fake.
+	etcdDialer func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines ...clusterv1.Machine) (etcdCalls, error)
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
