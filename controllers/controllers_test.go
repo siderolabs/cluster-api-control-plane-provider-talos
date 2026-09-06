@@ -435,6 +435,8 @@ func (suite *ControllersSuite) TestReconcileCreatesMachineFromMachineTemplateCon
 	machine := machineList.Items[0]
 	g.Expect(machine.Labels["example.siderolabs.dev/control-plane"]).To(Equal("true"))
 	g.Expect(machine.Annotations["example.siderolabs.dev/annotation"]).To(Equal("present"))
+	// Every control plane Machine is born with the pre-terminate etcd cleanup hook.
+	g.Expect(machine.Annotations).To(HaveKey(controllers.PreTerminateHookCleanupAnnotation))
 	g.Expect(machine.Labels[clusterv1.ClusterNameLabel]).To(Equal(cluster.Name))
 	g.Expect(machine.Labels[clusterv1.MachineControlPlaneLabel]).To(Equal(""))
 	g.Expect(machine.Labels[clusterv1.MachineControlPlaneNameLabel]).NotTo(BeEmpty())

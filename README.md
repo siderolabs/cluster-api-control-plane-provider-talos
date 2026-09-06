@@ -280,3 +280,56 @@ named `talos-topology-control-plane`, and control plane machines named
 
 See `config/samples/topology_v1alpha3_clusterclass_with_taloscontrolplanetemplate.yaml` for a ClusterClass / Cluster fragment including workers.
 That sample assumes the referenced infrastructure and worker bootstrap templates already exist.
+
+### Machine deletion and etcd
+
+Every control plane `Machine` this provider owns is created with the Cluster API pre-terminate
+lifecycle hook `pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup`. Machines that
+predate the hook are adopted on the next reconcile.
+
+While that annotation is present, the core Machine controller holds the `Machine` at the
+pre-terminate phase — after the node has been drained and its volumes detached, and before the
+infrastructure provider is allowed to delete the `InfraMachine`. That is where this provider
+resolves etcd membership: it verifies through a healthy peer that the machine is still a member,
+asks the machine itself to forfeit leadership and leave, falls back to removing the member
+through the peer when the machine is already gone, and only then releases the hook.
+
+The guarantee is that **etcd membership is resolved before any infrastructure provider powers off
+or reprovisions the node, on every deletion path** — a scale-down, a rollout, a
+`MachineHealthCheck` remediation, or a plain `kubectl delete machine`. Previously only the
+provider's own scale-down removed the member, and every other path left an orphan behind for the
+periodic etcd audit to find.
+
+Whole-cluster and whole-control-plane teardown skip the etcd work entirely and release the hook
+immediately: during a full teardown there is no quorum left to hand membership to.
+
+Flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--enable-machine-pre-terminate-hook` | `true` | Whether new and adopted control plane machines get the hook. This gates **stamping only** — machines that already carry the hook are always served, so turning it off can never wedge a deletion in progress. |
+| `--etcd-cleanup-timeout` | `2m` | How long etcd member removal is retried before the provider gives up. |
+
+The timeout fails open. If neither the graceful leave nor the removal through a peer succeeds
+before it expires, the provider emits an `EtcdCleanupOrphaned` warning event on the `Machine` and
+releases the hook anyway, so a deletion is never parked forever; the leftover member is collected
+by the periodic etcd audit once the cluster is stable again. The other outcomes are reported as
+`EtcdMemberLeft`, `EtcdMemberRemovedViaPeer` and `EtcdCleanupSkipped` events.
+
+The escape hatch, if you need a `Machine` to finish deleting right now:
+
+```bash
+kubectl annotate machine <name> pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup-
+```
+
+#### Coexistence with reset-style hooks
+
+Reset-style pre-terminate hooks (for example a `talos-machine-teardown` hook that wipes the disks
+and halts the node) are designed to run **last**, once nothing else needs the machine. This
+provider's hook deliberately runs **first**: it does not wait for other pre-terminate hooks to
+finish, unlike KCP, which defers to user hooks so that kubelet keeps working while they run.
+
+The reason is that a reset hook takes the node down for good, so the etcd member has to be gone
+before it runs — and if both hooks insisted on running last, the deletion would deadlock. So the
+ordering is: Cluster API drains the node, this provider removes the etcd member and releases its
+hook, and the reset hook then runs on a node that is no longer part of the etcd cluster.

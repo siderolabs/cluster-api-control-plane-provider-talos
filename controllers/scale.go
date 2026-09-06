@@ -18,7 +18,6 @@ import (
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -123,51 +122,60 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	return r.deleteControlPlaneMachine(ctx, client, tcp, deleteMachine)
+}
+
+// deleteControlPlaneMachine removes a control plane machine from etcd, where that is still this
+// function's job, and deletes it.
+func (r *TalosControlPlaneReconciler) deleteControlPlaneMachine(
+	ctx context.Context,
+	workloadClient client.Client,
+	tcp *controlplanev1.TalosControlPlane,
+	deleteMachine *clusterv1.Machine,
+) (ctrl.Result, error) {
 	node := deleteMachine.Status.NodeRef
-
-	c, err := r.talosconfigForMachines(ctx, tcp, *deleteMachine)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	defer c.Close() //nolint:errcheck
 
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
-	// Mark machine as leaving etcd so health check skips it even if reconciliation
-	// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
-	// stopped etcd without DeletionTimestamp fails health checks forever).
-	patchHelper, err := patch.NewHelper(deleteMachine, r.Client)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	var leaveErr error
+
+	// Machines carrying the pre-terminate hook have their etcd membership resolved by the
+	// deletion pipeline (reconcileMachinePreTerminateHooks), which runs at the right point —
+	// after drain and volume detach, before the infrastructure is torn down — instead of before
+	// the deletion request. Deleting the Machine is all that is left to do for them.
+	//
+	// Everything else (the hook disabled, or a machine that predates it) still leaves etcd
+	// inline, here, before the deletion request.
+	if _, hooked := deleteMachine.Annotations[PreTerminateHookCleanupAnnotation]; !hooked {
+		c, err := r.etcdClientFor(ctx, tcp, *deleteMachine)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 20 * time.Second}, err
+		}
+
+		defer c.Close() //nolint:errcheck
+
+		// Mark machine as leaving etcd so health check skips it even if reconciliation
+		// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
+		// stopped etcd without DeletionTimestamp fails health checks forever).
+		if err := r.markEtcdLeaving(ctx, deleteMachine); err != nil {
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+		}
+
+		leaveErr = r.gracefulEtcdLeave(ctx, c, *deleteMachine)
 	}
 
-	annotations := deleteMachine.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[etcdLeavingAnnotation] = "true"
-	deleteMachine.SetAnnotations(annotations)
-
-	if err := patchHelper.Patch(ctx, deleteMachine); err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-	}
-
-	leaveErr := r.gracefulEtcdLeave(ctx, c, *deleteMachine)
-
-	err = r.Client.Delete(ctx, deleteMachine)
-	if err != nil {
+	if err := r.Client.Delete(ctx, deleteMachine); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// The machine is deleted either way -- the etcd member is the part that failed -- but the
-	// failure is reported instead of being swallowed, so the next reconcile retries rather than
-	// leaving auditEtcd to discover the orphan on its own.
+	// The machine is deleted either way — the etcd member is the part that failed — but the
+	// failure is now reported instead of being swallowed, so the next reconcile retries rather
+	// than leaving auditEtcd to discover the orphan on its own.
 	if leaveErr != nil {
 		return ctrl.Result{}, leaveErr
 	}
 
-	result, err := r.deleteNode(ctx, client, deleteMachine)
+	result, err := r.deleteNode(ctx, workloadClient, deleteMachine)
 	if err != nil {
 		return result, err
 	}

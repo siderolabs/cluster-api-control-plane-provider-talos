@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
@@ -62,10 +63,20 @@ type TalosControlPlaneReconciler struct {
 	Log          logr.Logger
 	Scheme       *runtime.Scheme
 	ClusterCache clustercache.ClusterCache
+	Recorder     record.EventRecorder
 
 	// RuntimeClient calls Cluster API runtime extensions. It is nil unless the InPlaceUpdates
 	// feature gate is enabled, and in-place updates are skipped when it is.
 	RuntimeClient runtimeclient.Caller
+
+	// EnableMachinePreTerminateHook controls whether new and adopted control plane Machines get
+	// the pre-terminate etcd cleanup hook. It gates stamping only: the handler always serves
+	// Machines that are already stamped, so turning this off can never wedge a deletion.
+	EnableMachinePreTerminateHook bool
+
+	// EtcdCleanupTimeout is how long the pre-terminate hook keeps retrying etcd member removal
+	// before it fails open and releases the hook anyway. Zero means defaultEtcdCleanupTimeout.
+	EtcdCleanupTimeout time.Duration
 
 	// etcdDialer overrides how Talos clients are opened for etcd operations. Nil in production,
 	// where talosconfigForMachines is used; tests set it to inject a fake.
@@ -207,19 +218,28 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		return ctrl.Result{}, err
 	}
 
-	// If ControlPlaneEndpoint is not set, return early
-	if !cluster.Spec.ControlPlaneEndpoint.IsValid() {
-		logger.Info("cluster does not yet have a ControlPlaneEndpoint defined")
-
-		return ctrl.Result{}, nil
-	}
-
 	// TODO: handle proper adoption of Machines
 	ownedMachines, err := r.getControlPlaneMachinesForCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
 		logger.Error(err, "failed to retrieve control plane machines for cluster")
 
 		return ctrl.Result{}, err
+	}
+
+	// Machine deletion hooks are serviced first, ahead of every gate below: a Machine parked at
+	// the pre-terminate phase blocks its InfraMachine from being deleted, and the control plane
+	// endpoint, node health and etcd health can all be failing exactly when a control plane
+	// Machine is on its way out.
+	hookResult, hookErr := r.reconcileMachinePreTerminateHooks(ctx, cluster, tcp, &ownedMachines)
+	if hookErr != nil {
+		logger.Error(hookErr, "failed to reconcile machine pre-terminate hooks")
+	}
+
+	// If ControlPlaneEndpoint is not set, return early
+	if !cluster.Spec.ControlPlaneEndpoint.IsValid() {
+		logger.Info("cluster does not yet have a ControlPlaneEndpoint defined")
+
+		return hookResult, hookErr
 	}
 
 	if len(ownedMachines.Items) > 0 {
@@ -239,8 +259,8 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	}
 
 	var (
-		errs        error
-		result      ctrl.Result
+		errs        = hookErr
+		result      = hookResult
 		phaseResult ctrl.Result
 	)
 
@@ -303,13 +323,25 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 		return ctrl.Result{}, r.Client.Update(ctx, tcp)
 	}
 
-	for _, ownedMachine := range ownedMachines.Items {
+	for i := range ownedMachines.Items {
+		ownedMachine := &ownedMachines.Items[i]
+
+		// The whole control plane is going away, so etcd membership is not resolved member by
+		// member: removing members one at a time during a full teardown is wrong (the last one
+		// has nobody to forfeit leadership to) and slow. Release the hook first so it cannot
+		// wedge the cascade, exactly like KCP's reconcileDelete does with /kcp-cleanup.
+		if err := r.releasePreTerminateHook(ctx, ownedMachine); err != nil {
+			r.Log.Error(err, "failed to release the pre-terminate hook", "machine", ownedMachine.Name)
+
+			return ctrl.Result{}, err
+		}
+
 		// Already deleting this machine
 		if !ownedMachine.ObjectMeta.DeletionTimestamp.IsZero() {
 			continue
 		}
 		// Submit deletion request
-		if err := r.Client.Delete(ctx, &ownedMachine); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.Client.Delete(ctx, ownedMachine); err != nil && !apierrors.IsNotFound(err) {
 			r.Log.Error(err, "failed to cleanup owned machine")
 			return ctrl.Result{}, err
 		}
@@ -471,9 +503,9 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Name:      machineName,
 			Namespace: tcp.Namespace,
 			Labels:    controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
-			Annotations: copyStringMap(
-				tcp.Spec.MachineTemplate.ObjectMeta.Annotations,
-			),
+			// Carries the pre-terminate etcd cleanup hook, so the Machine is protected from
+			// the moment it exists rather than from the next reconcile.
+			Annotations: r.desiredMachineAnnotations(tcp),
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
 			},

@@ -8,6 +8,7 @@ import (
 	"context"
 	"flag"
 	"os"
+	"time"
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	bootstrapv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
@@ -47,12 +48,14 @@ var (
 )
 
 var (
-	enableLeaderElection bool
-	webhookPort          int
-	webhookCertDir       string
-	healthAddr           string
-	managerOptions       = flags.ManagerOptions{}
-	logOptions           = logs.NewOptions()
+	enableLeaderElection          bool
+	webhookPort                   int
+	webhookCertDir                string
+	healthAddr                    string
+	enableMachinePreTerminateHook bool
+	etcdCleanupTimeout            time.Duration
+	managerOptions                = flags.ManagerOptions{}
+	logOptions                    = logs.NewOptions()
 )
 
 func init() {
@@ -82,6 +85,14 @@ func InitFlags(fs *pflag.FlagSet) {
 		"Webhook cert dir, only used when webhook-port is specified.")
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
+	fs.BoolVar(&enableMachinePreTerminateHook, "enable-machine-pre-terminate-hook", true,
+		"Stamp a pre-terminate lifecycle hook on control plane Machines so that etcd membership is "+
+			"resolved before the infrastructure provider powers the node off, on every deletion path. "+
+			"Turning this off only stops new hooks from being added: Machines that already carry one "+
+			"are always served, so a deletion can never be wedged by flipping this flag.")
+	fs.DurationVar(&etcdCleanupTimeout, "etcd-cleanup-timeout", 2*time.Minute,
+		"How long the pre-terminate hook keeps retrying etcd member removal before it gives up, emits "+
+			"a warning event and releases the hook anyway so the Machine deletion can finish.")
 	flags.AddManagerOptions(fs, &managerOptions)
 }
 
@@ -187,12 +198,15 @@ func main() {
 	}
 
 	if err = (&controllers.TalosControlPlaneReconciler{
-		Client:        mgr.GetClient(),
-		APIReader:     mgr.GetAPIReader(),
-		Log:           ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
-		Scheme:        mgr.GetScheme(),
-		ClusterCache:  clusterCache,
-		RuntimeClient: runtimeCaller,
+		Client:                        mgr.GetClient(),
+		APIReader:                     mgr.GetAPIReader(),
+		Log:                           ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
+		Scheme:                        mgr.GetScheme(),
+		ClusterCache:                  clusterCache,
+		Recorder:                      mgr.GetEventRecorderFor("taloscontrolplane-controller"),
+		RuntimeClient:                 runtimeCaller,
+		EnableMachinePreTerminateHook: enableMachinePreTerminateHook,
+		EtcdCleanupTimeout:            etcdCleanupTimeout,
 	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosControlPlane")
 		os.Exit(1)

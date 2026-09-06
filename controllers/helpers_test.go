@@ -90,6 +90,8 @@ func newReconciler(client client.Client, opts ...reconcilerOption) *controllers.
 		Log:          logger,
 		APIReader:    client,
 		ClusterCache: clusterCache,
+		// Matches the production default so the suite exercises the shipped configuration.
+		EnableMachinePreTerminateHook: true,
 	}
 }
 
