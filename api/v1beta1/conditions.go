@@ -53,6 +53,10 @@ const (
 	// rolling upgrade for aligning the machines spec to the desired state.
 	RollingUpdateInProgressReason = "RollingUpdateInProgress"
 
+	// InPlaceUpdateInProgressReason documents a TalosControlPlane object updating machines in place,
+	// one at a time, to align their spec to the desired state.
+	InPlaceUpdateInProgressReason = "InPlaceUpdateInProgress"
+
 	// MachinesSpecUpToDateReason documents that the spec of all machines controlled by the TalosControlPlane is up to date.
 	MachinesSpecUpToDateReason = "MachinesSpecUpToDate"
 )

@@ -1021,22 +1021,28 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		return ctrl.Result{}, err
 	}
 
-	needRollout := controlPlane.MachinesNeedingRollout()
+	outdated := controlPlane.MachinesNeedingRollout()
 
-	// Offer outdated machines to the in-place update extension first. Anything it claims is
-	// either already updating or has just been triggered, and must not also be rolled out.
-	claimed, err := r.reconcileInPlaceUpdates(ctx, tcp, controlPlane, needRollout)
+	// Offer outdated machines to the in-place update extension first. It claims the one it
+	// is updating and names the ones that have to be replaced; everything else waits. The
+	// rollout path only ever sees what it names, so a machine is never replaced while
+	// another is being updated in place.
+	decision, err := r.reconcileInPlaceUpdates(ctx, tcp, controlPlane, outdated)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	for name := range claimed {
-		delete(needRollout, name)
+	if len(decision.claimed) > 0 {
+		logger.Info("machines updating in place", "machines", decision.claimed.Names())
+		conditions.Set(controlPlane.TCP, metav1.Condition{
+			Type:    string(controlplanev1.MachinesSpecUpToDateCondition),
+			Status:  metav1.ConditionFalse,
+			Reason:  controlplanev1.InPlaceUpdateInProgressReason,
+			Message: fmt.Sprintf("Updating %d replicas with outdated spec in place (%d replicas up to date)", len(outdated), len(controlPlane.Machines)-len(outdated)),
+		})
 	}
 
-	if len(claimed) > 0 {
-		logger.Info("machines updating in place", "machines", claimed.Names())
-	}
+	needRollout := decision.rollout
 
 	if len(needRollout) > 0 {
 		logger.Info("rolling out control plane machines", "needRollout", needRollout.Names())
@@ -1044,11 +1050,11 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 			Type:    string(controlplanev1.MachinesSpecUpToDateCondition),
 			Status:  metav1.ConditionFalse,
 			Reason:  controlplanev1.RollingUpdateInProgressReason,
-			Message: fmt.Sprintf("Rolling %d replicas with outdated spec (%d replicas up to date)", len(needRollout), len(controlPlane.Machines)-len(needRollout)),
+			Message: fmt.Sprintf("Rolling %d replicas with outdated spec (%d replicas up to date)", len(needRollout), len(controlPlane.Machines)-len(outdated)),
 		})
 
 		return r.upgradeControlPlane(ctx, cluster, tcp, controlPlane, needRollout)
-	} else {
+	} else if len(outdated) == 0 {
 		if conditions.Has(controlPlane.TCP, string(controlplanev1.MachinesSpecUpToDateCondition)) {
 			conditions.Set(controlPlane.TCP, metav1.Condition{
 				Type:   string(controlplanev1.MachinesSpecUpToDateCondition),

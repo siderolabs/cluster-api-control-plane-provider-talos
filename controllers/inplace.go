@@ -33,12 +33,36 @@ type inPlacePlan struct {
 	desiredTalosConfig  *cabptv1.TalosConfig
 }
 
-// reconcileInPlaceUpdates offers each outdated control plane Machine to the in-place update
-// extension, and triggers an in-place update for those it can fully handle.
+// inPlaceDecision is the outcome of offering the outdated control plane Machines to the
+// in-place update extension.
 //
-// It returns the Machines it has claimed, which the caller excludes from the rollout set. A
-// claimed Machine is either already updating or has just been triggered; either way it must
-// not also be rolled out.
+// Every outdated Machine ends up in one of three places: claimed, rollout, or neither.
+// Neither means "wait": the Machine is not touched this reconcile and is offered again on
+// the next one. That is the case while another Machine is mid-update, and while etcd is
+// unhealthy. Both sets empty with outdated Machines present is therefore not a bug but the
+// one-at-a-time rule doing its job.
+type inPlaceDecision struct {
+	// claimed are Machines updating in place, either already mid-update or just triggered.
+	// The rollout path must leave them alone.
+	claimed collections.Machines
+	// rollout are Machines that have to be replaced: in-place updates are off, nothing the
+	// extension could take is left, or it declined the change for that Machine.
+	rollout collections.Machines
+}
+
+func newInPlaceDecision() inPlaceDecision {
+	return inPlaceDecision{claimed: collections.New(), rollout: collections.New()}
+}
+
+// reconcileInPlaceUpdates offers the outdated control plane Machines to the in-place update
+// extension, one at a time, and says which of them the rollout path may replace.
+//
+// The rollout path used to receive every outdated Machine the extension had not claimed. On
+// a three-node control plane that meant one Machine updating in place while the other two
+// were deleted and re-provisioned in the same reconcile, which is the concurrent control
+// plane change the one-at-a-time rule exists to prevent. Now only Machines the extension
+// explicitly declined, or cannot be offered at all, are handed over, and nothing is handed
+// over while an in-place update is in flight.
 //
 // TalosControlPlane has to implement this itself because it is not KubeadmControlPlane: the
 // owner half of the in-place update contract lives in each control plane provider, while
@@ -48,65 +72,89 @@ func (r *TalosControlPlaneReconciler) reconcileInPlaceUpdates(
 	tcp *controlplanev1.TalosControlPlane,
 	controlPlane *ControlPlane,
 	outdated collections.Machines,
-) (collections.Machines, error) {
-	claimed := collections.New()
+) (inPlaceDecision, error) {
+	decision := newInPlaceDecision()
 
 	if !feature.Gates.Enabled(feature.InPlaceUpdates) || r.RuntimeClient == nil {
-		return claimed, nil
+		// Exactly the pre-in-place behaviour: everything outdated is rolled out.
+		decision.rollout = outdated
+
+		return decision, nil
 	}
 
 	// Machines already mid-update stay claimed so the rollout path leaves them alone until
 	// the core Machine controller clears the annotation.
 	for _, machine := range outdated {
 		if isUpdatingInPlace(machine) {
-			claimed.Insert(machine)
+			decision.claimed.Insert(machine)
 		}
 	}
 
 	// One control plane machine at a time. An in-place update can reboot the node (a Talos
-	// upgrade always does), so concurrent updates would risk etcd quorum.
-	if len(claimed) > 0 {
-		return claimed, nil
+	// upgrade always does), so concurrent updates would risk etcd quorum. The remaining
+	// outdated Machines wait; they are offered again once this one has finished.
+	if len(decision.claimed) > 0 {
+		return decision, nil
 	}
 
 	candidate := r.nextInPlaceCandidate(controlPlane, outdated)
 	if candidate == nil {
-		return claimed, nil
-	}
+		// Nothing left the extension could take: the infrastructure template rotated, or the
+		// Machines have no node yet. Those need a replacement, as they always did.
+		decision.rollout = outdated
 
-	log := r.Log.WithValues("machine", klog.KObj(candidate))
+		return decision, nil
+	}
 
 	// Only start an update while etcd is healthy across the whole control plane, for the
-	// same reason: the node is about to become temporarily unavailable.
+	// same reason: the node is about to become temporarily unavailable. An unhealthy etcd
+	// defers the decision; it must never turn into a rollout, which would make it worse.
 	if err := r.etcdHealthcheck(ctx, tcp, machineList(controlPlane.Machines)); err != nil {
-		log.Info("skipping in-place update, etcd is not healthy", "error", err.Error())
+		r.Log.WithValues("machine", klog.KObj(candidate)).Info("deferring in-place update, etcd is not healthy", "error", err.Error())
 
-		return claimed, nil
+		return decision, nil
 	}
+
+	return r.offerInPlace(ctx, tcp, controlPlane, candidate)
+}
+
+// offerInPlace asks the extension whether it can absorb the change to one Machine and, if
+// so, triggers the update. A declined Machine is the only thing that goes to the rollout
+// path from here, and only that one Machine: the rest are re-offered once the replacement
+// has settled.
+func (r *TalosControlPlaneReconciler) offerInPlace(
+	ctx context.Context,
+	tcp *controlplanev1.TalosControlPlane,
+	controlPlane *ControlPlane,
+	candidate *clusterv1.Machine,
+) (inPlaceDecision, error) {
+	decision := newInPlaceDecision()
+	log := r.Log.WithValues("machine", klog.KObj(candidate))
 
 	plan, err := r.buildInPlacePlan(tcp, controlPlane, candidate)
 	if err != nil {
-		return claimed, err
+		return decision, err
 	}
 
 	canUpdate, err := r.canUpdateMachine(ctx, plan, controlPlane)
 	if err != nil {
-		return claimed, err
+		return decision, err
 	}
 
 	if !canUpdate {
 		log.Info("in-place update not possible for this change, falling back to rollout")
+		decision.rollout.Insert(candidate)
 
-		return claimed, nil
+		return decision, nil
 	}
 
 	if err := r.triggerInPlaceUpdate(ctx, plan); err != nil {
-		return claimed, err
+		return decision, err
 	}
 
-	claimed.Insert(candidate)
+	decision.claimed.Insert(candidate)
 
-	return claimed, nil
+	return decision, nil
 }
 
 // nextInPlaceCandidate picks an outdated Machine that is eligible to be considered for an

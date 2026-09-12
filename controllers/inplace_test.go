@@ -18,10 +18,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	utilfeature "k8s.io/component-base/featuregate/testing"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/collections"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
@@ -153,12 +155,125 @@ func newInPlaceFixture(t *testing.T, machineAnnotations map[string]string) *inPl
 func TestReconcileInPlaceUpdates_DisabledWithoutFeatureGate(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 
-	claimed, err := f.reconciler.reconcileInPlaceUpdates(
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
 		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine))
 
 	require.NoError(t, err)
-	assert.Empty(t, claimed)
+	assert.Empty(t, decision.claimed)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.rollout.Names(), "with the gate off every outdated machine is rolled out")
 	assert.Zero(t, f.caller.calls, "the extension must not be consulted while the gate is off")
+}
+
+// addMachine grows the fixture's control plane by one outdated machine that the extension
+// could take, mirroring machine-1.
+func (f *inPlaceFixture) addMachine(name string, annotations map[string]string) *clusterv1.Machine {
+	machine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Annotations: annotations},
+		Spec:       clusterv1.MachineSpec{ClusterName: "test", Version: "v1.33.0"},
+		Status:     clusterv1.MachineStatus{NodeRef: clusterv1.MachineNodeReference{Name: "node-" + name}},
+	}
+
+	f.controlPlane.Machines.Insert(machine)
+	f.controlPlane.talosConfigs[name] = &cabptv1.TalosConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:       cabptv1.TalosConfigSpec{GenerateType: "controlplane"},
+	}
+	f.controlPlane.infraObjects[name] = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2",
+		"kind":       "TinkerbellMachine",
+		"metadata":   map[string]any{"name": name, "namespace": "default"},
+		"spec":       map[string]any{"hardwareName": "hw-" + name},
+	}}
+
+	return machine
+}
+
+// While one machine is mid-update the remaining outdated ones must wait for their turn,
+// not be handed to the rollout path: replacing a machine while another is being updated in
+// place is exactly the concurrent control plane change the one-at-a-time rule exists to
+// prevent.
+func TestReconcileInPlaceUpdates_HoldsOthersWhileOneIsUpdating(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+	f := newInPlaceFixture(t, map[string]string{clusterv1.UpdateInProgressAnnotation: ""})
+	second := f.addMachine("machine-2", nil)
+	third := f.addMachine("machine-3", nil)
+
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
+		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine, second, third))
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.claimed.Names())
+	assert.Empty(t, decision.rollout, "machines waiting for an in-place update in flight must not be rolled out")
+	assert.Zero(t, f.caller.calls, "no second machine is offered while one is updating")
+}
+
+// Nothing the extension could take (here: no node yet) goes to the rollout path, as it
+// always has.
+func TestReconcileInPlaceUpdates_RollsOutWhenNoCandidate(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+	f := newInPlaceFixture(t, nil)
+	f.machine.Status.NodeRef = clusterv1.MachineNodeReference{}
+
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
+		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine))
+
+	require.NoError(t, err)
+	assert.Empty(t, decision.claimed)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.rollout.Names())
+	assert.Zero(t, f.caller.calls)
+}
+
+// An unhealthy etcd defers the whole question. Previously it sent every outdated machine to
+// the rollout path, which is the worst possible reaction to an unhealthy control plane.
+func TestReconcileInPlaceUpdates_DefersWhileEtcdIsUnhealthy(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+	// The fixture has no talosconfig secret, so the etcd health check cannot reach any node.
+	f := newInPlaceFixture(t, nil)
+
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
+		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine))
+
+	require.NoError(t, err)
+	assert.Empty(t, decision.claimed)
+	assert.Empty(t, decision.rollout, "an unhealthy etcd must defer, not roll out")
+	assert.Zero(t, f.caller.calls)
+}
+
+// A change the extension cannot absorb sends that machine, and only that machine, to the
+// rollout path; the rest are re-offered once the replacement has settled.
+func TestOfferInPlace_DeclinedMachineIsRolledOut(t *testing.T) {
+	f := newInPlaceFixture(t, nil)
+	f.caller.respond = func(_ *runtimehooksv1.CanUpdateMachineRequest, resp *runtimehooksv1.CanUpdateMachineResponse) {
+		resp.Status = runtimehooksv1.ResponseStatusSuccess // no patches at all
+	}
+
+	decision, err := f.reconciler.offerInPlace(context.Background(), f.tcp, f.controlPlane, f.machine)
+
+	require.NoError(t, err)
+	assert.Empty(t, decision.claimed)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.rollout.Names())
+	assert.Empty(t, f.machine.Annotations, "a declined machine must not be marked as updating")
+}
+
+// A change the extension covers is triggered and claimed, and nothing is rolled out.
+func TestOfferInPlace_ClaimsTriggeredMachine(t *testing.T) {
+	f := newInPlaceFixture(t, nil)
+	// No InfraMachine to write: the fake client cannot apply an unregistered kind, and the
+	// infrastructure is carried through unchanged anyway.
+	delete(f.controlPlane.infraObjects, "machine-1")
+
+	decision, err := f.reconciler.offerInPlace(context.Background(), f.tcp, f.controlPlane, f.machine)
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.claimed.Names())
+	assert.Empty(t, decision.rollout)
+
+	var machine clusterv1.Machine
+	require.NoError(t, f.reconciler.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "machine-1"}, &machine))
+	assert.Contains(t, machine.Annotations, clusterv1.UpdateInProgressAnnotation)
 }
 
 // A machine already carrying the annotation stays claimed so the rollout path leaves it
