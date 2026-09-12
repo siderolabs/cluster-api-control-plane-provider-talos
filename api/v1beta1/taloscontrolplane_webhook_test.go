@@ -477,3 +477,71 @@ func cabptControlPlaneConfig(generateType string, strategicPatches []string) cab
 		StrategicPatches: strategicPatches,
 	}
 }
+
+func validTalosControlPlane() *TalosControlPlane {
+	return &TalosControlPlane{
+		Spec: TalosControlPlaneSpec{
+			Version: "v1.31.0",
+			MachineTemplate: TalosControlPlaneMachineTemplate{
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestTalosControlPlaneValidateCreateChecksImageFactory(t *testing.T) {
+	t.Parallel()
+
+	good := validTalosControlPlane()
+	good.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory = &cabptv1.ImageFactorySpec{
+		Extensions: []string{"siderolabs/nvme-cli"},
+		Bootloader: "sd-boot",
+	}
+	if _, err := good.ValidateCreate(context.Background(), good); err != nil {
+		t.Fatalf("a valid imageFactory block must be accepted, got %v", err)
+	}
+
+	bad := validTalosControlPlane()
+	bad.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory = &cabptv1.ImageFactorySpec{Bootloader: "uboot"}
+	bad.Spec.ControlPlaneConfig.InitConfig.ImageFactory = &cabptv1.ImageFactorySpec{Extensions: []string{""}}
+
+	_, err := bad.ValidateCreate(context.Background(), bad)
+	if err == nil {
+		t.Fatal("expected validation errors for the imageFactory blocks")
+	}
+	for _, want := range []string{"spec.controlPlaneConfig.controlplane.imageFactory.bootloader", "spec.controlPlaneConfig.init.imageFactory.extensions[0]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got %v", want, err)
+		}
+	}
+}
+
+func TestTalosControlPlaneTemplateValidateCreateChecksImageFactory(t *testing.T) {
+	t.Parallel()
+
+	tcpt := &TalosControlPlaneTemplate{
+		Spec: TalosControlPlaneTemplateSpec{
+			Template: TalosControlPlaneTemplateResource{
+				Spec: TalosControlPlaneTemplateResourceSpec{
+					ControlPlaneConfig: ControlPlaneConfig{
+						ControlPlaneConfig: cabptv1.TalosConfigSpec{
+							GenerateType: "controlplane",
+							ImageFactory: &cabptv1.ImageFactorySpec{Overlay: &cabptv1.ImageFactoryOverlay{Name: "rpi_generic"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := tcpt.ValidateCreate(context.Background(), tcpt)
+	if err == nil || !strings.Contains(err.Error(), "spec.template.spec.controlPlaneConfig.controlplane.imageFactory.overlay.image") {
+		t.Fatalf("expected an overlay.image error, got %v", err)
+	}
+}

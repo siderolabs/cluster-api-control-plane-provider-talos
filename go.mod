@@ -164,4 +164,4 @@ require (
 // replace. In-place control plane updates only work against the forked CABPT: this provider
 // stamps UpdateInProgressAnnotation, and the forked bootstrap provider is what reacts to it
 // by regenerating the machine configuration. Upstream is no longer developed.
-replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.7.1
+replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.8.0

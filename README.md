@@ -178,6 +178,8 @@ This can be done by setting `controlPlaneConfig.controlplane.generateType` to `n
 This config file can be generated with `talosctl gen config` and then edited to supply the various options you may desire.
 When you provide `data` this way, the bootstrap provider uses the supplied Talos machine configuration as-is instead of generating one for you.
 
+Both `controlPlaneConfig.init` and `controlPlaneConfig.controlplane` accept every field of the bootstrap provider's `TalosConfigSpec`, including `imageFactory`: the Talos Image Factory schematic (extensions, extra kernel arguments, overlay, bootloader) the control plane machines install and upgrade with. The bootstrap provider registers the schematic and renders `machine.install.image` from it; see its README for the field reference. Changing the block rolls the control plane like any other `controlPlaneConfig` change.
+
 An example of a more complex config:
 
 ```yaml

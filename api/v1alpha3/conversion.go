@@ -73,6 +73,10 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 	// Recover hub-only fields preserved via the data annotation.
 	if ok {
 		dst.Spec.MachineNamingStrategy = restored.Spec.MachineNamingStrategy
+		// The bootstrap provider's v1alpha3 spec has no imageFactory, so both embedded blocks
+		// only survive a round trip through the stash.
+		dst.Spec.ControlPlaneConfig.InitConfig.ImageFactory = restored.Spec.ControlPlaneConfig.InitConfig.ImageFactory
+		dst.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory = restored.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory
 		dst.Spec.MachineTemplate.ObjectMeta = restored.Spec.MachineTemplate.ObjectMeta
 		dst.Spec.MachineTemplate.Spec.ReadinessGates = restored.Spec.MachineTemplate.Spec.ReadinessGates
 		dst.Spec.MachineTemplate.Spec.Deletion = restored.Spec.MachineTemplate.Spec.Deletion
@@ -142,8 +146,9 @@ func Convert_v1alpha3_TalosConfigSpec_To_v1beta1_TalosConfigSpec(in *cabptv1alph
 	return nil
 }
 
-// Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec is the inverse. It is lossless:
-// every v1beta1 field has a v1alpha3 counterpart.
+// Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec is the inverse. It is lossy in one
+// field: v1beta1 imageFactory (the Talos Image Factory schematic) has no v1alpha3 counterpart and
+// is dropped here; TalosControlPlane.ConvertTo restores it from the conversion-data annotation.
 func Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(in *cabptv1beta1.TalosConfigSpec, out *cabptv1alpha3.TalosConfigSpec, _ apimachineryconversion.Scope) error {
 	out.TalosVersion = in.TalosVersion
 	out.GenerateType = in.GenerateType

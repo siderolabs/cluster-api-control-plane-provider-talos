@@ -17,6 +17,8 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 )
 
 // SetupWebhookWithManager implements webhook methods.
@@ -127,6 +129,19 @@ func (r *TalosControlPlane) validate() field.ErrorList {
 	allErrs = append(allErrs, validateInfrastructureRef(r.Spec.MachineTemplate.Spec.InfrastructureRef, field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"))...)
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
+	allErrs = append(allErrs, validateControlPlaneConfig(&r.Spec.ControlPlaneConfig, field.NewPath("spec", "controlPlaneConfig"))...)
+
+	return allErrs
+}
+
+// validateControlPlaneConfig checks the bootstrap provider blocks embedded in both machine
+// configuration specs, so a bad Image Factory schematic is rejected at admission rather than
+// failing every generated TalosConfig.
+func validateControlPlaneConfig(cfg *ControlPlaneConfig, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	allErrs = append(allErrs, cabptv1.ValidateImageFactory(fldPath.Child("init", "imageFactory"), cfg.InitConfig.ImageFactory)...)
+	allErrs = append(allErrs, cabptv1.ValidateImageFactory(fldPath.Child("controlplane", "imageFactory"), cfg.ControlPlaneConfig.ImageFactory)...)
 
 	return allErrs
 }

@@ -133,6 +133,54 @@ spec:
                                       "InfrastructureName" (use linked Machine's infrastructure's name).
                                     type: string
                                 type: object
+                              imageFactory:
+                                description: |-
+                                  ImageFactory declares the Talos Image Factory schematic the machine installs and
+                                  upgrades with. When set, CABPT registers the schematic with the Factory and renders
+                                  machine.install.image as <factory>/metal-installer/<schematic>:<version>.
+                                properties:
+                                  bootloader:
+                                    description: Bootloader selects the bootloader
+                                      of the disk image; the Factory default when
+                                      empty.
+                                    enum:
+                                    - auto
+                                    - dual-boot
+                                    - grub
+                                    - sd-boot
+                                    type: string
+                                  extensions:
+                                    description: |-
+                                      Extensions are official system extension names, e.g. siderolabs/nvme-cli. The
+                                      Factory picks the extension versions matching the Talos version.
+                                    items:
+                                      type: string
+                                    type: array
+                                  extraKernelArgs:
+                                    description: ExtraKernelArgs are baked into the
+                                      images the Factory builds from the schematic.
+                                    items:
+                                      type: string
+                                    type: array
+                                  overlay:
+                                    description: Overlay selects a single-board-computer
+                                      overlay.
+                                    properties:
+                                      image:
+                                        description: Image is the overlay container
+                                          image, e.g. ghcr.io/siderolabs/sbc-raspberrypi.
+                                        minLength: 1
+                                        type: string
+                                      name:
+                                        description: Name is the overlay name, e.g.
+                                          rpi_generic.
+                                        minLength: 1
+                                        type: string
+                                    required:
+                                    - image
+                                    - name
+                                    type: object
+                                type: object
                               strategicPatches:
                                 description: Talos Linux machine configuration strategic
                                   merge patch list.
@@ -193,6 +241,54 @@ spec:
                                       "MachineName" (use linked Machine's Name).
                                       "InfrastructureName" (use linked Machine's infrastructure's name).
                                     type: string
+                                type: object
+                              imageFactory:
+                                description: |-
+                                  ImageFactory declares the Talos Image Factory schematic the machine installs and
+                                  upgrades with. When set, CABPT registers the schematic with the Factory and renders
+                                  machine.install.image as <factory>/metal-installer/<schematic>:<version>.
+                                properties:
+                                  bootloader:
+                                    description: Bootloader selects the bootloader
+                                      of the disk image; the Factory default when
+                                      empty.
+                                    enum:
+                                    - auto
+                                    - dual-boot
+                                    - grub
+                                    - sd-boot
+                                    type: string
+                                  extensions:
+                                    description: |-
+                                      Extensions are official system extension names, e.g. siderolabs/nvme-cli. The
+                                      Factory picks the extension versions matching the Talos version.
+                                    items:
+                                      type: string
+                                    type: array
+                                  extraKernelArgs:
+                                    description: ExtraKernelArgs are baked into the
+                                      images the Factory builds from the schematic.
+                                    items:
+                                      type: string
+                                    type: array
+                                  overlay:
+                                    description: Overlay selects a single-board-computer
+                                      overlay.
+                                    properties:
+                                      image:
+                                        description: Image is the overlay container
+                                          image, e.g. ghcr.io/siderolabs/sbc-raspberrypi.
+                                        minLength: 1
+                                        type: string
+                                      name:
+                                        description: Name is the overlay name, e.g.
+                                          rpi_generic.
+                                        minLength: 1
+                                        type: string
+                                    required:
+                                    - image
+                                    - name
+                                    type: object
                                 type: object
                               strategicPatches:
                                 description: Talos Linux machine configuration strategic

@@ -235,8 +235,8 @@ github.com/sasha-s/go-deadlock v0.3.5 h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb
 github.com/sasha-s/go-deadlock v0.3.5/go.mod h1:bugP6EGbdGYObIlx7pUZtWqlvo8k9H6vCBBsiChJQ5U=
 github.com/shopspring/decimal v1.4.0 h1:bxl37RwXBklmTi0C79JfXCEBD1cqqHt0bbgBAGFp81k=
 github.com/shopspring/decimal v1.4.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=
-github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.7.1 h1:COg5UaijyNn9nNrR/JFUDHWIMdBDSMTa+PMRt+5Ro94=
-github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.7.1/go.mod h1:XtJ0a+YLHoVzGwHcPjyjMKFrvMU4TPSpNl5skNQIZRw=
+github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.8.0 h1:M7df9TEHLoI2P1yeDbsZl8RlJkN9lTjs7HHab5Wx/Nw=
+github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.8.0/go.mod h1:hC/sPyThUfpZHLJh/2jnYSE9XCzxRUTMwAWSrBRI3sE=
 github.com/siderolabs/capi-utils v0.0.0-20260203103127-995e8c672207 h1:zD7M0DEW8Dt+wvWv5oBpHAvEMDl4f+SSxpmIc8+2z9U=
 github.com/siderolabs/capi-utils v0.0.0-20260203103127-995e8c672207/go.mod h1:p5gfG8KQBG370hgijM2WT4GpWL63BPY7lBSHLdN1w4k=
 github.com/siderolabs/crypto v0.6.5 h1:Elq5tpWP2ApZ4Y+Kg+eIDiiWbmriCPI1mjYIMwvsYkw=
