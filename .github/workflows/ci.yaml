@@ -80,6 +80,14 @@ jobs:
       - name: unit-tests
         run: |
           make unit-tests
+      - name: integration-test
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY: registry.dev.siderolabs.io
+        run: |
+          make integration-test
   push:
     permissions:
       actions: read

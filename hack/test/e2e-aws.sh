@@ -134,14 +134,14 @@ function aws_setup {
 
   ## Cluster-wide vars
   export AWS_REGION=${AWS_REGION:-us-east-1}
-  export AWS_SSH_KEY_NAME=${AWS_SSH_KEY_NAME:-talos-e2e}
-  export AWS_VPC_ID=${AWS_VPC_ID:-vpc-ff5c5687}
-  export AWS_SUBNET=${AWS_SUBNET:-subnet-c4e9b3a0}
+  export AWS_SSH_KEY_NAME=${AWS_SSH_KEY_NAME:-capi-ci-e2e}
+  export AWS_VPC_ID=${AWS_VPC_ID:-vpc-0a3b8fa38a76e6402}
+  export AWS_SUBNET=${AWS_SUBNET:-subnet-00715427dc2c5d768}
   export AWS_SUBNET_AZ=${AWS_SUBNET_AZ:-us-east-1a}
 
   ## Control plane vars
   export AWS_CONTROL_PLANE_AMI_ID=${AMI}
-  export AWS_CONTROL_PLANE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-ebe8e59f}]'}
+  export AWS_CONTROL_PLANE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-0582ba1634acaf525}]'}
 
   CREDS=$(echo "[default]
 aws_access_key_id = ${AWS_ACCESS_KEY_ID}
@@ -149,7 +149,7 @@ aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" | base64 -w0)
 
   ## Worker vars
   export AWS_NODE_AMI_ID=${AMI}
-  export AWS_NODE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-ebe8e59f}]'}
+  export AWS_NODE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-0582ba1634acaf525}]'}
   export AWS_B64ENCODED_CREDENTIALS=${AWS_B64ENCODED_CREDENTIALS:-${CREDS}}
 }
 

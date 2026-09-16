@@ -39,11 +39,12 @@ spec:
             PUSH: true
         - name: check-dirty
         - name: unit-tests
-        # disable temporariliy until we can fix the integration tests
-        # - name: integration-test
-        #   environment:
-        #     REGISTRY: registry.dev.siderolabs.io
-        #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        - name: integration-test
+          environment:
+            REGISTRY: registry.dev.siderolabs.io
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     - name: push
       buildxOptions:
         enabled: true
