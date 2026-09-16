@@ -93,5 +93,5 @@ FROM scratch AS container
 COPY --from=pkg-ca-certificates / /
 COPY --from=pkg-fhs / /
 COPY --from=binary /manager /manager
-LABEL org.opencontainers.image.source https://github.com/sidero-community/cluster-api-control-plane-provider-talos
+LABEL org.opencontainers.image.source https://github.com/siderolabs/cluster-api-control-plane-provider-talos
 ENTRYPOINT [ "/manager" ]
