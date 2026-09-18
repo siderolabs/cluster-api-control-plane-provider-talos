@@ -22,10 +22,10 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v1.13.0-rc.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
-K8S_VERSION="${K8S_VERSION:-v1.34.6}"
+TALOS_VERSION="${TALOS_DEFAULT:-v1.14.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
+K8S_VERSION="${K8S_VERSION:-v1.35.8}"
 export WORKLOAD_KUBERNETES_VERSION="${WORKLOAD_KUBERNETES_VERSION:-${K8S_VERSION}}"
-export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.35.3}"
+export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.36.4}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
@@ -110,7 +110,7 @@ function cluster {
         --talosconfig-destination=${TMP}/talosconfig \
         "${REGISTRY_MIRROR_FLAGS[@]}" \
         --kubernetes-version=${K8S_VERSION} \
-        --config-patch-controlplanes '{"cluster": {"allowSchedulingOnControlPlanes": true}}' \
+        --config-patch-controlplanes hack/test/schedule-controlplanes.patch \
         --mtu=1450 \
         --memory-controlplanes=8GiB \
         --cpus-controlplanes=8 \
