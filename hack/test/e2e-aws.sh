@@ -22,10 +22,10 @@ TAG="${TAG:-$(git describe --tag --always --dirty)}"
 REGION="us-east-1"
 BUCKET="talos-ci-e2e"
 PLATFORM=$(uname -s | tr "[:upper:]" "[:lower:]")
-TALOS_VERSION="${TALOS_DEFAULT:-v1.13.0-rc.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
-K8S_VERSION="${K8S_VERSION:-v1.34.6}"
+TALOS_VERSION="${TALOS_DEFAULT:-v1.14.0}" # NOTE: this is Talos version for the test environment, not Talos version for CAPI templates (see capi-utils)
+K8S_VERSION="${K8S_VERSION:-v1.35.8}"
 export WORKLOAD_KUBERNETES_VERSION="${WORKLOAD_KUBERNETES_VERSION:-${K8S_VERSION}}"
-export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.35.3}"
+export UPGRADE_K8S_VERSION="${UPGRADE_K8S_VERSION:-v1.36.4}"
 KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
@@ -110,7 +110,7 @@ function cluster {
         --talosconfig-destination=${TMP}/talosconfig \
         "${REGISTRY_MIRROR_FLAGS[@]}" \
         --kubernetes-version=${K8S_VERSION} \
-        --config-patch-controlplanes '{"cluster": {"allowSchedulingOnControlPlanes": true}}' \
+        --config-patch-controlplanes hack/test/schedule-controlplanes.patch \
         --mtu=1450 \
         --memory-controlplanes=8GiB \
         --cpus-controlplanes=8 \
@@ -134,14 +134,14 @@ function aws_setup {
 
   ## Cluster-wide vars
   export AWS_REGION=${AWS_REGION:-us-east-1}
-  export AWS_SSH_KEY_NAME=${AWS_SSH_KEY_NAME:-talos-e2e}
-  export AWS_VPC_ID=${AWS_VPC_ID:-vpc-ff5c5687}
-  export AWS_SUBNET=${AWS_SUBNET:-subnet-c4e9b3a0}
+  export AWS_SSH_KEY_NAME=${AWS_SSH_KEY_NAME:-capi-ci-e2e}
+  export AWS_VPC_ID=${AWS_VPC_ID:-vpc-0a3b8fa38a76e6402}
+  export AWS_SUBNET=${AWS_SUBNET:-subnet-00715427dc2c5d768}
   export AWS_SUBNET_AZ=${AWS_SUBNET_AZ:-us-east-1a}
 
   ## Control plane vars
   export AWS_CONTROL_PLANE_AMI_ID=${AMI}
-  export AWS_CONTROL_PLANE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-ebe8e59f}]'}
+  export AWS_CONTROL_PLANE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-0582ba1634acaf525}]'}
 
   CREDS=$(echo "[default]
 aws_access_key_id = ${AWS_ACCESS_KEY_ID}
@@ -149,7 +149,7 @@ aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" | base64 -w0)
 
   ## Worker vars
   export AWS_NODE_AMI_ID=${AMI}
-  export AWS_NODE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-ebe8e59f}]'}
+  export AWS_NODE_ADDL_SEC_GROUPS=${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS:-'[{id: sg-0582ba1634acaf525}]'}
   export AWS_B64ENCODED_CREDENTIALS=${AWS_B64ENCODED_CREDENTIALS:-${CREDS}}
 }
 

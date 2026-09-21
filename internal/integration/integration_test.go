@@ -74,28 +74,11 @@ func (suite *IntegrationSuite) SetupSuite() {
 		return def
 	}
 
-	// Default to the Docker/CAPD provider — no cloud credentials required.
-	providerType := env("PROVIDER", "docker:v1.12.2")
+	providerType := env("PROVIDER", "aws:v1.1.0")
 	suite.finalK8sVersion = os.Getenv("UPGRADE_K8S_VERSION")
 
-	// infrastructure.NewProvider only knows "aws" in the bephinix fork.
-	// For Docker/CAPD we instantiate our local DockerProvider directly.
-	var provider infrastructure.Provider
-
-	parts := strings.SplitN(providerType, ":", 2)
-	if parts[0] == "docker" {
-		version := ""
-		if len(parts) > 1 {
-			version = parts[1]
-		}
-
-		provider = NewDockerProvider(version)
-	} else {
-		var err error
-
-		provider, err = infrastructure.NewProvider(providerType)
-		suite.Require().NoError(err)
-	}
+	provider, err := infrastructure.NewProvider(providerType)
+	suite.Require().NoError(err)
 
 	var (
 		clusterctlConfigPath string
@@ -171,23 +154,13 @@ func (suite *IntegrationSuite) SetupSuite() {
 	err = manager.Install(suite.ctx)
 	suite.Require().NoError(err)
 
-	// FetchState (called inside Install) uses infrastructure.NewProvider which only
-	// knows "aws" in the bephinix fork.  When CAPD is installed on the cluster,
-	// FetchState finds a "docker" provider but silently skips it, leaving
-	// manager.providers empty.  We use reflection to inject our DockerProvider
-	// so that DeployCluster can find it.
-	if parts[0] == "docker" {
-		injectDockerProvider(suite.T(), manager, provider)
-	}
-
 	time.Sleep(time.Second * 5)
 
 	id := uuid.New()
 
-	// Use the Docker/CAPD cluster template — works without any cloud provider.
 	clusterTemplate := env(
 		"CLUSTER_TEMPLATE",
-		"https://github.com/siderolabs/cluster-api-templates/blob/main/docker/standard/standard.yaml",
+		"https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml",
 	)
 
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
