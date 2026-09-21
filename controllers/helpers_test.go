@@ -37,6 +37,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -176,9 +177,9 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster.Name,
 			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-				Kind:     GenericInfrastructureMachineCRD.Kind,
+				Kind:     GenericInfrastructureMachineCRD.Spec.Names.Kind,
 				APIGroup: GenericInfrastructureMachineCRD.Spec.Group,
-				Name:     GenericInfrastructureMachineCRD.Name,
+				Name:     name + "-infra",
 			},
 			Deletion: clusterv1.MachineDeletionSpec{
 				NodeDrainTimeoutSeconds: pointer.Int32(10),
@@ -196,6 +197,14 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 				},
 			},
 		},
+	}
+
+	if ready {
+		apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+			Type:   clusterv1.ReadyCondition,
+			Status: metav1.ConditionTrue,
+			Reason: "Ready",
+		})
 	}
 
 	return machine, createNode(machine, ready)

@@ -39,7 +39,12 @@ import (
 var talosVersion *semver.Version
 
 type clusterctlConfig struct {
-	Providers []providerConfig `yaml:"providers"`
+	Providers   []providerConfig  `yaml:"providers"`
+	CertManager certManagerConfig `yaml:"cert-manager,omitempty"`
+}
+
+type certManagerConfig struct {
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 type providerConfig struct {
@@ -120,19 +125,28 @@ func (suite *IntegrationSuite) SetupSuite() {
 		}
 	}
 
-	if clusterctlConfigs.Providers != nil {
-		config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
-
-		suite.Require().NoError(configError)
-
-		defer os.Remove(config.Name()) //nolint:errcheck
-
-		clusterctlConfigPath = config.Name()
-
-		encoder := yaml.NewEncoder(config)
-		suite.Require().NoError(encoder.Encode(clusterctlConfigs))
-		suite.Require().NoError(encoder.Close())
+	// clusterctl runs its cert-manager readiness check (create+delete a
+	// "cert-manager-test" namespace/Issuer/Certificate) once per Init() call, and
+	// Install() below issues two Init() calls back-to-back (core, then the
+	// infrastructure provider). The second call's namespace can still be
+	// terminating when the first one recreates it, so shorten clusterctl's
+	// default 10-minute wait here and retry Install() around that instead of
+	// stalling for the full default timeout.
+	clusterctlConfigs.CertManager = certManagerConfig{
+		Timeout: "30s",
 	}
+
+	config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
+
+	suite.Require().NoError(configError)
+
+	defer os.Remove(config.Name()) //nolint:errcheck
+
+	clusterctlConfigPath = config.Name()
+
+	encoder := yaml.NewEncoder(config)
+	suite.Require().NoError(encoder.Encode(clusterctlConfigs))
+	suite.Require().NoError(encoder.Close())
 
 	options := capi.Options{
 		CoreProvider:            env("CORE_PROVIDER", "cluster-api"),
@@ -140,10 +154,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 		WaitProviderTimeout:     time.Minute,
-	}
-
-	if clusterctlConfigPath != "" {
-		options.ClusterctlConfigPath = clusterctlConfigPath
+		ClusterctlConfigPath:    clusterctlConfigPath,
 	}
 
 	manager, err := capi.NewManager(suite.ctx, options)
@@ -151,7 +162,17 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	suite.manager = manager
 
-	err = manager.Install(suite.ctx)
+	// Install() calls clusterctl Init() once per provider group (core, then
+	// infra), so a cert-manager-test namespace race between the two can still
+	// fail a single attempt even with the shortened timeout above. Bound the
+	// retries so a persistent failure still surfaces instead of looping forever.
+	err = retry.Constant(3*time.Minute, retry.WithUnits(time.Second), retry.WithErrorLogging(true)).Retry(func() error {
+		if err := manager.Install(suite.ctx); err != nil {
+			return retry.ExpectedError(err)
+		}
+
+		return nil
+	})
 	suite.Require().NoError(err)
 
 	time.Sleep(time.Second * 5)

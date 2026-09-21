@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -137,7 +138,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
 
-	cluster.Spec.Paused = true
+	cluster.Spec.Paused = pointer.Bool(true)
 
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -169,7 +170,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = false
+	cluster.Spec.Paused = pointer.Bool(false)
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -581,6 +582,11 @@ func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client
 					machine.Status.NodeRef = clusterv1.MachineNodeReference{
 						Name: machine.Name,
 					}
+					apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+						Type:   clusterv1.ReadyCondition,
+						Status: metav1.ConditionTrue,
+						Reason: "Ready",
+					})
 
 					g.Expect(err).To(BeNil())
 					g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())

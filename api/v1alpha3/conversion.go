@@ -46,6 +46,7 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 	dst.Status.UpToDateReplicas = src.Status.UpToDateReplicas
 	dst.Status.UnavailableReplicas = src.Status.UnavailableReplicas
 	dst.Status.Initialized = src.Status.Initialized
+	dst.Status.Initialization.ControlPlaneInitialized = src.Status.Initialization.ControlPlaneInitialized
 	dst.Status.Ready = src.Status.Ready
 	dst.Status.Bootstrapped = src.Status.Bootstrapped
 	dst.Status.FailureReason = src.Status.FailureReason
@@ -102,6 +103,7 @@ func (dst *TalosControlPlane) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Status.UpToDateReplicas = src.Status.UpToDateReplicas
 	dst.Status.UnavailableReplicas = src.Status.UnavailableReplicas
 	dst.Status.Initialized = src.Status.Initialized
+	dst.Status.Initialization.ControlPlaneInitialized = src.Status.Initialization.ControlPlaneInitialized
 	dst.Status.Ready = src.Status.Ready
 	dst.Status.Bootstrapped = src.Status.Bootstrapped
 	dst.Status.FailureReason = src.Status.FailureReason

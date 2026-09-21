@@ -69,6 +69,14 @@ type TalosControlPlaneV1Beta2Status struct {
 	Conditions        []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
+// NOTE: Fields in this struct are part of the Cluster API contract and are used by the Cluster controller
+// to compute the Cluster's ControlPlaneInitialized condition.
+type TalosControlPlaneInitializationStatus struct {
+	// +optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
+}
+
 type TalosControlPlaneStatus struct {
 	// +optional
 	Selector string `json:"selector,omitempty"`
@@ -84,6 +92,8 @@ type TalosControlPlaneStatus struct {
 	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
 	// +optional
 	Initialized bool `json:"initialized"`
+	// +optional
+	Initialization TalosControlPlaneInitializationStatus `json:"initialization,omitempty"`
 	// +optional
 	Ready bool `json:"ready"`
 	// +optional

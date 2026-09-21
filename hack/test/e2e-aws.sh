@@ -45,9 +45,27 @@ cleanup() {
   if [ "$1" != "0" ]; then
     # gather container logs
     if [[ ! -z ${KUBECONFIG} ]]; then
-      ${KUBECTL} delete cluster --all || true
+      ${KUBECTL} get pods -A -o wide || true
+      ${KUBECTL} get namespaces -o wide || true
+      ${KUBECTL} describe namespace cert-manager-test || true
+      ${KUBECTL} get events -A --sort-by=.lastTimestamp || true
+      ${KUBECTL} describe pods -n cert-manager || true
+      ${KUBECTL} logs -n cert-manager deployment/cert-manager --all-containers || true
+      ${KUBECTL} logs -n cert-manager deployment/cert-manager-webhook --all-containers || true
+      ${KUBECTL} logs -n cert-manager deployment/cert-manager-cainjector --all-containers || true
+      ${KUBECTL} get issuer,certificaterequest,certificate -A -o yaml || true
+      ${KUBECTL} logs -n kube-system kube-controller-manager-$(${KUBECTL} get nodes -o jsonpath='{.items[0].metadata.name}') || true
+      ${KUBECTL} describe pod -n kube-system -l component=kube-controller-manager || true
+
       ${KUBECTL} logs -n capa-system deployment/capa-controller-manager manager || true
       ${KUBECTL} logs -n cacppt-system deployment/cacppt-controller-manager || true
+      ${KUBECTL} logs -n capi-system deployment/capi-controller-manager || true
+      ${KUBECTL} get cluster,taloscontrolplane,machine -A -o yaml || true
+
+      # kubectl delete waits for finalizers by default, which can hang if AWS
+      # teardown gets stuck; don't let that eat the remaining job time budget
+      # after the logs above have already been captured.
+      ${KUBECTL} delete cluster --all --wait=false --timeout=60s || true
     fi
   fi
 

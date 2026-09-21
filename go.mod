@@ -2,7 +2,7 @@ module github.com/siderolabs/cluster-api-control-plane-provider-talos
 
 go 1.26.5
 
-replace github.com/siderolabs/capi-utils => github.com/bephinix/capi-utils v0.0.0-20260130002241-d35a0ec3b6ed
+replace github.com/siderolabs/capi-utils => ./hack/thirdparty/capi-utils
 
 require (
 	github.com/coreos/go-semver v0.3.1

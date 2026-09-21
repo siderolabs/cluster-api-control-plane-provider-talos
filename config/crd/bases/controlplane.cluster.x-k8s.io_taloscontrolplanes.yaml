@@ -353,6 +353,15 @@ spec:
                   state, and will be set to a token value suitable for
                   programmatic interpretation.
                 type: string
+              initialization:
+                description: |-
+                  Initialization provides observations of the TalosControlPlane initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used by the
+                  Cluster controller to compute the Cluster's ControlPlaneInitialized condition.
+                properties:
+                  controlPlaneInitialized:
+                    type: boolean
+                type: object
               initialized:
                 description: |-
                   Initialized denotes whether or not the control plane has the
@@ -775,6 +784,15 @@ spec:
                 type: string
               failureReason:
                 type: string
+              initialization:
+                description: |-
+                  TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
+                  NOTE: Fields in this struct are part of the Cluster API contract and are used by the Cluster controller
+                  to compute the Cluster's ControlPlaneInitialized condition.
+                properties:
+                  controlPlaneInitialized:
+                    type: boolean
+                type: object
               initialized:
                 type: boolean
               observedGeneration:

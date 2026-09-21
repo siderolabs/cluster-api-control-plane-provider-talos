@@ -86,6 +86,12 @@ type TalosControlPlaneV1Beta2Status struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
+type TalosControlPlaneInitializationStatus struct {
+	// +optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
+}
+
 // GetReplicas reads spec replicas in a safe way.
 // If replicas is nil it will return 0.
 func (s *TalosControlPlaneSpec) GetReplicas() int32 {
@@ -166,6 +172,12 @@ type TalosControlPlaneStatus struct {
 	// uploaded talos-config configmap.
 	// +optional
 	Initialized bool `json:"initialized"`
+
+	// Initialization provides observations of the TalosControlPlane initialization process.
+	// NOTE: Fields in this struct are part of the Cluster API contract and are used by the
+	// Cluster controller to compute the Cluster's ControlPlaneInitialized condition.
+	// +optional
+	Initialization TalosControlPlaneInitializationStatus `json:"initialization,omitempty"`
 
 	// Ready denotes that the TalosControlPlane API Server is ready to
 	// receive requests.

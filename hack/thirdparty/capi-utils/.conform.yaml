@@ -1,0 +1,48 @@
+# THIS FILE WAS AUTOMATICALLY GENERATED, PLEASE DO NOT EDIT.
+#
+# Generated on 2025-11-18T10:24:05Z by kres e1d6dac.
+
+policies:
+  - type: commit
+    spec:
+      dco: true
+      gpg:
+        required: true
+        identity:
+          gitHubOrganization: siderolabs
+      spellcheck:
+        locale: US
+      maximumOfOneCommit: false
+      header:
+        length: 89
+        imperative: true
+        case: lower
+        invalidLastCharacters: .
+      body:
+        required: true
+      conventional:
+        types:
+          - chore
+          - docs
+          - perf
+          - refactor
+          - style
+          - test
+          - release
+        scopes:
+          - .*
+  - type: license
+    spec:
+      root: .
+      skipPaths:
+        - .git/
+        - testdata/
+      includeSuffixes:
+        - .go
+      excludeSuffixes:
+        - .pb.go
+        - .pb.gw.go
+      header: |
+        // This Source Code Form is subject to the terms of the Mozilla Public
+        // License, v. 2.0. If a copy of the MPL was not distributed with this
+        // file, You can obtain one at http://mozilla.org/MPL/2.0/.
