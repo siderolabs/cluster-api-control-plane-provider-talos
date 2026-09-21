@@ -1,3 +1,61 @@
+## [CAPI Control Plane Provider Talos 0.5.14](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.14) (2026-09-21)
+
+Welcome to the v0.5.14 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### Talos Linux
+
+CACPPT updated for Talos 1.14.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Mikel Aristu
+* Oleg Tsarev
+* Spencer Smith
+
+### Changes
+<details><summary>5 commits</summary>
+<p>
+
+* [`ec104e0`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ec104e032ee3ffa8f76832fec74dfc2ec400554e) feat: update Talos compat to 1.14
+* [`d5230cc`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d5230cccb9f93f7e725d4b587a380afe684c5e8d) fix: spread control plane machines across failure domains (least-used)
+* [`1404e87`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1404e87142e4f73c88bbaa58765a4182698ecb42) fix: match etcd members against nodeRef and MachineHostName in auditEtcd
+* [`1b2562c`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1b2562ce40254270f523970434cd27284918cd3e) chore: re-enable AWS for integration testing
+* [`9e552e4`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/9e552e428c2acc5f3d4a3e462299775444bd4eea) docs: add deprecation notice
+</p>
+</details>
+
+### Changes since v0.5.14-truvity.1
+<details><summary>5 commits</summary>
+<p>
+
+* [`ec104e0`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ec104e032ee3ffa8f76832fec74dfc2ec400554e) feat: update Talos compat to 1.14
+* [`d5230cc`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d5230cccb9f93f7e725d4b587a380afe684c5e8d) fix: spread control plane machines across failure domains (least-used)
+* [`1404e87`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1404e87142e4f73c88bbaa58765a4182698ecb42) fix: match etcd members against nodeRef and MachineHostName in auditEtcd
+* [`1b2562c`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1b2562ce40254270f523970434cd27284918cd3e) chore: re-enable AWS for integration testing
+* [`9e552e4`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/9e552e428c2acc5f3d4a3e462299775444bd4eea) docs: add deprecation notice
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/go-logr/logr**                                     v1.4.3 -> v1.4.4
+* **github.com/siderolabs/cluster-api-bootstrap-provider-talos**  v0.6.12 -> v0.6.13
+* **github.com/siderolabs/gen**                                   v0.8.6 -> v0.8.8
+* **github.com/siderolabs/talos/pkg/machinery**                   v1.13.0 -> v1.14.1
+* **github.com/stretchr/testify**                                 v1.11.1 -> v1.12.1
+* **golang.org/x/sync**                                           v0.20.0 -> v0.22.0
+* **google.golang.org/grpc**                                      v1.80.0 -> v1.83.2
+* **google.golang.org/protobuf**                                  f2248ac996af -> v1.36.12
+
+Previous release can be found at [v0.5.13](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.13)
+
 ## [CAPI Control Plane Provider Talos 0.5.13](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.13) (2026-04-27)
 
 Welcome to the v0.5.13 release of CAPI Control Plane Provider Talos!
