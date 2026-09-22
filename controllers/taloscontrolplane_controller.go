@@ -226,6 +226,11 @@ func (r *TalosControlPlaneReconciler) reconcileTalosControlPlaneStatus(
 
 // reconcileMachineUpToDateConditions patches the UpToDate condition on each Machine
 // based on whether its SpecHashAnnotation matches the current TalosControlPlane spec hash.
+//
+// Machines that predate the SpecHashAnnotation (or otherwise lost it) but actually
+// match the current spec, per the same checks MachinesNeedingRollout uses, have the
+// annotation backfilled instead of being reported OutOfDate forever with no rollout
+// ever happening to fix it.
 func (r *TalosControlPlaneReconciler) reconcileMachineUpToDateConditions(
 	ctx context.Context,
 	machines []*clusterv1.Machine,
@@ -236,10 +241,38 @@ func (r *TalosControlPlaneReconciler) reconcileMachineUpToDateConditions(
 		return errors.Wrap(err, "failed to compute spec hash")
 	}
 
+	machineCollection := collections.FromMachines(machines...)
+
+	infraObjects, err := getInfraResources(ctx, r.Client, machineCollection, tcp.Namespace)
+	if err != nil {
+		return errors.Wrap(err, "failed to get infra resources for spec-hash backfill")
+	}
+
+	talosConfigs, err := getTalosConfigs(ctx, r.Client, machineCollection)
+	if err != nil {
+		return errors.Wrap(err, "failed to get talos configs for spec-hash backfill")
+	}
+
+	matchesKubernetesVersion := collections.MatchesKubernetesVersion(tcp.Spec.Version)
+	matchesTemplate := MatchesTemplateClonedFrom(infraObjects, tcp)
+	matchesControlPlaneConfig := MatchesControlPlaneConfig(talosConfigs, tcp)
+
 	for _, machine := range machines {
 		upToDate := false
-		if h, ok := machine.Annotations[controlplanev1.SpecHashAnnotation]; ok {
+		h, ok := machine.Annotations[controlplanev1.SpecHashAnnotation]
+		switch {
+		case ok:
 			upToDate = h == specHash
+		case matchesKubernetesVersion(machine) && matchesTemplate(machine) && matchesControlPlaneConfig(machine):
+			annotationPatch := client.MergeFrom(machine.DeepCopy())
+			if machine.Annotations == nil {
+				machine.Annotations = map[string]string{}
+			}
+			machine.Annotations[controlplanev1.SpecHashAnnotation] = specHash
+			if err := r.Client.Patch(ctx, machine, annotationPatch); err != nil {
+				return errors.Wrapf(err, "failed to backfill spec-hash annotation on machine %s", machine.Name)
+			}
+			upToDate = true
 		}
 
 		condStatus := metav1.ConditionFalse
@@ -1207,7 +1240,23 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	return ctrl.Result{}, nil
 }
 
+// sanitizeConditionReasons guards against ever sending a status update with an
+// empty condition reason: the CRD schema (generated for []metav1.Condition)
+// requires reason to be at least 1 character long, so any such entry — however
+// it got there (stale data from an older controller version, a manual edit,
+// etc.) — causes every subsequent status patch on the object to be rejected
+// by the apiserver with "conditions[N].reason: Invalid value: \"\"".
+func sanitizeConditionReasons(tcp *controlplanev1.TalosControlPlane) {
+	for i := range tcp.Status.Conditions {
+		if tcp.Status.Conditions[i].Reason == "" {
+			tcp.Status.Conditions[i].Reason = "NoReasonReported"
+		}
+	}
+}
+
 func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp *controlplanev1.TalosControlPlane, opts ...patch.Option) error {
+	sanitizeConditionReasons(tcp)
+
 	// Always update the readyCondition by summarizing the state of other conditions.
 	err := conditions.SetSummaryCondition(
 		tcp,
