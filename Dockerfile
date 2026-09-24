@@ -30,6 +30,7 @@ RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conve
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
+COPY ./hack/thirdparty ./hack/thirdparty
 RUN --mount=type=cache,target=/.cache go mod download
 RUN --mount=type=cache,target=/.cache go mod verify
 COPY ./ ./

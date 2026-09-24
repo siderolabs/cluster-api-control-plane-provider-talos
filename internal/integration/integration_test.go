@@ -39,7 +39,12 @@ import (
 var talosVersion *semver.Version
 
 type clusterctlConfig struct {
-	Providers []providerConfig `yaml:"providers"`
+	Providers   []providerConfig  `yaml:"providers"`
+	CertManager certManagerConfig `yaml:"cert-manager,omitempty"`
+}
+
+type certManagerConfig struct {
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 type providerConfig struct {
@@ -120,19 +125,28 @@ func (suite *IntegrationSuite) SetupSuite() {
 		}
 	}
 
-	if clusterctlConfigs.Providers != nil {
-		config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
-
-		suite.Require().NoError(configError)
-
-		defer os.Remove(config.Name()) //nolint:errcheck
-
-		clusterctlConfigPath = config.Name()
-
-		encoder := yaml.NewEncoder(config)
-		suite.Require().NoError(encoder.Encode(clusterctlConfigs))
-		suite.Require().NoError(encoder.Close())
+	// clusterctl runs its cert-manager readiness check (create+delete a
+	// "cert-manager-test" namespace/Issuer/Certificate) once per Init() call, and
+	// Install() below issues two Init() calls back-to-back (core, then the
+	// infrastructure provider). The second call's namespace can still be
+	// terminating when the first one recreates it, so shorten clusterctl's
+	// default 10-minute wait here and retry Install() around that instead of
+	// stalling for the full default timeout.
+	clusterctlConfigs.CertManager = certManagerConfig{
+		Timeout: "30s",
 	}
+
+	config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
+
+	suite.Require().NoError(configError)
+
+	defer os.Remove(config.Name()) //nolint:errcheck
+
+	clusterctlConfigPath = config.Name()
+
+	encoder := yaml.NewEncoder(config)
+	suite.Require().NoError(encoder.Encode(clusterctlConfigs))
+	suite.Require().NoError(encoder.Close())
 
 	options := capi.Options{
 		CoreProvider:            env("CORE_PROVIDER", "cluster-api"),
@@ -140,10 +154,7 @@ func (suite *IntegrationSuite) SetupSuite() {
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{"talos"},
 		WaitProviderTimeout:     time.Minute,
-	}
-
-	if clusterctlConfigPath != "" {
-		options.ClusterctlConfigPath = clusterctlConfigPath
+		ClusterctlConfigPath:    clusterctlConfigPath,
 	}
 
 	manager, err := capi.NewManager(suite.ctx, options)
@@ -151,17 +162,32 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	suite.manager = manager
 
-	err = manager.Install(suite.ctx)
+	// Install() calls clusterctl Init() once per provider group (core, then
+	// infra), so a cert-manager-test namespace race between the two can still
+	// fail a single attempt even with the shortened timeout above. Bound the
+	// retries so a persistent failure still surfaces instead of looping forever.
+	err = retry.Constant(3*time.Minute, retry.WithUnits(time.Second), retry.WithErrorLogging(true)).Retry(func() error {
+		if err := manager.Install(suite.ctx); err != nil {
+			return retry.ExpectedError(err)
+		}
+
+		return nil
+	})
 	suite.Require().NoError(err)
 
 	time.Sleep(time.Second * 5)
 
 	id := uuid.New()
 
+	clusterTemplate := env(
+		"CLUSTER_TEMPLATE",
+		"https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml",
+	)
+
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
-		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
+		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.34.6")), "v")),
+		capi.WithTemplateFile(clusterTemplate),
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)
@@ -391,8 +417,8 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 			return err
 		}
 
-		if !conditions.Has(&tcp, controlplanev1.ResizedCondition) &&
-			conditions.GetMessage(&tcp, controlplanev1.ResizedCondition) != "Cannot scale down control plane nodes to 0" {
+		if !conditions.Has(&tcp, string(controlplanev1.ResizedCondition)) &&
+			conditions.GetMessage(&tcp, string(controlplanev1.ResizedCondition)) != "Cannot scale down control plane nodes to 0" {
 			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
 		}
 
