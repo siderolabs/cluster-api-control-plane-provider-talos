@@ -1,10 +1,21 @@
+# Standalone TalosControlPlane example using the legacy v1alpha3 contract.
+# Requires the referenced infrastructure machine template to exist already.
 apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
 kind: TalosControlPlane
 metadata:
-  name: taloscontrolplane-sample
+  name: talos-cp
 spec:
-  controlPlaneSpec:
-    init:
-      generateType: init
+  version: v1.31.0
+  replicas: 1
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    kind: DockerMachineTemplate
+    name: talos-cp-machine-template
+  controlPlaneConfig:
     controlplane:
       generateType: controlplane
+      strategicPatches:
+        - |
+          machine:
+            install:
+              disk: /dev/sda
