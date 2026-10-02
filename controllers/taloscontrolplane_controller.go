@@ -812,6 +812,27 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		return ctrl.Result{}, err
 	}
 
+	// Remediate machines a MachineHealthCheck flagged for the control plane to handle: nobody else
+	// will, so left alone they stay unhealthy voting members forever. Like a scale-down, remediation
+	// removes one machine at a time and only once the rest of etcd is healthy; the scale-up below then
+	// replaces it. A lone machine is never remediated, as that would leave no control plane at all.
+	if unhealthy := controlPlane.UnhealthyMachines(); unhealthy.Len() > 0 {
+		if numMachines > 1 {
+			logger.Info("remediating unhealthy control plane machines", "machines", unhealthy.Names())
+
+			res, err = r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, collections.Machines{})
+			if err != nil && (res.Requeue || res.RequeueAfter > 0) {
+				logger.Info("failed to remediate control plane", "error", err)
+
+				return res, nil
+			}
+
+			return res, err
+		}
+
+		logger.Info("refusing to remediate the only control plane machine", "machines", unhealthy.Names())
+	}
+
 	needRollout := controlPlane.MachinesNeedingRollout()
 	if len(needRollout) > 0 {
 		logger.Info("rolling out control plane machines", "needRollout", needRollout.Names())
