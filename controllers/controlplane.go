@@ -70,6 +70,12 @@ func (c *ControlPlane) MachineWithDeleteAnnotation(machines collections.Machines
 	return annotatedMachines
 }
 
+// UnhealthyMachines returns the machines a MachineHealthCheck flagged for remediation by the control
+// plane (see needsRemediation) that are not being deleted yet.
+func (c *ControlPlane) UnhealthyMachines() collections.Machines {
+	return c.Machines.Filter(needsRemediation, collections.Not(collections.HasDeletionTimestamp))
+}
+
 // MachinesNeedingRollout return a list of machines that need to be rolled out.
 func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	if c.TCP.Spec.RolloutStrategy != nil && c.TCP.Spec.RolloutStrategy.Type == controlplanev1.OnDeleteStrategyType {
