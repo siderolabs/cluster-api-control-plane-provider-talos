@@ -27,9 +27,9 @@ jobs:
       pull-requests: read
     runs-on:
       group: generic
-    timeout-minutes: 45
     if: (!startsWith(github.head_ref, 'renovate/') && !startsWith(github.head_ref,
       'dependabot/')) && github.event_name == 'pull_request'
+    timeout-minutes: 120
     steps:
       - name: gather-system-info
         id: system-info

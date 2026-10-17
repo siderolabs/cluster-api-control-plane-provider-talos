@@ -39,6 +39,36 @@ const (
 	// InvalidControlPlaneConfigReason (Severity=Error) documents that controlplane config is invalid and the provider
 	// can not proceed with the bootstrap.
 	InvalidControlPlaneConfigReason = "InvalidControlPlaneConfig"
+
+	// AvailableReason surfaces when the control plane is initialized, etcd has quorum and at least one
+	// control plane machine is ready.
+	AvailableReason = clusterv1.AvailableReason
+
+	// NotAvailableReason surfaces when the control plane is not initialized, etcd lost quorum, no control plane
+	// machine is ready, or the TalosControlPlane is being deleted.
+	NotAvailableReason = clusterv1.NotAvailableReason
+
+	// RemoteConnectionProbeFailedReason surfaces when the workload cluster can not be reached, so the availability
+	// of the control plane is unknown.
+	RemoteConnectionProbeFailedReason = "RemoteConnectionProbeFailed"
+
+	// AvailableInspectionFailedReason surfaces when the availability of the control plane could not be determined,
+	// e.g. because the etcd cluster could not be inspected.
+	AvailableInspectionFailedReason = clusterv1.InspectionFailedReason
+)
+
+const (
+	// MachinesReadyReason surfaces when at least spec.replicas control plane machines are ready.
+	MachinesReadyReason = clusterv1.ReadyReason
+
+	// MachinesNotReadyReason surfaces when fewer than spec.replicas control plane machines are ready.
+	MachinesNotReadyReason = clusterv1.NotReadyReason
+
+	// MachinesUpToDateReason surfaces when all control plane machines are up-to-date.
+	MachinesUpToDateReason = clusterv1.UpToDateReason
+
+	// MachinesNotUpToDateReason surfaces when at least one control plane machine is not up-to-date.
+	MachinesNotUpToDateReason = clusterv1.NotUpToDateReason
 )
 
 const (
@@ -90,6 +120,12 @@ const (
 
 	// EtcdClusterHealthyReason is set when the etcd cluster is healthy.
 	EtcdClusterHealthyReason = "EtcdClusterHealthy"
+
+	// EtcdClusterQuorumLostReason (Severity=Error) is set when too few etcd members are healthy for etcd to keep quorum.
+	EtcdClusterQuorumLostReason = "EtcdClusterQuorumLost"
+
+	// EtcdClusterInspectionFailedReason is set when the etcd service could not be inspected on any control plane machine.
+	EtcdClusterInspectionFailedReason = "EtcdClusterInspectionFailed"
 )
 
 const (

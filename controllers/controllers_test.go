@@ -6,6 +6,7 @@ package controllers_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -169,12 +169,37 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(metav1.NamespaceDefault))).To(Succeed())
 	g.Expect(machineList.Items).To(BeEmpty())
 
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(BeEmpty(), "a paused TalosControlPlane must not be reconciled")
+	expectCondition(g, tcp, clusterv1.PausedCondition, metav1.ConditionTrue, clusterv1.PausedReason)
+	g.Expect(conditions.Get(tcp, clusterv1.PausedCondition).Message).To(ContainSubstring("Cluster spec.paused is set to true"))
+
 	// Test: tcp is paused and cluster is not
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(cluster), cluster)).To(Succeed())
 	cluster.Spec.Paused = pointer.Bool(false)
-	tcp.ObjectMeta.Annotations = map[string]string{}
-	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
+	g.Expect(fakeClient.Update(suite.ctx, cluster)).To(Succeed())
+
+	tcp.Annotations = map[string]string{clusterv1.PausedAnnotation: "paused"}
+	g.Expect(fakeClient.Update(suite.ctx, tcp)).To(Succeed())
+
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(BeEmpty(), "a paused TalosControlPlane must not be reconciled")
+	expectCondition(g, tcp, clusterv1.PausedCondition, metav1.ConditionTrue, clusterv1.PausedReason)
+	g.Expect(conditions.Get(tcp, clusterv1.PausedCondition).Message).To(ContainSubstring("TalosControlPlane has the cluster.x-k8s.io/paused annotation"))
+
+	// Test: neither is paused, reconciliation resumes
+	delete(tcp.Annotations, clusterv1.PausedAnnotation)
+	g.Expect(fakeClient.Update(suite.ctx, tcp)).To(Succeed())
+
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+	g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
+	expectCondition(g, tcp, clusterv1.PausedCondition, metav1.ConditionFalse, clusterv1.NotPausedReason)
 }
 
 func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
@@ -182,6 +207,9 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Status = clusterv1.ClusterStatus{
+		Initialization: clusterv1.ClusterInitializationStatus{
+			InfrastructureProvisioned: pointer.Bool(true),
+		},
 		Conditions: []metav1.Condition{
 			{
 				Type:   string(clusterv1.InfrastructureReadyCondition),
@@ -252,6 +280,13 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 
 	g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 
+	// With no Machines the replica counters are set to an explicit 0 rather than left unset.
+	g.Expect(tcp.Status.Replicas).To(HaveValue(BeZero()))
+	g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeZero()))
+	g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeZero()))
+	g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeZero()))
+	expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionFalse, controlplanev1.NotAvailableReason)
+
 	_, err = secret.GetFromNamespacedName(suite.ctx, fakeClient, client.ObjectKey{Namespace: metav1.NamespaceDefault, Name: "foo"}, secret.ClusterCA)
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -266,6 +301,10 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	cluster, tcp, infrastructureMachineTemplate := suite.setupCluster(fakeClient, "test-reconcile-init", nil)
 
 	g := NewWithT(suite.T())
+
+	// The Machine below is created without minReadySeconds, so it has to be synced in place.
+	tcp.Spec.MinReadySeconds = pointer.Int32(15)
+	g.Expect(fakeClient.Update(suite.ctx, tcp)).To(Succeed())
 
 	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
@@ -346,9 +385,19 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(1)))
+
+		// v1beta2 contract fields read by Cluster API.
+		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
+		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(1)))
+		expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionTrue, controlplanev1.AvailableReason)
+		expectCondition(g, tcp, clusterv1.MachinesReadyCondition, metav1.ConditionTrue, controlplanev1.MachinesReadyReason)
+		expectCondition(g, tcp, clusterv1.MachinesUpToDateCondition, metav1.ConditionTrue, controlplanev1.MachinesUpToDateReason)
+		expectCondition(g, tcp, clusterv1.PausedCondition, metav1.ConditionFalse, clusterv1.NotPausedReason)
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -356,6 +405,8 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 
 		machine := machineList.Items[0]
 		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
+		g.Expect(machine.Spec.MinReadySeconds).To(HaveValue(BeEquivalentTo(15)))
+		expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
 	}, time.Second).Should(Succeed())
 }
 
@@ -366,19 +417,11 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 	g := NewWithT(suite.T())
 
-	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
-	g.Expect(fakeClient.Get(suite.ctx, client.ObjectKeyFromObject(tcp), tcp)).To(Succeed())
+	// New Machines are created with minReadySeconds from the TalosControlPlane.
+	tcp.Spec.MinReadySeconds = pointer.Int32(10)
+	g.Expect(fakeClient.Update(suite.ctx, tcp)).To(Succeed())
 
-	// Make the control plane appear as initialized and ready to trigger the creation of machines
-	tcp.Status.Initialized = true
-	tcp.Status.Ready = true
-	tcp.Status.Conditions = append(tcp.Status.Conditions, metav1.Condition{
-		Type:               "ControlPlaneInitialized",
-		Status:             metav1.ConditionTrue,
-		Reason:             "ControlPlaneSuccessfullyInitialized",
-		LastTransitionTime: metav1.Now(),
-	})
-	g.Expect(fakeClient.Status().Update(suite.ctx, tcp)).To(Succeed())
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
 	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -417,9 +460,16 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+
+		// The controller initializes the control plane by itself, nothing is seeded by the test.
+		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
+		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
+		expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionTrue, controlplanev1.AvailableReason)
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -427,26 +477,66 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 
 		machine := machineList.Items[0]
 		g.Expect(machine.Name).To(HavePrefix(tcp.Name))
+
+		for _, machine := range machineList.Items {
+			g.Expect(machine.Spec.MinReadySeconds).To(HaveValue(BeEquivalentTo(10)))
+			expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
+		}
 	}, time.Second).Should(Succeed())
 
+	// Changing minReadySeconds updates the Machines in place, without a rollout.
+	machinesBefore := machineNames(suite.getMachines(fakeClient, cluster))
+
 	patchHelper, err := patch.NewHelper(tcp, fakeClient)
+	g.Expect(err).To(BeNil())
+
+	tcp.Spec.MinReadySeconds = pointer.Int32(20)
+	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
+
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	machines := suite.getMachines(fakeClient, cluster)
+	g.Expect(machineNames(machines)).To(ConsistOf(machinesBefore))
+
+	for _, machine := range machines {
+		g.Expect(machine.Spec.MinReadySeconds).To(HaveValue(BeEquivalentTo(20)))
+		expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
+	}
+
+	g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+
+	patchHelper, err = patch.NewHelper(tcp, fakeClient)
 	tcp.Spec.Version = "v1.25.4"
 
 	g.Expect(err).To(BeNil())
 	g.Expect(patchHelper.Patch(suite.ctx, tcp)).To(Succeed())
 
+	// The Machines are reported as not up-to-date as soon as the spec changes.
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	suite.expectMachinesNotUpToDate(g, fakeClient, cluster, machinesBefore)
+
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
 
 		machines := suite.getMachines(fakeClient, cluster)
+		g.Expect(machines).To(HaveLen(2))
+
 		for _, machine := range machines {
+			g.Expect(machine.Name).NotTo(BeElementOf(machinesBefore))
 			g.Expect(machine.Spec.Version).ToNot(BeNil())
 			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+			expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
 		}
 	}, time.Minute).Should(Succeed())
+
+	// Drift the TalosConfig of every Machine away from the TalosControlPlane spec.
+	machinesBefore = machineNames(suite.getMachines(fakeClient, cluster))
 
 	for _, machine := range suite.getMachines(fakeClient, cluster) {
 		talosconfig := &bootstrapv1alpha3.TalosConfig{}
@@ -460,21 +550,54 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(patchHelper.Patch(suite.ctx, talosconfig)).To(Succeed())
 	}
 
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	suite.expectMachinesNotUpToDate(g, fakeClient, cluster, machinesBefore)
+
+	// Wait until the drifted Machines are actually replaced by Machines whose TalosConfig matches the spec.
 	g.Eventually(func(g Gomega) {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
+		expectCondition(g, tcp, string(controlplanev1.MachinesSpecUpToDateCondition), metav1.ConditionTrue, "MachinesSpecUpToDate")
+		expectCondition(g, tcp, clusterv1.MachinesUpToDateCondition, metav1.ConditionTrue, controlplanev1.MachinesUpToDateReason)
 
 		machines := suite.getMachines(fakeClient, cluster)
+		g.Expect(machines).To(HaveLen(int(tcp.Spec.GetReplicas())))
+
 		for _, machine := range machines {
-			g.Expect(machine.Spec.Version).ToNot(BeNil())
+			g.Expect(machine.Name).NotTo(BeElementOf(machinesBefore))
 			g.Expect(machine.Spec.Version).To(BeEquivalentTo(tcp.Spec.Version))
+
+			talosconfig := &bootstrapv1alpha3.TalosConfig{}
+			g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Name: machine.Spec.Bootstrap.ConfigRef.Name, Namespace: cluster.Namespace}, talosconfig)).To(Succeed())
+			g.Expect(talosconfig.Spec).To(Equal(tcp.Spec.ControlPlaneConfig.ControlPlaneConfig))
+
+			expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
 		}
 	}, time.Minute).Should(Succeed())
 
 	cancel()
 	g.Expect(eg.Wait()).To(Succeed())
+}
+
+// expectMachinesNotUpToDate checks that the named Machines still exist and report UpToDate False.
+func (suite *ControllersSuite) expectMachinesNotUpToDate(g *WithT, fakeClient client.Client, cluster *clusterv1.Cluster, names []string) {
+	found := 0
+
+	for _, machine := range suite.getMachines(fakeClient, cluster) {
+		if !slices.Contains(names, machine.Name) {
+			continue
+		}
+
+		found++
+
+		expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionFalse, clusterv1.MachineNotUpToDateReason)
+	}
+
+	g.Expect(found).To(Equal(len(names)), "the outdated machines must not be deleted before they are reported as not up-to-date")
 }
 
 func (suite *ControllersSuite) TestUppercaseHostnames() {
@@ -523,9 +646,9 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(3)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(3)))
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -582,11 +705,7 @@ func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client
 					machine.Status.NodeRef = clusterv1.MachineNodeReference{
 						Name: machine.Name,
 					}
-					apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-						Type:   clusterv1.ReadyCondition,
-						Status: metav1.ConditionTrue,
-						Reason: "Ready",
-					})
+					setMachineReadyAndAvailable(&machine)
 
 					g.Expect(err).To(BeNil())
 					g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
@@ -757,11 +876,14 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	g.Expect(err).To(BeNil())
 
 	cluster.Status = clusterv1.ClusterStatus{
+		Initialization: clusterv1.ClusterInitializationStatus{
+			InfrastructureProvisioned: pointer.Bool(true),
+		},
 		Conditions: []metav1.Condition{
 			{
 				Type:   string(clusterv1.InfrastructureReadyCondition), // User-friendly condition type that is consistent across CAPI versions
 				Status: metav1.ConditionTrue,
-				// Reason et LastTransitionTime are optional, but can be helpful for debugging and ensuring the condition is properly set
+				// Reason and LastTransitionTime are optional, but can be helpful for debugging and ensuring the condition is properly set
 				Reason:             "InfrastructureReady",
 				LastTransitionTime: metav1.Now(),
 			},

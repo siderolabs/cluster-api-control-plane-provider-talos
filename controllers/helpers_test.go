@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/gobuffalo/flect"
+	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/crypto/tls"
@@ -46,6 +47,7 @@ import (
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -200,14 +202,37 @@ func createMachineNodePair(name string, cluster *clusterv1.Cluster, tcp *control
 	}
 
 	if ready {
-		apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
-			Type:   clusterv1.ReadyCondition,
-			Status: metav1.ConditionTrue,
-			Reason: "Ready",
-		})
+		setMachineReadyAndAvailable(machine)
 	}
 
 	return machine, createNode(machine, ready)
+}
+
+// setMachineReadyAndAvailable sets the Ready and Available conditions that the Cluster API Machine controller
+// would set on a healthy Machine.
+func setMachineReadyAndAvailable(machine *clusterv1.Machine) {
+	apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		Type:   clusterv1.MachineReadyCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.MachineReadyReason,
+	})
+	apimeta.SetStatusCondition(&machine.Status.Conditions, metav1.Condition{
+		Type:   clusterv1.MachineAvailableCondition,
+		Status: metav1.ConditionTrue,
+		Reason: clusterv1.MachineAvailableReason,
+	})
+}
+
+// expectCondition checks the status and reason of a condition on obj.
+func expectCondition(g Gomega, obj conditions.Getter, conditionType string, status metav1.ConditionStatus, reason string) {
+	condition := conditions.Get(obj, conditionType)
+	g.Expect(condition).NotTo(BeNil(), "condition %s is not set", conditionType)
+	g.Expect(condition.Status).To(Equal(status), "condition %s: %s", conditionType, condition.Message)
+	g.Expect(condition.Reason).To(Equal(reason), "condition %s: %s", conditionType, condition.Message)
+}
+
+func machineNames(machines []clusterv1.Machine) []string {
+	return xslices.Map(machines, func(m clusterv1.Machine) string { return m.Name })
 }
 
 func createNode(machine *clusterv1.Machine, ready bool) *corev1.Node {

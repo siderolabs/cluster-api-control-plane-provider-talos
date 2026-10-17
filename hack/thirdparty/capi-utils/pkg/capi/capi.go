@@ -15,14 +15,18 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
@@ -30,7 +34,6 @@ import (
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
-	"github.com/siderolabs/capi-utils/pkg/constants"
 )
 
 // Manager installs and controls cluster API installation.
@@ -224,21 +227,48 @@ func (clusterAPI *Manager) Install(ctx context.Context) error {
 }
 
 // InstallCore installs only core, global watched components (capi, cabpt, cacppt).
+//
+// Each requested provider is looked up in the clusterctl provider inventory, and only the missing
+// ones are passed to clusterctl Init. A retry after a partially failed Init (e.g. a provider wait
+// timeout after capi-system was created) therefore installs what is still missing instead of
+// skipping the whole step.
 func (clusterAPI *Manager) InstallCore(ctx context.Context, kubeconfig client.Kubeconfig) error {
-	installed, err := isCoreInstalled(ctx, clusterAPI.clientset)
+	inventory, err := clusterAPI.listProviderInventory(ctx)
 	if err != nil {
 		return err
 	}
 
-	if !installed {
+	var coreProvider string
+
+	if clusterAPI.options.CoreProvider != "" && !inventory.has(clusterAPI.options.CoreProvider, clusterctlv1.CoreProviderType) {
+		coreProvider = clusterAPI.options.CoreProvider
+	}
+
+	bootstrapProviders := inventory.missing(clusterAPI.options.BootstrapProviders, clusterctlv1.BootstrapProviderType)
+	controlPlaneProviders := inventory.missing(clusterAPI.options.ControlPlaneProviders, clusterctlv1.ControlPlaneProviderType)
+
+	if coreProvider != "" || len(bootstrapProviders) > 0 || len(controlPlaneProviders) > 0 {
 		fmt.Println("initializing the core capi components")
+
+		// When the core provider is not installed yet, clusterctl Init adds the kubeadm bootstrap and
+		// control plane providers to an empty list, so opt out of that explicitly.
+		if coreProvider != "" {
+			if len(bootstrapProviders) == 0 {
+				bootstrapProviders = []string{client.NoopProvider}
+			}
+
+			if len(controlPlaneProviders) == 0 {
+				controlPlaneProviders = []string{client.NoopProvider}
+			}
+		}
+
 		// Initialize everything but the infra providers, as we want to specify target
 		// namespaces for those.
 		coreOpts := client.InitOptions{
 			Kubeconfig:              kubeconfig,
-			CoreProvider:            clusterAPI.options.CoreProvider,
-			BootstrapProviders:      clusterAPI.options.BootstrapProviders,
-			ControlPlaneProviders:   clusterAPI.options.ControlPlaneProviders,
+			CoreProvider:            coreProvider,
+			BootstrapProviders:      bootstrapProviders,
+			ControlPlaneProviders:   controlPlaneProviders,
 			InfrastructureProviders: []string{},
 			TargetNamespace:         "",
 			LogUsageInstructions:    false,
@@ -251,6 +281,35 @@ func (clusterAPI *Manager) InstallCore(ctx context.Context, kubeconfig client.Ku
 
 		if _, err = clusterAPI.client.Init(ctx, coreOpts); err != nil {
 			return err
+		}
+	}
+
+	if clusterAPI.options.WaitProviderTimeout == 0 {
+		return nil
+	}
+
+	// A provider can be in the inventory while its controller never became available (the Init that
+	// installed it failed waiting for it), so check the controllers here as well.
+	if inventory, err = clusterAPI.listProviderInventory(ctx); err != nil {
+		return err
+	}
+
+	for _, p := range []struct {
+		providerType clusterctlv1.ProviderType
+		names        []string
+	}{
+		{clusterctlv1.CoreProviderType, []string{clusterAPI.options.CoreProvider}},
+		{clusterctlv1.BootstrapProviderType, clusterAPI.options.BootstrapProviders},
+		{clusterctlv1.ControlPlaneProviderType, clusterAPI.options.ControlPlaneProviders},
+	} {
+		for _, name := range p.names {
+			if name == "" || name == client.NoopProvider {
+				continue
+			}
+
+			if err = clusterAPI.checkProviderAvailable(ctx, inventory, name, p.providerType); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -273,6 +332,17 @@ func (clusterAPI *Manager) InstallProvider(ctx context.Context, kubeconfig clien
 
 	if installed, err = provider.IsInstalled(ctx, clusterAPI.clientset); err != nil {
 		return err
+	}
+
+	// clusterctl Init refuses to install a provider that is already in the inventory, which happens
+	// on a retry after an Init that installed the provider but failed waiting for it.
+	if !installed {
+		inventory, err := clusterAPI.listProviderInventory(ctx)
+		if err != nil {
+			return err
+		}
+
+		installed = inventory.has(provider.Name(), clusterctlv1.InfrastructureProviderType)
 	}
 
 	if !installed {
@@ -523,15 +593,99 @@ func fieldNotFound(fields ...string) error {
 	return fmt.Errorf("failed to find field %s", strings.Join(fields, "."))
 }
 
-func isCoreInstalled(ctx context.Context, clientset *kubernetes.Clientset) (bool, error) {
-	_, err := clientset.CoreV1().Namespaces().Get(ctx, constants.CoreCAPINamespace, metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
+// providerInventory is the list of providers recorded in the clusterctl inventory
+// (providers.clusterctl.cluster.x-k8s.io).
+type providerInventory []clusterctlv1.Provider
+
+// listProviderInventory lists the clusterctl provider inventory. It is empty before the first Init,
+// when the inventory CRD does not exist yet.
+func (clusterAPI *Manager) listProviderInventory(ctx context.Context) (providerInventory, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(clusterctlv1.GroupVersion.WithKind("ProviderList"))
+
+	if err := clusterAPI.runtimeClient.List(ctx, list); err != nil {
+		if meta.IsNoMatchError(err) || errors.IsNotFound(err) {
+			return nil, nil
 		}
 
-		return false, err
+		return nil, fmt.Errorf("failed to list the clusterctl provider inventory: %w", err)
 	}
 
-	return true, nil
+	inventory := make(providerInventory, 0, len(list.Items))
+
+	for _, item := range list.Items {
+		var provider clusterctlv1.Provider
+
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &provider); err != nil {
+			return nil, err
+		}
+
+		inventory = append(inventory, provider)
+	}
+
+	return inventory, nil
+}
+
+// get returns the inventory entry for a provider, given as "name" or "name:version".
+func (inventory providerInventory) get(provider string, providerType clusterctlv1.ProviderType) *clusterctlv1.Provider {
+	name, _, _ := strings.Cut(provider, ":")
+
+	for i := range inventory {
+		if inventory[i].ProviderName == name && inventory[i].GetProviderType() == providerType {
+			return &inventory[i]
+		}
+	}
+
+	return nil
+}
+
+func (inventory providerInventory) has(provider string, providerType clusterctlv1.ProviderType) bool {
+	return inventory.get(provider, providerType) != nil
+}
+
+// missing returns the providers that are not in the inventory yet.
+func (inventory providerInventory) missing(providers []string, providerType clusterctlv1.ProviderType) []string {
+	var res []string
+
+	for _, provider := range providers {
+		if !inventory.has(provider, providerType) {
+			res = append(res, provider)
+		}
+	}
+
+	return res
+}
+
+// checkProviderAvailable verifies that a provider is in the inventory and that all of its
+// controller Deployments are available.
+func (clusterAPI *Manager) checkProviderAvailable(ctx context.Context, inventory providerInventory, name string, providerType clusterctlv1.ProviderType) error {
+	provider := inventory.get(name, providerType)
+	if provider == nil {
+		return fmt.Errorf("provider %s (%s) is not installed", name, providerType)
+	}
+
+	deployments, err := clusterAPI.clientset.AppsV1().Deployments(provider.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set{clusterv1.ProviderNameLabel: provider.ManifestLabel()}).String(),
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(deployments.Items) == 0 {
+		return fmt.Errorf("no controller deployments found for provider %s in namespace %s", provider.ManifestLabel(), provider.Namespace)
+	}
+
+	for _, deployment := range deployments.Items {
+		replicas := int32(1)
+		if deployment.Spec.Replicas != nil {
+			replicas = *deployment.Spec.Replicas
+		}
+
+		if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.AvailableReplicas < replicas {
+			return fmt.Errorf("deployment %s/%s of provider %s is not available: %d of %d replicas available",
+				deployment.Namespace, deployment.Name, provider.ManifestLabel(), deployment.Status.AvailableReplicas, replicas)
+		}
+	}
+
+	return nil
 }

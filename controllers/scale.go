@@ -18,7 +18,6 @@ import (
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -74,6 +73,20 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{}, fmt.Errorf("no machines found")
 	}
 
+	// Remediation deletes at most one Machine at a time: don't delete another one before its replacement is up.
+	if remediationInProgress(tcp) {
+		conditions.Set(tcp, metav1.Condition{
+			Type:    string(controlplanev1.ResizedCondition),
+			Status:  metav1.ConditionFalse,
+			Reason:  controlplanev1.ScalingDownReason,
+			Message: "Waiting for the remediation of an unhealthy machine to complete before scaling down",
+		})
+
+		r.Log.Info("waiting for remediation to complete before scaling down")
+
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, collections.ToMachineList(controlPlane.Machines).Items); err != nil {
 		r.Log.Info("waiting for all nodes to finish boot sequence", "error", err)
 
@@ -125,42 +138,9 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	node := deleteMachine.Status.NodeRef
 
-	c, err := r.talosconfigForMachines(ctx, tcp, *deleteMachine)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
-	}
-
-	defer c.Close() //nolint:errcheck
-
 	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
 
-	// Mark machine as leaving etcd so health check skips it even if reconciliation
-	// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
-	// stopped etcd without DeletionTimestamp fails health checks forever).
-	patchHelper, err := patch.NewHelper(deleteMachine, r.Client)
-	if err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-	}
-
-	annotations := deleteMachine.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[etcdLeavingAnnotation] = "true"
-	deleteMachine.SetAnnotations(annotations)
-
-	if err := patchHelper.Patch(ctx, deleteMachine); err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-	}
-
-	leaveErr := r.gracefulEtcdLeave(ctx, c, *deleteMachine)
-
-	err = r.Client.Delete(ctx, deleteMachine)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if leaveErr != nil {
+	if err := r.removeFromEtcdAndDelete(ctx, tcp, deleteMachine, controlPlane.Machines.UnsortedList()); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -169,9 +149,29 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return result, err
 	}
 
-	result.Requeue = true
+	if result.IsZero() {
+		result.RequeueAfter = 5 * time.Second
+	}
 
 	return result, nil
+}
+
+// removeFromEtcdAndDelete removes the etcd member of the Machine, then deletes the Machine. If the member could not be
+// removed, the Machine is kept, so that it is retried later rather than deleting a Machine whose member is still part
+// of the etcd cluster, and the Resized condition reports why.
+func (r *TalosControlPlaneReconciler) removeFromEtcdAndDelete(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine, machines []*clusterv1.Machine) error {
+	if err := r.removeMachineFromEtcd(ctx, tcp, machine, machines); err != nil {
+		conditions.Set(tcp, metav1.Condition{
+			Type:    string(controlplanev1.ResizedCondition),
+			Status:  metav1.ConditionFalse,
+			Reason:  controlplanev1.ScalingDownReason,
+			Message: fmt.Sprintf("Failed to remove machine %s from etcd: %v", machine.Name, err),
+		})
+
+		return err
+	}
+
+	return r.Client.Delete(ctx, machine)
 }
 
 func (r *TalosControlPlaneReconciler) deleteNode(ctx context.Context, client client.Client, machine *clusterv1.Machine) (ctrl.Result, error) {

@@ -82,13 +82,19 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	// Return machines if they are scheduled for rollout or if with an outdated configuration.
 	return machines.AnyFilter(
 		// Machines that do not match with TCP config.
-		collections.Not(
-			collections.And(
-				collections.MatchesKubernetesVersion(c.TCP.Spec.Version),
-				MatchesTemplateClonedFrom(c.infraObjects, c.TCP),
-				MatchesControlPlaneConfig(c.talosConfigs, c.TCP),
-			),
-		),
+		collections.Not(c.MatchesSpec()),
+	)
+}
+
+// MatchesSpec returns a filter to find all machines that match the current TCP spec:
+// Kubernetes version, infrastructure template and controlplane TalosConfig.
+//
+// It is the predicate used both to pick machines for rollout and to report the Machine UpToDate condition.
+func (c *ControlPlane) MatchesSpec() collections.Func {
+	return collections.And(
+		collections.MatchesKubernetesVersion(c.TCP.Spec.Version),
+		MatchesTemplateClonedFrom(c.infraObjects, c.TCP),
+		MatchesControlPlaneConfig(c.talosConfigs, c.TCP),
 	)
 }
 

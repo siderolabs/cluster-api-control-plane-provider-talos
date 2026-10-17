@@ -30,6 +30,25 @@ KUBECONFIG=
 AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/download/${TALOS_VERSION}/cloud-images.json | \
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
 export PROVIDER=aws:v2.9.3
+# pin the core and bootstrap providers, so that the test runs against a known CAPI release under the v1beta2 contract;
+# the bootstrap provider version follows the CABPT version in go.mod
+export CORE_PROVIDER="${CORE_PROVIDER:-cluster-api:v1.14.3}"
+CABPT_VERSION="${CABPT_VERSION:-$(awk '$1 == "github.com/siderolabs/cluster-api-bootstrap-provider-talos" { print $2 }' go.mod)}"
+if [[ -z ${CABPT_VERSION} ]]; then
+  echo "failed to determine the CABPT version from go.mod"
+
+  exit 1
+fi
+export BOOTSTRAP_PROVIDER="${BOOTSTRAP_PROVIDER:-talos:${CABPT_VERSION}}"
+# the locally built provider is staged under a fake version tag, which must fall into the
+# 0.6 release series of config/metadata/metadata.yaml (v1beta2 contract)
+CACPPT_STAGED_VERSION="v0.6.0"
+export CONTROL_PLANE_PROVIDER="talos:${CACPPT_STAGED_VERSION}"
+# bounded wait for the workload Cluster deletion on failure, so that CAPA can deprovision AWS resources
+CLUSTER_DELETE_TIMEOUT="${CLUSTER_DELETE_TIMEOUT:-15m}"
+# bound the e2e suite, so that a hang still leaves time for the cleanup above within the CI job timeout
+# (timeoutMinutes in .kres.yaml): the suite timeout plus CLUSTER_DELETE_TIMEOUT must fit in it after the build
+E2E_TEST_TIMEOUT="${E2E_TEST_TIMEOUT:-60m}"
 
 CREATED_CLUSTER=""
 TALOSCTL_PATH="${TMP}/talosctl"
@@ -62,10 +81,16 @@ cleanup() {
       ${KUBECTL} logs -n capi-system deployment/capi-controller-manager || true
       ${KUBECTL} get cluster,taloscontrolplane,machine -A -o yaml || true
 
-      # kubectl delete waits for finalizers by default, which can hang if AWS
-      # teardown gets stuck; don't let that eat the remaining job time budget
-      # after the logs above have already been captured.
-      ${KUBECTL} delete cluster --all --wait=false --timeout=60s || true
+      # delete the workload clusters and give CAPA a bounded amount of time to deprovision
+      # the AWS resources before the management cluster is destroyed below; the logs above
+      # have already been captured, so a stuck teardown can't hide them.
+      ${KUBECTL} delete cluster --all --all-namespaces --wait=false || true
+      if [[ -n "$(${KUBECTL} get cluster --all-namespaces -o name 2>/dev/null)" ]] && \
+        ! ${KUBECTL} wait --for=delete cluster --all --all-namespaces --timeout=${CLUSTER_DELETE_TIMEOUT}; then
+        echo "workload cluster deletion did not finish within ${CLUSTER_DELETE_TIMEOUT}, AWS resources may be leaked"
+        ${KUBECTL} get cluster,awscluster,awsmachine -A -o wide || true
+        ${KUBECTL} logs -n capa-system deployment/capa-controller-manager manager --since=${CLUSTER_DELETE_TIMEOUT} || true
+      fi
     fi
   fi
 
@@ -102,7 +127,7 @@ function config {
   tar -xf ${TMP}/kustomize.tar.gz -C ${TMP} && rm ${TMP}/kustomize.tar.gz
 
   # always use fake version tag here
-  export CONTROL_PLANE_PROVIDER_COMPONENTS=${TMP}/control-plane-talos/v0.4.0/control-plane-components.yaml
+  export CONTROL_PLANE_PROVIDER_COMPONENTS=${TMP}/control-plane-talos/${CACPPT_STAGED_VERSION}/control-plane-components.yaml
   mkdir -p $(dirname ${CONTROL_PLANE_PROVIDER_COMPONENTS})
 
   cp -rf config ${TMP}/config
@@ -111,7 +136,7 @@ function config {
   ${KUSTOMIZE} edit set image controller=${REGISTRY_AND_USERNAME}/${NAME}:${TAG}
   cd -
   ${KUSTOMIZE} build ${TMP}/config/default >${CONTROL_PLANE_PROVIDER_COMPONENTS}
-  cp ${TMP}/config/metadata/metadata.yaml ${TMP}/control-plane-talos/v0.4.0/
+  cp ${TMP}/config/metadata/metadata.yaml $(dirname ${CONTROL_PLANE_PROVIDER_COMPONENTS})/
 }
 
 function cluster {
@@ -173,7 +198,7 @@ aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" | base64 -w0)
 
 function tests {
   export WORKLOAD_TALOS_VERSION=${TALOS_VERSION}
-  ./_out/integration.test -test.v
+  ./_out/integration.test -test.v -test.timeout="${E2E_TEST_TIMEOUT}"
 }
 
 build_registry_mirrors

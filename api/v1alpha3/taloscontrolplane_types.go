@@ -13,8 +13,6 @@ import (
 
 const (
 	TalosControlPlaneFinalizer = "talos.controlplane.cluster.x-k8s.io"
-
-	SpecHashAnnotation = "controlplane.cluster.x-k8s.io/spec-hash"
 )
 
 type ControlPlaneConfig struct {
@@ -128,17 +126,17 @@ type TalosControlPlaneStatus struct {
 	// Total number of non-terminated machines targeted by this control plane
 	// (their labels match the selector).
 	// +optional
-	Replicas int32 `json:"replicas,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Total number of fully running and ready control plane machines.
+	// readyReplicas is the number of ready replicas for this ControlPlane. A machine is considered ready when Machine's Ready condition is true.
 	// +optional
-	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
+	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
 
 	// availableReplicas is the number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
 	// +optional
 	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
 
-	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered available when Machine's  UpToDate condition is true.
+	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered up-to-date when Machine's UpToDate condition is true.
 	// +optional
 	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
 

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"gopkg.in/yaml.v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -148,11 +149,14 @@ func (suite *IntegrationSuite) SetupSuite() {
 	suite.Require().NoError(encoder.Encode(clusterctlConfigs))
 	suite.Require().NoError(encoder.Close())
 
+	// Pin the core and bootstrap providers, so that the test runs against a known CAPI release under
+	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. The bootstrap
+	// provider version matches github.com/siderolabs/cluster-api-bootstrap-provider-talos in go.mod.
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api"),
-		BootstrapProviders:      []string{"talos"},
+		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.14.3"),
+		BootstrapProviders:      []string{env("BOOTSTRAP_PROVIDER", "talos:v0.7.0-alpha.3")},
 		InfrastructureProviders: []infrastructure.Provider{provider},
-		ControlPlaneProviders:   []string{"talos"},
+		ControlPlaneProviders:   []string{env("CONTROL_PLANE_PROVIDER", "talos")},
 		WaitProviderTimeout:     time.Minute,
 		ClusterctlConfigPath:    clusterctlConfigPath,
 	}
@@ -403,7 +407,7 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 
 	suite.cluster.Scale(ctx, 0, capi.ControlPlaneNodes) //nolint:errcheck
 
-	err := retry.Constant(time.Second*20, retry.WithUnits(time.Second)).Retry(func() error {
+	err := retry.Constant(2*time.Minute, retry.WithUnits(time.Second)).Retry(func() error {
 		controlplane, err := suite.cluster.ControlPlanes(suite.ctx)
 		if err != nil {
 			return err
@@ -417,9 +421,21 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 			return err
 		}
 
-		if !conditions.Has(&tcp, string(controlplanev1.ResizedCondition)) &&
-			conditions.GetMessage(&tcp, string(controlplanev1.ResizedCondition)) != "Cannot scale down control plane nodes to 0" {
-			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
+		resized := conditions.Get(&tcp, string(controlplanev1.ResizedCondition))
+		if resized == nil ||
+			resized.Status != metav1.ConditionFalse ||
+			resized.Reason != controlplanev1.ScalingDownReason ||
+			resized.Message != "Cannot scale down control plane nodes to 0" {
+			return retry.ExpectedErrorf("expected Resized condition refusing to scale down to 0, got %+v", resized)
+		}
+
+		replicas, found, err := unstructured.NestedInt64(controlplane.Object, "status", "replicas")
+		if err != nil {
+			return err
+		}
+
+		if !found || replicas == 0 {
+			return fmt.Errorf("control plane was scaled down to 0 replicas")
 		}
 
 		return nil
