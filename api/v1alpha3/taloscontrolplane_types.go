@@ -68,24 +68,6 @@ type TalosControlPlaneSpec struct {
 	MinReadySeconds *int32 `json:"minReadySeconds,omitempty"`
 }
 
-// TalosControlPlaneV1Beta2Status holds the v1beta2 contract fields required by Cluster API
-type TalosControlPlaneV1Beta2Status struct {
-	// ReadyReplicas is the number of machines with a Ready Condition
-	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
-
-	// AvailableReplicas is the number of machines that are both Ready and have passed
-	// MinReadySeconds threshold. This counts machines actively serving requests
-	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
-
-	// UpToDateReplicas is the number of machines whose configuration matches the current
-	// TalosControlPlane spec. Machines with mismatched hashes are undergoing rollout
-	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
-
-	// Conditions represent the observations of the TalosControlPlane's state
-	// Uses metav1.Condition (not clusterv1.Condition) per v1beta2 contract
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
 // TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
 type TalosControlPlaneInitializationStatus struct {
 	// +optional
@@ -208,10 +190,6 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// V1Beta2 holds fields required by the v1beta2 CAPI contract
-	// +optional
-	V1Beta2 *TalosControlPlaneV1Beta2Status `json:"v1beta2,omitempty"`
-
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
 	// +optional
@@ -220,6 +198,7 @@ type TalosControlPlaneStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=taloscontrolplanes,shortName=tcp,scope=Namespaced,categories=cluster-api
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=".status.ready",description="TalosControlPlane API Server is ready to receive requests"

@@ -201,16 +201,6 @@ func (r *TalosControlPlaneReconciler) reconcileTalosControlPlaneStatus(
 	availableCount := countAvailableMachines(machines, tcp.Spec.MinReadySeconds)
 	upToDateCount := countUpToDateMachines(machines, tcp)
 
-	// Initialize v1beta2 status if not present
-	if tcp.Status.V1Beta2 == nil {
-		tcp.Status.V1Beta2 = &controlplanev1.TalosControlPlaneV1Beta2Status{}
-	}
-
-	// Update replica counts
-	tcp.Status.V1Beta2.ReadyReplicas = ptr.To(int32(readyCount))
-	tcp.Status.V1Beta2.AvailableReplicas = ptr.To(int32(availableCount))
-	tcp.Status.V1Beta2.UpToDateReplicas = ptr.To(int32(upToDateCount))
-
 	// Populate root-level replica fields read by CAPI core
 	tcp.Status.ReadyReplicas = int32(readyCount)
 	tcp.Status.AvailableReplicas = ptr.To(int32(availableCount))
@@ -359,13 +349,6 @@ func countUpToDateMachines(machines []*clusterv1.Machine, tcp *controlplanev1.Ta
 	}
 
 	return count
-}
-
-// ensureV1Beta2 initializes the V1Beta2 status sub-object if nil.
-func ensureV1Beta2(tcp *controlplanev1.TalosControlPlane) {
-	if tcp.Status.V1Beta2 == nil {
-		tcp.Status.V1Beta2 = &controlplanev1.TalosControlPlaneV1Beta2Status{}
-	}
 }
 
 // updateV1Beta2Conditions updates the v1beta2 contract conditions
@@ -848,7 +831,6 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 	return bootstrapRef, nil
 }
 func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster *clusterv1.Cluster) error {
-	ensureV1Beta2(tcp)
 	clusterSelector := &metav1.LabelSelector{
 		MatchLabels: map[string]string{
 			clusterv1.ClusterNameLabel:         cluster.Name,
@@ -1034,7 +1016,6 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 }
 
 func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (result ctrl.Result, err error) {
-	ensureV1Beta2(tcp)
 	var errs error
 	// Audit the etcd member list to remove any nodes that no longer exist
 	if err := r.auditEtcd(ctx, tcp, util.ObjectKey(cluster)); err != nil {
