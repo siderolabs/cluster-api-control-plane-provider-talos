@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 	"sync"
 	"time"
@@ -411,9 +412,12 @@ func (m talosEtcdMemberManager) RemoveMember(ctx context.Context, tcp *controlpl
 // deleted. It first asks the machine to leave etcd gracefully, which also forfeits leadership. If that fails, e.g.
 // because the machine is unreachable, it removes the member through another control plane machine.
 //
-// If the member could not be removed either way, the etcd-leaving mark is removed again and an error is returned:
-// the caller must not delete the machine then, because its member would stay in the etcd cluster.
+// If the member could not be removed either way, an error is returned: the caller must not delete the machine then,
+// because its member would stay in the etcd cluster. The etcd-leaving mark is removed again if this call set it; a
+// mark set before is kept, since the member may have left etcd then.
 func (r *TalosControlPlaneReconciler) removeMachineFromEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine, machines []*clusterv1.Machine) error {
+	_, alreadyLeaving := machine.Annotations[etcdLeavingAnnotation]
+
 	// Mark machine as leaving etcd so health check skips it even if reconciliation
 	// crashes between leaving etcd and deleting the machine (prevents deadlock where
 	// stopped etcd without DeletionTimestamp fails health checks forever).
@@ -422,8 +426,8 @@ func (r *TalosControlPlaneReconciler) removeMachineFromEtcd(ctx context.Context,
 	}
 
 	leaveErr := r.etcdMemberLeave(ctx, tcp, machine, machines)
-	if leaveErr == nil {
-		return nil
+	if leaveErr == nil || alreadyLeaving {
+		return leaveErr
 	}
 
 	if err := r.setEtcdLeavingAnnotation(ctx, machine, false); err != nil {
@@ -468,14 +472,7 @@ func (r *TalosControlPlaneReconciler) etcdMemberLeave(ctx context.Context, tcp *
 
 	errs := []error{fmt.Errorf("graceful leave: %w", leaveErr)}
 
-	for _, other := range machines {
-		if other.Name == machine.Name ||
-			!other.DeletionTimestamp.IsZero() ||
-			!other.Status.NodeRef.IsDefined() ||
-			other.Annotations[etcdLeavingAnnotation] == "true" {
-			continue
-		}
-
+	for other := range otherEtcdMachines(machine, machines) {
 		members, err := etcd.MemberList(ctx, tcp, other)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("listing members via %q: %w", other.Name, err))
@@ -502,19 +499,31 @@ func (r *TalosControlPlaneReconciler) etcdMemberLeave(ctx context.Context, tcp *
 	return fmt.Errorf("failed to remove machine %q from etcd: %w", machine.Name, errors.Join(errs...))
 }
 
-// etcdMembersVia returns the etcd member list as seen by a control plane machine other than the given machine, that is
-// not being deleted or leaving etcd. ok is false if there is no such machine.
+// otherEtcdMachines returns the control plane machines other than the given machine that etcd can be reached through:
+// they have a node, and are neither being deleted nor leaving etcd.
+func otherEtcdMachines(machine *clusterv1.Machine, machines []*clusterv1.Machine) iter.Seq[*clusterv1.Machine] {
+	return func(yield func(*clusterv1.Machine) bool) {
+		for _, other := range machines {
+			if other.Name == machine.Name ||
+				!other.DeletionTimestamp.IsZero() ||
+				!other.Status.NodeRef.IsDefined() ||
+				other.Annotations[etcdLeavingAnnotation] == "true" {
+				continue
+			}
+
+			if !yield(other) {
+				return
+			}
+		}
+	}
+}
+
+// etcdMembersVia returns the etcd member list as seen by one of the otherEtcdMachines of the given machine. ok is
+// false if there is no such machine.
 func (r *TalosControlPlaneReconciler) etcdMembersVia(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine, machines []*clusterv1.Machine) (members []*machineapi.EtcdMember, ok bool, err error) {
 	var errs []error
 
-	for _, other := range machines {
-		if other.Name == machine.Name ||
-			!other.DeletionTimestamp.IsZero() ||
-			!other.Status.NodeRef.IsDefined() ||
-			other.Annotations[etcdLeavingAnnotation] == "true" {
-			continue
-		}
-
+	for other := range otherEtcdMachines(machine, machines) {
 		members, err := r.etcdMembers().MemberList(ctx, tcp, other)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("listing members via %q: %w", other.Name, err))

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1720,4 +1721,132 @@ func TestEtcdLeavingMachines(t *testing.T) {
 		g.Expect(e.deletedMachines()).To(BeEmpty())
 		g.Expect(e.machine("m1").Annotations).To(HaveKeyWithValue(etcdLeavingAnnotation, "true"))
 	})
+
+	t.Run("the control plane is still scaled up while etcd can't be inspected", func(t *testing.T) {
+		g := NewWithT(t)
+
+		e := newRemediationEnv(t, newTestTCP(4),
+			newTestMachine("m1", now.Add(-3*time.Hour), withAnnotation(etcdLeavingAnnotation, "true")),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+		e.etcd.listErr = errors.New("connection refused")
+
+		_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, nil)
+		g.Expect(err).To(MatchError(ContainSubstring("failed to check whether machine m1 left etcd")))
+
+		// The scale up ran; creating the Machine fails here because there is no infrastructure template.
+		resized := conditions.Get(e.tcp, string(controlplanev1.ResizedCondition))
+		g.Expect(resized).NotTo(BeNil())
+		g.Expect(resized.Reason).To(Equal(controlplanev1.ScalingUpReason))
+
+		g.Expect(e.deletedMachines()).To(BeEmpty())
+		g.Expect(e.machine("m1").Annotations).To(HaveKeyWithValue(etcdLeavingAnnotation, "true"))
+	})
+
+	t.Run("the control plane is not scaled down while a machine is leaving etcd", func(t *testing.T) {
+		g := NewWithT(t)
+
+		e := newRemediationEnv(t, newTestTCP(2),
+			newTestMachine("m1", now.Add(-3*time.Hour), withAnnotation(etcdLeavingAnnotation, "true")),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+		e.etcd.listErr = errors.New("connection refused")
+
+		result, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, nil)
+		g.Expect(err).To(MatchError(ContainSubstring("failed to check whether machine m1 left etcd")))
+		g.Expect(result.RequeueAfter).NotTo(BeZero())
+
+		resized := conditions.Get(e.tcp, string(controlplanev1.ResizedCondition))
+		g.Expect(resized).NotTo(BeNil())
+		g.Expect(resized.Reason).To(Equal(controlplanev1.ScalingDownReason))
+		g.Expect(resized.Message).To(ContainSubstring("Waiting for machine m1 to leave etcd"))
+
+		g.Expect(e.deletedMachines()).To(BeEmpty())
+	})
+}
+
+func TestRemediationWaitsWhileTargetIsLeavingEtcd(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	// m1 left etcd, but deleting it failed; it is also unhealthy. Checking whether it left etcd fails, while the etcd
+	// health check of this reconcile could still inspect m2 and m3.
+	e := newRemediationEnv(t, newTestTCP(3),
+		newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy(), withAnnotation(etcdLeavingAnnotation, "true")),
+		newTestMachine("m2", now.Add(-2*time.Hour)),
+		newTestMachine("m3", now.Add(-time.Hour)),
+	)
+	e.etcd.listErr = errors.New("connection refused")
+	e.etcd.leaveErr = errors.New("etcd is not running")
+
+	observed := map[string]etcdMachineStatus{
+		"m2": {healthy: true, members: etcdMembersFor("m2", "m3")},
+		"m3": {healthy: true, members: etcdMembersFor("m2", "m3")},
+	}
+
+	_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, observed)
+	g.Expect(err).To(MatchError(ContainSubstring("failed to check whether machine m1 left etcd")))
+
+	e.expectNotRemediated(g, "m1", remediationDeferredReason, "removal of this machine from etcd")
+	g.Expect(e.machine("m1").Annotations).To(HaveKeyWithValue(etcdLeavingAnnotation, "true"))
+	g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("leave:")))
+}
+
+func TestRemoveMachineFromEtcdKeepsAnEarlierLeavingMark(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	e := newRemediationEnv(t, newTestTCP(3),
+		newTestMachine("m1", now.Add(-3*time.Hour), withAnnotation(etcdLeavingAnnotation, "true")),
+		newTestMachine("m2", now.Add(-2*time.Hour)),
+	)
+	e.etcd.leaveErr = errors.New("etcd is not running")
+	e.etcd.listErr = errors.New("connection refused")
+
+	machines := e.machines()
+
+	err := e.r.removeMachineFromEtcd(e.ctx, e.tcp, &machines[0], []*clusterv1.Machine{&machines[0], &machines[1]})
+	g.Expect(err).To(HaveOccurred())
+
+	// The member may have left etcd when the mark was set: only reconcileEtcdLeavingMachines may remove it.
+	g.Expect(e.machine("m1").Annotations).To(HaveKeyWithValue(etcdLeavingAnnotation, "true"))
+}
+
+func TestOtherEtcdMachines(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	deleting := newTestMachine("deleting", now)
+	deleting.DeletionTimestamp = ptr.To(metav1.Now())
+
+	self := newTestMachine("self", now)
+	machines := []*clusterv1.Machine{
+		newTestMachine("a", now),
+		self,
+		deleting,
+		newTestMachine("leaving", now, withAnnotation(etcdLeavingAnnotation, "true")),
+		newTestMachine("provisioning", now, withoutNodeRef()),
+		newTestMachine("b", now),
+	}
+
+	names := func(machines []*clusterv1.Machine) []string {
+		var names []string
+
+		for _, m := range machines {
+			names = append(names, m.Name)
+		}
+
+		return names
+	}
+
+	g.Expect(names(slices.Collect(otherEtcdMachines(self, machines)))).To(Equal([]string{"a", "b"}))
+
+	// Iterating stops when asked to.
+	for m := range otherEtcdMachines(self, machines) {
+		g.Expect(m.Name).To(Equal("a"))
+
+		break
+	}
 }

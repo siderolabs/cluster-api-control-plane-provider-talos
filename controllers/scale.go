@@ -87,6 +87,23 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	// A Machine marked as leaving etcd is deleted, or counts again, once reconcileEtcdLeavingMachines could check
+	// whether its member left etcd: don't delete another one before.
+	for _, machine := range controlPlane.Machines {
+		if machine.DeletionTimestamp.IsZero() && machine.Annotations[etcdLeavingAnnotation] == "true" {
+			conditions.Set(tcp, metav1.Condition{
+				Type:    string(controlplanev1.ResizedCondition),
+				Status:  metav1.ConditionFalse,
+				Reason:  controlplanev1.ScalingDownReason,
+				Message: fmt.Sprintf("Waiting for machine %s to leave etcd before scaling down", machine.Name),
+			})
+
+			r.Log.Info("waiting for a machine to leave etcd before scaling down", "machine", machine.Name)
+
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
 	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, collections.ToMachineList(controlPlane.Machines).Items); err != nil {
 		r.Log.Info("waiting for all nodes to finish boot sequence", "error", err)
 

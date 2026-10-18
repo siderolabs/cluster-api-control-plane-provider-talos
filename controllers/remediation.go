@@ -128,18 +128,25 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationAndMachines(
 	etcdStatuses map[string]etcdMachineStatus,
 ) (ctrl.Result, error) {
 	// A Machine that left etcd but was not deleted must be dealt with first: remediation would wait for it forever.
-	if acted, err := r.reconcileEtcdLeavingMachines(ctx, tcp, machines.Items); acted || err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	// If that can't be checked, the steps that don't delete Machines still run, e.g. a scale up: remediation and
+	// scale down wait while a Machine, including the one to remediate, is leaving etcd.
+	acted, leavingErr := r.reconcileEtcdLeavingMachines(ctx, tcp, machines.Items)
+	if acted {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, leavingErr
+	}
+
+	if leavingErr != nil {
+		r.Log.Info("failed to complete the removal of a machine leaving etcd", "error", leavingErr)
 	}
 
 	result, remediating, err := r.reconcileUnhealthyMachines(ctx, tcp, cluster, machines.Items, etcdStatuses)
 	if remediating {
-		return result, err
+		return result, kerrors.NewAggregate([]error{leavingErr, err})
 	}
 
 	machinesResult, machinesErr := r.reconcileMachines(ctx, cluster, tcp, machines, controlPlane)
 
-	return util.LowestNonZeroResult(result, machinesResult), kerrors.NewAggregate([]error{err, machinesErr})
+	return util.LowestNonZeroResult(result, machinesResult), kerrors.NewAggregate([]error{leavingErr, err, machinesErr})
 }
 
 // reconcileEtcdLeavingMachines completes the removal of control plane Machines that are marked as leaving etcd but
@@ -148,8 +155,9 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationAndMachines(
 // it can't be left alone: if its etcd member is gone, the Machine is deleted; if it is still an etcd member, the mark
 // is removed, so that the Machine counts again and is removed through remediation or scale down if needed.
 //
-// It handles at most one Machine per reconcile, and reports whether it acted on one: no other Machine may be deleted
-// in the same reconcile then.
+// It handles at most one Machine per reconcile, and reports whether it acted on one, by deleting it or removing its
+// mark, even if that failed: no other Machine may be deleted in the same reconcile then. If it can't check whether
+// the Machine left etcd, it did not act, and returns the error.
 func (r *TalosControlPlaneReconciler) reconcileEtcdLeavingMachines(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machineList []clusterv1.Machine) (bool, error) {
 	machines := make([]*clusterv1.Machine, 0, len(machineList))
 	for i := range machineList {
@@ -163,7 +171,7 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdLeavingMachines(ctx context.C
 
 		members, ok, err := r.etcdMembersVia(ctx, tcp, m, machines)
 		if err != nil {
-			return true, fmt.Errorf("failed to check whether machine %s left etcd: %w", m.Name, err)
+			return false, fmt.Errorf("failed to check whether machine %s left etcd: %w", m.Name, err)
 		}
 
 		if !ok {
@@ -198,7 +206,8 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdLeavingMachines(ctx context.C
 // A Machine is only remediated when:
 //   - the control plane is initialized and has more than one Machine,
 //   - no other remediation is in progress and the retry limits allow it,
-//   - no other control plane Machine is still provisioning, being deleted or leaving etcd,
+//   - the Machine is not leaving etcd, and no other control plane Machine is still provisioning, being deleted or
+//     leaving etcd,
 //   - removing its etcd member keeps etcd quorum, given the current etcd members and their health.
 //
 // Otherwise the reason is surfaced in the OwnerRemediated condition of the Machine. At most one Machine is deleted
@@ -274,6 +283,14 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 
 	if remediationInProgress(tcp) {
 		setOwnerRemediated(remediationDeferredReason, "TalosControlPlane waiting for the previous remediation to complete before triggering remediation")
+
+		return ctrl.Result{}, false, nil
+	}
+
+	// A Machine marked as leaving etcd may have left it already: reconcileEtcdLeavingMachines deletes it, or removes
+	// the mark, once it could check whether its member is gone.
+	if target.Annotations[etcdLeavingAnnotation] == "true" {
+		setOwnerRemediated(remediationDeferredReason, "TalosControlPlane waiting for the removal of this machine from etcd to complete before triggering remediation")
 
 		return ctrl.Result{}, false, nil
 	}
@@ -731,9 +748,7 @@ func (r *TalosControlPlaneReconciler) canSafelyRemediateMachine(
 
 	// List the members through a healthy machine that stays in the cluster; the target is asked last, when it is the
 	// only healthy etcd member left.
-	candidates := slices.DeleteFunc(slices.Clone(machines), func(m *clusterv1.Machine) bool { return m.Name == target.Name })
-
-	for _, m := range append(candidates, target) {
+	for _, m := range append(slices.Collect(otherEtcdMachines(target, machines)), target) {
 		if !healthy[m.Name] {
 			continue
 		}
