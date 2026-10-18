@@ -148,6 +148,15 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
+	// Initialize the patch helper before the Paused condition is surfaced: when only the observed generation of the
+	// condition changed, EnsurePausedCondition sets it without patching, leaving it to the patch at the end of the
+	// reconcile, which only sends what changed since the helper was created.
+	patchHelper, err := patch.NewHelper(tcp, r.Client)
+	if err != nil {
+		logger.Error(err, "failed to configure the patch helper")
+		return ctrl.Result{}, err
+	}
+
 	// Surface the Paused condition. When the condition was just patched, reconciliation continues
 	// right away with the updated object instead of requeueing.
 	isPaused, _, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, tcp)
@@ -159,13 +168,6 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// The Cluster and TalosControlPlane watches enqueue the object again once it is unpaused.
 		logger.Info("reconciliation is paused for this object")
 		return ctrl.Result{}, nil
-	}
-
-	// Initialize the patch helper.
-	patchHelper, err := patch.NewHelper(tcp, r.Client)
-	if err != nil {
-		logger.Error(err, "failed to configure the patch helper")
-		return ctrl.Result{}, err
 	}
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
@@ -1348,16 +1350,16 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	return ctrl.Result{}, nil
 }
 
-// sanitizeConditionReasons guards against ever sending a status update with an
-// empty condition reason: the CRD schema (generated for []metav1.Condition)
-// requires reason to be at least 1 character long, so any such entry — however
-// it got there (stale data from an older controller version, a manual edit,
-// etc.) — causes every subsequent status patch on the object to be rejected
-// by the apiserver with "conditions[N].reason: Invalid value: \"\"".
+// hasEmptyConditionReason reports whether a condition of the TalosControlPlane has an empty reason. The CRD schema
+// (generated for []metav1.Condition) requires a reason of at least 1 character, so as long as a stored condition has
+// none, e.g. a v1beta1 condition stored by an older controller version or a manual edit, the apiserver rejects every
+// status patch of the object with "conditions[N].reason: Invalid value: \"\"".
 func hasEmptyConditionReason(tcp *controlplanev1.TalosControlPlane) bool {
 	return slices.ContainsFunc(tcp.Status.Conditions, func(c metav1.Condition) bool { return c.Reason == "" })
 }
 
+// sanitizeConditionReasons gives the conditions without a reason a placeholder one. It is only meant to fix up the
+// stored conditions once, at the start of a reconcile: the conditions the controller sets always have a reason.
 func sanitizeConditionReasons(tcp *controlplanev1.TalosControlPlane) {
 	for i := range tcp.Status.Conditions {
 		if tcp.Status.Conditions[i].Reason == "" {
@@ -1367,7 +1369,14 @@ func sanitizeConditionReasons(tcp *controlplanev1.TalosControlPlane) {
 }
 
 func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp *controlplanev1.TalosControlPlane, opts ...patch.Option) error {
-	sanitizeConditionReasons(tcp)
+	// The stored conditions were fixed up at the start of the reconcile, so a condition without a reason was set
+	// without one in this reconcile. The apiserver would reject the patch anyway: name the condition instead of
+	// hiding the mistake behind a placeholder reason.
+	for _, condition := range tcp.Status.Conditions {
+		if condition.Reason == "" {
+			return fmt.Errorf("condition %q of the TalosControlPlane was set without a reason", condition.Type)
+		}
+	}
 
 	// Always update the readyCondition by summarizing the state of other conditions.
 	err := conditions.SetSummaryCondition(

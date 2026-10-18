@@ -153,6 +153,39 @@ func TestConditionReasonSanitizer(t *testing.T) {
 	expectCondition(g, stored, clusterv1.PausedCondition, metav1.ConditionFalse, clusterv1.NotPausedReason)
 }
 
+// TestPausedConditionFollowsGeneration checks that the Paused condition of an unpaused TalosControlPlane gets the
+// new generation after a spec change, although only its observed generation changes.
+func TestPausedConditionFollowsGeneration(t *testing.T) {
+	g := NewWithT(t)
+	ctx := t.Context()
+
+	cluster, tcp := newStatusTestObjects("paused-generation", 1)
+	tcp.Generation = 2
+	tcp.Status.Conditions = []metav1.Condition{
+		{
+			Type:               clusterv1.PausedCondition,
+			Status:             metav1.ConditionFalse,
+			Reason:             clusterv1.NotPausedReason,
+			ObservedGeneration: 1,
+			LastTransitionTime: metav1.NewTime(metav1.Now().Add(-5 * time.Minute)),
+		},
+	}
+
+	fakeClient := newValidatingFakeClient(cluster, tcp)
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	stored := &controlplanev1.TalosControlPlane{}
+	g.Expect(fakeClient.Get(ctx, util.ObjectKey(tcp), stored)).To(Succeed())
+	g.Expect(stored.Generation).To(BeEquivalentTo(2))
+
+	expectCondition(g, stored, clusterv1.PausedCondition, metav1.ConditionFalse, clusterv1.NotPausedReason)
+	g.Expect(conditions.Get(stored, clusterv1.PausedCondition).ObservedGeneration).To(BeEquivalentTo(2))
+}
+
 // failingProbeClusterCache reports that the health probe of every workload cluster last succeeded at lastProbeSuccess.
 type failingProbeClusterCache struct {
 	clustercache.ClusterCache
