@@ -283,7 +283,7 @@ func newRemediationEnv(t *testing.T, tcp *controlplanev1.TalosControlPlane, mach
 		},
 	}
 
-	objs := []client.Object{crd}
+	objs := []client.Object{crd, tcp}
 	for _, m := range machines {
 		objs = append(objs, m)
 	}
@@ -333,6 +333,19 @@ func (e *remediationEnv) machine(name string) *clusterv1.Machine {
 	}
 
 	return m
+}
+
+// storedTCP returns the TalosControlPlane as stored by the API server, without the changes that are only persisted
+// by the deferred patch at the end of a reconcile.
+func (e *remediationEnv) storedTCP() *controlplanev1.TalosControlPlane {
+	e.t.Helper()
+
+	tcp := &controlplanev1.TalosControlPlane{}
+	if err := e.client.Get(e.ctx, client.ObjectKeyFromObject(e.tcp), tcp); err != nil {
+		e.t.Fatal(err)
+	}
+
+	return tcp
 }
 
 func (e *remediationEnv) remediate() (bool, error) {
@@ -644,6 +657,87 @@ func TestRemediationKeepsMachineWhenEtcdMemberCantBeRemoved(t *testing.T) {
 
 	e.expectNotRemediated(g, "m1", remediationInternalErrorReason, "Failed to remove the machine from etcd")
 	g.Expect(e.machine("m1").Annotations).NotTo(HaveKey(etcdLeavingAnnotation))
+
+	// The remediation was recorded before the etcd member was removed, and is withdrawn since it did not happen.
+	g.Expect(e.storedTCP().Annotations).NotTo(HaveKey(remediationInProgressAnnotation))
+}
+
+func TestRemediationIsRecordedBeforeTheMachineIsTouched(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	e := newRemediationEnv(t, newTestTCP(3),
+		newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+		newTestMachine("m2", now.Add(-2*time.Hour)),
+		newTestMachine("m3", now.Add(-time.Hour)),
+	)
+	e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+	e.etcd.unhealthy["m1"] = true
+
+	// recorded tells, for the first time each event happened, whether the remediation was recorded on the server.
+	recorded := map[string]bool{}
+
+	recordedOnServer := func(event string) {
+		if _, seen := recorded[event]; !seen {
+			_, recorded[event] = e.storedTCP().Annotations[remediationInProgressAnnotation]
+		}
+	}
+
+	e.r.Client = interceptor.NewClient(e.client.(client.WithWatch), interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if m, ok := obj.(*clusterv1.Machine); ok && m.Annotations[etcdLeavingAnnotation] == "true" {
+				recordedOnServer("mark-leaving")
+			}
+
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			recordedOnServer("delete")
+
+			return c.Delete(ctx, obj, opts...)
+		},
+	})
+
+	remediated, err := e.remediate()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(remediated).To(BeTrue())
+
+	g.Expect(recorded).To(Equal(map[string]bool{"mark-leaving": true, "delete": true}))
+
+	e.expectRemediated(g, "m1")
+	g.Expect(e.storedTCP().Annotations).To(HaveKeyWithValue(remediationInProgressAnnotation, e.tcp.Annotations[remediationInProgressAnnotation]))
+}
+
+func TestRemediationDoesNotStartWhenItCantBeRecorded(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	e := newRemediationEnv(t, newTestTCP(3),
+		newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+		newTestMachine("m2", now.Add(-2*time.Hour)),
+		newTestMachine("m3", now.Add(-time.Hour)),
+	)
+	e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+	e.etcd.unhealthy["m1"] = true
+
+	e.r.Client = interceptor.NewClient(e.client.(client.WithWatch), interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if _, ok := obj.(*controlplanev1.TalosControlPlane); ok {
+				return errors.New("injected patch failure")
+			}
+
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	})
+
+	remediated, err := e.remediate()
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(remediated).To(BeTrue(), "the rest of the reconcile must not delete machines")
+
+	e.expectNotRemediated(g, "m1", remediationInternalErrorReason, "Failed to record the remediation")
+	g.Expect(e.machine("m1").Annotations).NotTo(HaveKey(etcdLeavingAnnotation))
+	g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("leave:")))
+	g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("remove:")))
 }
 
 func TestRemediationInProgress(t *testing.T) {
@@ -761,6 +855,84 @@ func TestRemediationInProgress(t *testing.T) {
 		g.Expect(err).NotTo(HaveOccurred())
 
 		g.Expect(e.tcp.Annotations).NotTo(HaveKey(remediationInProgressAnnotation))
+	})
+
+	t.Run("is removed when the remediated machine was neither removed from etcd nor deleted", func(t *testing.T) {
+		g := NewWithT(t)
+
+		// The controller stopped after recording the remediation of m1, before removing m1 from etcd.
+		recordedAt := now.Add(-remediationStartTimeout - time.Minute)
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: inProgress(g, "m1", recordedAt)}
+
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+		e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+		e.etcd.unhealthy["m1"] = true
+
+		remediated, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// m1 is remediated again, as a new remediation.
+		g.Expect(remediated).To(BeTrue())
+		e.expectRemediated(g, "m1")
+
+		data, err := remediationDataFromAnnotation(e.tcp.Annotations[remediationInProgressAnnotation])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(data.Timestamp.After(recordedAt)).To(BeTrue())
+		g.Expect(data.RetryCount).To(BeZero())
+	})
+
+	t.Run("is kept right after it was recorded", func(t *testing.T) {
+		g := NewWithT(t)
+
+		// The cached Machines may not show yet that m1 is leaving etcd or being deleted.
+		value := inProgress(g, "m1", now.Add(-10*time.Second))
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: value}
+
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+		e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+		e.etcd.unhealthy["m1"] = true
+
+		remediated, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(remediated).To(BeFalse())
+
+		g.Expect(e.tcp.Annotations).To(HaveKeyWithValue(remediationInProgressAnnotation, value))
+		g.Expect(e.deletedMachines()).To(BeEmpty())
+		g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("leave:")))
+	})
+
+	t.Run("is kept while the remediated machine is leaving etcd", func(t *testing.T) {
+		g := NewWithT(t)
+
+		// m1 left etcd, but deleting it failed.
+		value := inProgress(g, "m1", now.Add(-10*time.Minute))
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: value}
+
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy(), withAnnotation(etcdLeavingAnnotation, "true")),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+
+		remediated, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(remediated).To(BeFalse())
+
+		g.Expect(e.tcp.Annotations).To(HaveKeyWithValue(remediationInProgressAnnotation, value))
 	})
 
 	t.Run("an invalid annotation is removed", func(t *testing.T) {
@@ -1174,6 +1346,11 @@ func TestEtcdLeavingMachines(t *testing.T) {
 		g.Expect(remediated).To(BeTrue())
 		g.Expect(e.deletedMachines()).To(BeEmpty())
 		g.Expect(e.machine("m1").Annotations).To(HaveKeyWithValue(etcdLeavingAnnotation, "true"))
+
+		// The remediation stays recorded, since m1 left etcd and is deleted later.
+		data, err := remediationDataFromAnnotation(e.storedTCP().Annotations[remediationInProgressAnnotation])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(data.Machine).To(Equal("m1"))
 
 		e.r.Client = e.client
 

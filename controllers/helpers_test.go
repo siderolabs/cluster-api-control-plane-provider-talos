@@ -445,6 +445,14 @@ type machineService struct {
 
 	requestsMu               sync.Mutex
 	etcdRemoveMemberRequests []*machine.EtcdRemoveMemberByIDRequest
+	etcdLeaveClusterRequests int
+}
+
+func (ms *machineService) getEtcdLeaveClusterRequests() int {
+	ms.requestsMu.Lock()
+	defer ms.requestsMu.Unlock()
+
+	return ms.etcdLeaveClusterRequests
 }
 
 func (ms *machineService) getEtcdRemoveMemberRequests() map[uint64]any {
@@ -552,6 +560,11 @@ func (ms *machineService) EtcdRemoveMemberByID(ctx context.Context, req *machine
 }
 
 func (ms *machineService) EtcdLeaveCluster(ctx context.Context, req *machine.EtcdLeaveClusterRequest) (*machine.EtcdLeaveClusterResponse, error) {
+	ms.requestsMu.Lock()
+	defer ms.requestsMu.Unlock()
+
+	ms.etcdLeaveClusterRequests++
+
 	return &machine.EtcdLeaveClusterResponse{}, nil
 }
 

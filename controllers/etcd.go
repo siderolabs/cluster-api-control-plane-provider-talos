@@ -249,7 +249,8 @@ type etcdMemberManager interface {
 	ServiceHealth(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error
 	// MemberList returns the etcd member list as seen by the machine.
 	MemberList(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) ([]*machineapi.EtcdMember, error)
-	// Leave forfeits etcd leadership and leaves the etcd cluster from the machine itself.
+	// Leave forfeits etcd leadership and leaves the etcd cluster from the machine itself. It fails if the etcd service
+	// is not running on the machine.
 	Leave(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error
 	// RemoveMember removes the etcd member through another machine.
 	RemoveMember(ctx context.Context, tcp *controlplanev1.TalosControlPlane, via *clusterv1.Machine, member *machineapi.EtcdMember) error
@@ -457,6 +458,9 @@ func (r *TalosControlPlaneReconciler) etcdMembersVia(ctx context.Context, tcp *c
 
 // gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
 // and issuing a "leave" request from the machine itself.
+//
+// It fails if the etcd service is not running on the machine: whether its member already left etcd or not, it
+// can't be told from the machine itself, so the caller must check, and remove the member, through another machine.
 func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *talosclient.Client, machineToLeave clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 
@@ -464,30 +468,31 @@ func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c *
 
 	r.Log.Info("verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
 
-	svcs, err := c.ServiceInfo(ctx, "etcd")
+	svcs, err := c.ServiceInfo(ctx, etcdService)
 	if err != nil {
 		return err
 	}
 
+	if len(svcs) == 0 {
+		return fmt.Errorf("service %q not found on machine %q", etcdService, machineToLeave.Name)
+	}
+
+	// The client points to a single machine, so only 1 service should return.
 	for _, svc := range svcs {
-		if svc.Service.State != "Finished" {
-			r.Log.Info("forfeiting leadership", "machine", machineToLeave.Status.NodeRef.Name)
-
-			_, err = c.EtcdForfeitLeadership(ctx, &machineapi.EtcdForfeitLeadershipRequest{})
-			if err != nil {
-				return err
-			}
-
-			r.Log.Info("leaving etcd", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
-
-			err = c.EtcdLeaveCluster(ctx, &machineapi.EtcdLeaveClusterRequest{})
-			if err != nil {
-				return err
-			}
+		if state := svc.Service.GetState(); state != "Running" {
+			return fmt.Errorf("service %q is not running on machine %q: current state %q", etcdService, machineToLeave.Name, state)
 		}
 	}
 
-	return nil
+	r.Log.Info("forfeiting leadership", "machine", machineToLeave.Status.NodeRef.Name)
+
+	if _, err = c.EtcdForfeitLeadership(ctx, &machineapi.EtcdForfeitLeadershipRequest{}); err != nil {
+		return err
+	}
+
+	r.Log.Info("leaving etcd", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
+
+	return c.EtcdLeaveCluster(ctx, &machineapi.EtcdLeaveClusterRequest{})
 }
 
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.

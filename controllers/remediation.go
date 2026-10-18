@@ -24,14 +24,15 @@ import (
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
 const (
-	// remediationInProgressAnnotation is set on the TalosControlPlane after an unhealthy Machine was deleted, until
-	// a replacement Machine is Ready or remediationInProgressTimeout expired. Its value is a JSON encoded
-	// remediationData. While it is set, no other Machine is remediated and the control plane is not scaled down.
+	// remediationInProgressAnnotation is set on the TalosControlPlane before an unhealthy Machine is removed from etcd
+	// and deleted, until a replacement Machine is Ready or remediationInProgressTimeout expired. Its value is a JSON
+	// encoded remediationData. While it is set, no other Machine is remediated and the control plane is not scaled down.
 	remediationInProgressAnnotation = "controlplane.cluster.x-k8s.io/remediation-in-progress"
 
 	// remediationForAnnotation is set on the Machine that replaced a remediated Machine. Its value is the
@@ -43,6 +44,12 @@ const (
 const (
 	// remediationInProgressTimeout is how long a remediation blocks the next one when no replacement becomes Ready.
 	remediationInProgressTimeout = 30 * time.Minute
+
+	// remediationStartTimeout is how long after a remediation was recorded the remediated Machine may still be seen
+	// neither leaving etcd nor being deleted, before the remediation is considered not started. That happens when the
+	// controller stopped between recording the remediation and removing the Machine from etcd; it is also seen for
+	// a short while when the cached Machines lag behind.
+	remediationStartTimeout = time.Minute
 
 	// remediationMinHealthyPeriod is how long a replacement must stay healthy for its own remediation to start a new
 	// retry sequence instead of counting as a retry of the previous remediation.
@@ -302,14 +309,36 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		return ctrl.Result{}, false, nil
 	}
 
+	value, err := data.marshal()
+	if err != nil {
+		return ctrl.Result{}, false, err
+	}
+
+	// Record the remediation before the Machine is touched, rather than in the deferred patch of the
+	// TalosControlPlane: if the controller stopped, or the deferred patch failed, after the Machine was deleted, the
+	// remediation would be lost, and with it the retry count and what keeps other Machines from being deleted before
+	// the replacement is up.
+	if err := r.patchRemediationInProgress(ctx, tcp, value); err != nil {
+		setOwnerRemediated(remediationInternalErrorReason, "Failed to record the remediation, please check controller logs for errors")
+
+		return ctrl.Result{}, true, err
+	}
+
 	// Remove the member from etcd before deleting the Machine, as the scale down does: a graceful leave also
 	// forfeits etcd leadership, and an unreachable Machine is removed through another control plane Machine.
 	if err := r.removeMachineFromEtcd(ctx, tcp, target, machines); err != nil {
 		setOwnerRemediated(remediationInternalErrorReason, "Failed to remove the machine from etcd, please check controller logs for errors")
 
+		// The Machine is kept as an etcd member, so the remediation did not happen.
+		if clearErr := r.patchRemediationInProgress(ctx, tcp, ""); clearErr != nil {
+			err = kerrors.NewAggregate([]error{err, clearErr})
+		}
+
 		return ctrl.Result{}, true, err
 	}
 
+	// If the deletion fails, the remediation stays recorded: the Machine left etcd, so it is deleted by
+	// reconcileEtcdLeavingMachines.
 	if err := r.Client.Delete(ctx, target); err != nil && !apierrors.IsNotFound(err) {
 		setOwnerRemediated(remediationInternalErrorReason, "Failed to delete the machine, please check controller logs for errors")
 
@@ -325,15 +354,29 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		Message: "Machine is deleting",
 	})
 
-	value, err := data.marshal()
-	if err != nil {
-		return ctrl.Result{}, true, err
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, true, nil
+}
+
+// patchRemediationInProgress sets the remediation-in-progress annotation of the TalosControlPlane to value, or
+// removes it if value is empty, and patches it right away. Only the annotation is patched; the other changes made
+// to the TalosControlPlane in this reconcile are left to the deferred patch.
+func (r *TalosControlPlaneReconciler) patchRemediationInProgress(ctx context.Context, tcp *controlplanev1.TalosControlPlane, value string) error {
+	before := tcp.DeepCopy()
+	after := tcp.DeepCopy()
+
+	if value != "" {
+		annotations.AddAnnotations(after, map[string]string{remediationInProgressAnnotation: value})
+	} else {
+		delete(after.Annotations, remediationInProgressAnnotation)
 	}
 
-	// The deferred patch of the TalosControlPlane persists the annotation.
-	annotations.AddAnnotations(tcp, map[string]string{remediationInProgressAnnotation: value})
+	if err := r.Client.Patch(ctx, after, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("failed to patch the remediation-in-progress annotation: %w", err)
+	}
 
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, true, nil
+	tcp.Annotations = after.Annotations
+
+	return nil
 }
 
 // cleanupOwnerRemediated removes the OwnerRemediated condition from Machines whose MachineHealthCheck reports
@@ -372,6 +415,9 @@ func (r *TalosControlPlaneReconciler) cleanupOwnerRemediated(ctx context.Context
 // or remediationInProgressTimeout expired after the remediated Machine is gone or replaced, so that a replacement that
 // never becomes Ready can't block remediation forever. The remediation data moves to the replacement Machine, where it
 // is used to count retries; Machines created while the remediation is in progress already got it at creation.
+//
+// The annotation is also removed if the remediation never started: the remediated Machine is still neither leaving
+// etcd nor being deleted remediationStartTimeout after the remediation was recorded.
 func (r *TalosControlPlaneReconciler) reconcileRemediationInProgress(
 	ctx context.Context,
 	tcp *controlplanev1.TalosControlPlane,
@@ -394,12 +440,14 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationInProgress(
 
 	var (
 		replacement      *clusterv1.Machine
+		remediated       *clusterv1.Machine
 		remediatedExists bool
 		readyMachines    int32
 	)
 
 	for _, m := range machines {
 		if m.Name == data.Machine {
+			remediated = m
 			remediatedExists = true
 
 			continue
@@ -418,6 +466,19 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationInProgress(
 			(replacement == nil || m.CreationTimestamp.Before(&replacement.CreationTimestamp)) {
 			replacement = m
 		}
+	}
+
+	// The remediation is recorded before the Machine is removed from etcd and deleted. A remediated Machine that is
+	// neither leaving etcd nor being deleted means that the controller stopped in between: the Machine is still an
+	// etcd member, so the remediation did not happen and has nothing to hand over to a replacement.
+	if remediated != nil &&
+		remediated.DeletionTimestamp.IsZero() &&
+		remediated.Annotations[etcdLeavingAnnotation] != "true" &&
+		now.After(data.Timestamp.Add(remediationStartTimeout)) {
+		log.Info("removing the remediation-in-progress annotation, the remediated machine was neither removed from etcd nor deleted", "remediatedMachine", data.Machine)
+		delete(tcp.Annotations, remediationInProgressAnnotation)
+
+		return nil
 	}
 
 	switch {

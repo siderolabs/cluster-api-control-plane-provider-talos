@@ -19,3 +19,13 @@ func (r *TalosControlPlaneReconciler) EtcdHealthcheckReason(ctx context.Context,
 
 	return health.conditionReason(), err
 }
+
+// RemoveMachineFromEtcd removes the etcd member of the machine through the Talos API, as remediation and scale down do.
+func (r *TalosControlPlaneReconciler) RemoveMachineFromEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine, machines []clusterv1.Machine) error {
+	ptrs := make([]*clusterv1.Machine, 0, len(machines))
+	for i := range machines {
+		ptrs = append(ptrs, &machines[i])
+	}
+
+	return r.removeMachineFromEtcd(ctx, tcp, machine, ptrs)
+}
