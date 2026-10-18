@@ -935,11 +935,137 @@ func TestRemediationInProgress(t *testing.T) {
 		g.Expect(e.tcp.Annotations).To(HaveKeyWithValue(remediationInProgressAnnotation, value))
 	})
 
-	t.Run("an invalid annotation is removed", func(t *testing.T) {
+	t.Run("an annotation set by an earlier version is converted while the remediated machine is deleting", func(t *testing.T) {
 		g := NewWithT(t)
 
 		tcp := newTestTCP(3)
 		tcp.Annotations = map[string]string{remediationInProgressAnnotation: "m0"}
+
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m0", now.Add(-4*time.Hour)),
+			newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Hour)),
+		)
+		e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+		e.etcd.unhealthy["m1"] = true
+
+		g.Expect(e.client.Delete(e.ctx, e.machine("m0"))).To(Succeed())
+
+		remediated, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(remediated).To(BeFalse())
+
+		// The remediation of m0 still blocks the next one.
+		m1 := e.machine("m1")
+		g.Expect(m1.DeletionTimestamp.IsZero()).To(BeTrue())
+		g.Expect(conditions.Get(m1, clusterv1.MachineOwnerRemediatedCondition).Message).To(ContainSubstring("previous remediation"))
+
+		data, err := remediationDataFromAnnotation(e.tcp.Annotations[remediationInProgressAnnotation])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(data.Machine).To(Equal("m0"))
+		g.Expect(data.Timestamp.Time).To(BeTemporally("~", e.machine("m0").DeletionTimestamp.Time, time.Second))
+	})
+
+	t.Run("an annotation set by an earlier version is converted until the replacement is ready", func(t *testing.T) {
+		g := NewWithT(t)
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: "m0"}
+
+		// m0 is gone, and m3, its replacement, is not ready yet.
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Minute), withNotReady()),
+		)
+		e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+		e.etcd.unhealthy["m1"] = true
+
+		before := time.Now()
+
+		remediated, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(remediated).To(BeFalse())
+
+		m1 := e.machine("m1")
+		g.Expect(m1.DeletionTimestamp.IsZero()).To(BeTrue())
+		g.Expect(conditions.Get(m1, clusterv1.MachineOwnerRemediatedCondition).Message).To(ContainSubstring("previous remediation"))
+
+		data, err := remediationDataFromAnnotation(e.tcp.Annotations[remediationInProgressAnnotation])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(data.Machine).To(Equal("m0"))
+		g.Expect(data.Timestamp.Time).To(BeTemporally(">=", before.Truncate(time.Second)))
+	})
+
+	t.Run("an annotation set by an earlier version completes when enough machines are ready", func(t *testing.T) {
+		g := NewWithT(t)
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: "m0"}
+
+		e := newRemediationEnv(t, tcp,
+			newTestMachine("m1", now.Add(-3*time.Hour)),
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+			newTestMachine("m3", now.Add(-time.Minute)),
+		)
+
+		_, err := e.remediate()
+		g.Expect(err).NotTo(HaveOccurred())
+
+		g.Expect(e.tcp.Annotations).NotTo(HaveKey(remediationInProgressAnnotation))
+	})
+
+	t.Run("an annotation set by an earlier version is converted even if the reconcile fails", func(t *testing.T) {
+		g := NewWithT(t)
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: "m0"}
+
+		// m1 recovered, so its OwnerRemediated condition is cleaned up, which fails.
+		m1 := newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy())
+		conditions.Set(m1, metav1.Condition{
+			Type:   clusterv1.MachineHealthCheckSucceededCondition,
+			Status: metav1.ConditionTrue,
+			Reason: clusterv1.MachineHealthCheckSucceededReason,
+		})
+
+		e := newRemediationEnv(t, tcp,
+			m1,
+			newTestMachine("m2", now.Add(-2*time.Hour)),
+		)
+
+		e.r.Client = interceptor.NewClient(e.client.(client.WithWatch), interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if _, ok := obj.(*clusterv1.Machine); ok {
+					return errors.New("injected patch failure")
+				}
+
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+			SubResourcePatch: func(ctx context.Context, c client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if _, ok := obj.(*clusterv1.Machine); ok {
+					return errors.New("injected patch failure")
+				}
+
+				return c.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+			},
+		})
+
+		_, err := e.remediate()
+		g.Expect(err).To(MatchError(ContainSubstring("injected patch failure")))
+
+		// Machines created by the scale up in the same reconcile copy the converted annotation.
+		data, err := remediationDataFromAnnotation(e.tcp.Annotations[remediationInProgressAnnotation])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(data.Machine).To(Equal("m0"))
+	})
+
+	t.Run("an invalid annotation is removed", func(t *testing.T) {
+		g := NewWithT(t)
+
+		tcp := newTestTCP(3)
+		tcp.Annotations = map[string]string{remediationInProgressAnnotation: `{"machine": "m0"`}
 
 		e := newRemediationEnv(t, tcp,
 			newTestMachine("m1", now.Add(-3*time.Hour)),

@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
@@ -33,6 +34,8 @@ const (
 	// remediationInProgressAnnotation is set on the TalosControlPlane before an unhealthy Machine is removed from etcd
 	// and deleted, until a replacement Machine is Ready or remediationInProgressTimeout expired. Its value is a JSON
 	// encoded remediationData. While it is set, no other Machine is remediated and the control plane is not scaled down.
+	// Earlier versions of the controller set it to the bare name of the remediated Machine; such a value is converted
+	// by reconcileRemediationInProgress.
 	remediationInProgressAnnotation = "controlplane.cluster.x-k8s.io/remediation-in-progress"
 
 	// remediationForAnnotation is set on the Machine that replaced a remediated Machine. Its value is the
@@ -207,13 +210,15 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		machines = append(machines, &machineList[i])
 	}
 
-	// The MachineHealthCheck leaves OwnerRemediated to the owner once set: remove it from Machines that are healthy
-	// again, so that a Machine that recovered while its remediation was deferred is not deleted later.
-	if err := r.cleanupOwnerRemediated(ctx, machines); err != nil {
+	// This runs first, so that an annotation set by an earlier version is converted before the Machines created in
+	// this reconcile copy it, even if a later step fails.
+	if err := r.reconcileRemediationInProgress(ctx, tcp, machines, now, log); err != nil {
 		return ctrl.Result{}, false, err
 	}
 
-	if err := r.reconcileRemediationInProgress(ctx, tcp, machines, now, log); err != nil {
+	// The MachineHealthCheck leaves OwnerRemediated to the owner once set: remove it from Machines that are healthy
+	// again, so that a Machine that recovered while its remediation was deferred is not deleted later.
+	if err := r.cleanupOwnerRemediated(ctx, machines); err != nil {
 		return ctrl.Result{}, false, err
 	}
 
@@ -432,10 +437,22 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationInProgress(
 
 	data, err := remediationDataFromAnnotation(value)
 	if err != nil {
-		log.Info("removing invalid remediation-in-progress annotation", "error", err)
-		delete(tcp.Annotations, remediationInProgressAnnotation)
+		data = legacyRemediationData(value, machines, now)
+		if data == nil {
+			log.Info("removing invalid remediation-in-progress annotation", "error", err)
+			delete(tcp.Annotations, remediationInProgressAnnotation)
 
-		return nil
+			return nil
+		}
+
+		if value, err = data.marshal(); err != nil {
+			return err
+		}
+
+		// The deferred patch of the TalosControlPlane persists the converted annotation, so that its timestamp
+		// stays the same in the next reconciles.
+		log.Info("converting remediation-in-progress annotation set by an earlier version", "remediatedMachine", data.Machine, "timestamp", data.Timestamp)
+		annotations.AddAnnotations(tcp, map[string]string{remediationInProgressAnnotation: value})
 	}
 
 	var (
@@ -510,6 +527,31 @@ func (r *TalosControlPlaneReconciler) reconcileRemediationInProgress(
 	delete(tcp.Annotations, remediationInProgressAnnotation)
 
 	return nil
+}
+
+// legacyRemediationData converts a remediation-in-progress annotation value set by earlier versions of the controller,
+// the bare name of the remediated Machine, to remediationData. It returns nil if value is not a Machine name.
+//
+// Those versions set the annotation right before deleting the Machine, so the deletion timestamp of the Machine tells
+// when the remediation happened. If the Machine is gone, or was not deleted, now is used instead: the remediation then
+// completes once enough Machines are Ready, as with those versions, or times out later rather than sooner.
+func legacyRemediationData(value string, machines []*clusterv1.Machine, now time.Time) *remediationData {
+	if len(validation.IsDNS1123Subdomain(value)) > 0 {
+		return nil
+	}
+
+	data := &remediationData{
+		Machine:   value,
+		Timestamp: metav1.Time{Time: now},
+	}
+
+	for _, m := range machines {
+		if m.Name == value && !m.DeletionTimestamp.IsZero() {
+			data.Timestamp = *m.DeletionTimestamp
+		}
+	}
+
+	return data
 }
 
 // machineToBeRemediated returns the Machine to remediate first among the Machines that a MachineHealthCheck
