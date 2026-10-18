@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/secret"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
@@ -408,6 +409,25 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(machine.Spec.MinReadySeconds).To(HaveValue(BeEquivalentTo(15)))
 		expectCondition(g, &machine, clusterv1.MachineUpToDateCondition, metav1.ConditionTrue, clusterv1.MachineUpToDateReason)
 	}, time.Second).Should(Succeed())
+
+	// A reconcile fetches the infrastructure machine of each Machine once, for the rollout and the status alike.
+	infraGets := map[string]int{}
+
+	countingClient := interceptor.NewClient(fakeClient.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if obj.GetObjectKind().GroupVersionKind().Kind == GenericInfrastructureMachineCRD.Spec.Names.Kind {
+				infraGets[key.Name]++
+			}
+
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	r = newReconciler(countingClient, withCluster(util.ObjectKey(cluster)))
+
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(infraGets).To(Equal(map[string]int{"foo-machine1-infra": 1}))
 }
 
 func (suite *ControllersSuite) TestRollingUpdate() {

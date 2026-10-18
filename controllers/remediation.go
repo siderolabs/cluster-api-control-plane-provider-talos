@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -115,18 +116,28 @@ func remediationInProgress(tcp *controlplanev1.TalosControlPlane) bool {
 // reconcileRemediationAndMachines runs the two steps that delete control plane Machines: remediation, then scaling
 // and rollout. When remediation deleted a Machine, or tried to, scaling and rollout are skipped in this reconcile, so that a single
 // reconcile never deletes two Machines and the next one starts from a fresh list of Machines.
-func (r *TalosControlPlaneReconciler) reconcileRemediationAndMachines(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (ctrl.Result, error) {
+//
+// controlPlane is the ControlPlane of the Machines, built if nil. etcdStatuses is what the etcd health check of this
+// reconcile observed, or nil to inspect etcd for remediation.
+func (r *TalosControlPlaneReconciler) reconcileRemediationAndMachines(
+	ctx context.Context,
+	cluster *clusterv1.Cluster,
+	tcp *controlplanev1.TalosControlPlane,
+	machines *clusterv1.MachineList,
+	controlPlane *ControlPlane,
+	etcdStatuses map[string]etcdMachineStatus,
+) (ctrl.Result, error) {
 	// A Machine that left etcd but was not deleted must be dealt with first: remediation would wait for it forever.
 	if acted, err := r.reconcileEtcdLeavingMachines(ctx, tcp, machines.Items); acted || err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 	}
 
-	result, remediating, err := r.reconcileUnhealthyMachines(ctx, tcp, cluster, machines.Items)
+	result, remediating, err := r.reconcileUnhealthyMachines(ctx, tcp, cluster, machines.Items, etcdStatuses)
 	if remediating {
 		return result, err
 	}
 
-	machinesResult, machinesErr := r.reconcileMachines(ctx, cluster, tcp, machines)
+	machinesResult, machinesErr := r.reconcileMachines(ctx, cluster, tcp, machines, controlPlane)
 
 	return util.LowestNonZeroResult(result, machinesResult), kerrors.NewAggregate([]error{err, machinesErr})
 }
@@ -193,11 +204,15 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdLeavingMachines(ctx context.C
 // Otherwise the reason is surfaced in the OwnerRemediated condition of the Machine. At most one Machine is deleted
 // per reconcile; remediating reports whether remediation acted on a Machine in this reconcile, by removing
 // it from etcd or deleting it, even if that failed: no other Machine may be deleted in the same reconcile then.
+//
+// etcdStatuses is what the etcd health check of this reconcile observed on each Machine, which tells whether
+// removing the etcd member keeps quorum; if it is nil, etcd is inspected again.
 func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 	ctx context.Context,
 	tcp *controlplanev1.TalosControlPlane,
 	cluster *clusterv1.Cluster,
 	machineList []clusterv1.Machine,
+	etcdStatuses map[string]etcdMachineStatus,
 ) (_ ctrl.Result, remediating bool, retErr error) {
 	log := r.Log.WithValues(
 		"TalosControlPlane", fmt.Sprintf("%s/%s", tcp.Namespace, tcp.Name),
@@ -300,7 +315,7 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		}
 	}
 
-	safe, details, err := r.canSafelyRemediateMachine(ctx, tcp, target, machines)
+	safe, details, err := r.canSafelyRemediateMachine(ctx, tcp, target, machines, etcdStatuses)
 	if err != nil {
 		log.Info("failed to check etcd cluster health before remediation", "error", err)
 		setOwnerRemediated(remediationDeferredReason, "Failed to check etcd cluster health before remediation")
@@ -654,43 +669,78 @@ func checkRemediationRetryLimits(target *clusterv1.Machine, now time.Time, log l
 
 // canSafelyRemediateMachine checks whether the etcd member of the target can be removed without losing etcd quorum.
 // It returns an error if the etcd cluster could not be inspected.
+//
+// When observed is given, it uses what the etcd health check of this reconcile observed instead of inspecting etcd
+// again: that check just inspected every Machine that is not being deleted or leaving etcd, and remediation is
+// deferred while another Machine is; a Machine it did not inspect counts as unhealthy. Otherwise it inspects the etcd
+// service of every Machine concurrently, so that unreachable Machines don't add up their timeouts.
 func (r *TalosControlPlaneReconciler) canSafelyRemediateMachine(
 	ctx context.Context,
 	tcp *controlplanev1.TalosControlPlane,
 	target *clusterv1.Machine,
 	machines []*clusterv1.Machine,
+	observed map[string]etcdMachineStatus,
 ) (bool, string, error) {
 	etcd := r.etcdMembers()
 
 	healthy := make(map[string]bool, len(machines))
+
+	memberList := func(m *clusterv1.Machine) ([]*machineapi.EtcdMember, error) {
+		return etcd.MemberList(ctx, tcp, m)
+	}
+
+	if observed != nil {
+		for _, m := range machines {
+			healthy[m.Name] = m.Status.NodeRef.IsDefined() && observed[m.Name].healthy
+		}
+
+		memberList = func(m *clusterv1.Machine) ([]*machineapi.EtcdMember, error) {
+			return observed[m.Name].members, observed[m.Name].listErr
+		}
+	} else {
+		var (
+			mu sync.Mutex
+			wg sync.WaitGroup
+		)
+
+		for _, m := range machines {
+			if !m.Status.NodeRef.IsDefined() {
+				continue
+			}
+
+			wg.Go(func() {
+				err := etcd.ServiceHealth(ctx, tcp, m)
+				if err != nil {
+					r.Log.Info("etcd is not healthy on control plane machine", "machine", m.Name, "error", err)
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				healthy[m.Name] = err == nil
+			})
+		}
+
+		wg.Wait()
+	}
 
 	var (
 		members []*machineapi.EtcdMember
 		listErr error
 	)
 
-	for _, m := range machines {
-		if !m.Status.NodeRef.IsDefined() {
+	// List the members through a healthy machine that stays in the cluster; the target is asked last, when it is the
+	// only healthy etcd member left.
+	candidates := slices.DeleteFunc(slices.Clone(machines), func(m *clusterv1.Machine) bool { return m.Name == target.Name })
+
+	for _, m := range append(candidates, target) {
+		if !healthy[m.Name] {
 			continue
 		}
 
-		if err := etcd.ServiceHealth(ctx, tcp, m); err != nil {
-			r.Log.Info("etcd is not healthy on control plane machine", "machine", m.Name, "error", err)
-
-			continue
+		if members, listErr = memberList(m); len(members) > 0 {
+			break
 		}
-
-		healthy[m.Name] = true
-
-		// List the members through a healthy machine that stays in the cluster.
-		if members == nil && m.Name != target.Name {
-			members, listErr = etcd.MemberList(ctx, tcp, m)
-		}
-	}
-
-	// The target is the only healthy etcd member left to ask.
-	if members == nil && healthy[target.Name] {
-		members, listErr = etcd.MemberList(ctx, tcp, target)
 	}
 
 	if len(members) == 0 {

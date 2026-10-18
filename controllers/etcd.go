@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
@@ -31,6 +32,60 @@ type etcdHealth struct {
 	// members is the number of voting members in the etcd member list, or 0 if no member list could be retrieved.
 	// Learners don't vote, so they don't count towards quorum.
 	members int
+	// statuses is what was observed on each machine that is expected to run an etcd member, by machine name. Machines
+	// that are being deleted or leaving etcd are not inspected, so they have no entry; a machine without an entry
+	// must be treated as unhealthy.
+	statuses map[string]etcdMachineStatus
+}
+
+// etcdMachineStatus is what the etcd health check observed on a control plane machine.
+type etcdMachineStatus struct {
+	// healthy reports whether the etcd service of the machine is running and healthy; it is false if the machine
+	// could not be inspected.
+	healthy bool
+	// members is the etcd member list as seen by the machine, or nil if it could not be listed: it is only listed
+	// when the etcd service is healthy.
+	members []*machineapi.EtcdMember
+	// listErr is why the etcd member list could not be listed, if it could not.
+	listErr error
+}
+
+// etcdMachineProbe is what the Talos API of a control plane machine returned about etcd.
+type etcdMachineProbe struct {
+	// inspectErr is set if the etcd service status could not be retrieved.
+	inspectErr error
+	services   []talosclient.ServiceInfo
+	// memberList is only retrieved when the etcd service is healthy.
+	memberList *machineapi.EtcdMemberListResponse
+	listErr    error
+}
+
+// probeEtcd retrieves the etcd service status of the machine and, if it is healthy, the etcd member list as seen by
+// the machine, within its own timeout.
+func (r *TalosControlPlaneReconciler) probeEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine clusterv1.Machine) etcdMachineProbe {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	// the client created has endpoints which point to a single machine
+	c, err := r.talosconfigForMachines(ctx, tcp, machine)
+	if err != nil {
+		return etcdMachineProbe{inspectErr: err}
+	}
+
+	defer c.Close() //nolint:errcheck
+
+	svcs, err := c.ServiceInfo(ctx, etcdService)
+	if err != nil {
+		return etcdMachineProbe{inspectErr: err}
+	}
+
+	probe := etcdMachineProbe{services: svcs}
+
+	if etcdServiceError(svcs) == nil {
+		probe.memberList, probe.listErr = c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
+	}
+
+	return probe
 }
 
 // quorum returns the number of healthy voting members etcd needs to keep quorum.
@@ -72,8 +127,8 @@ func (h etcdHealth) conditionReason() string {
 // etcdHealthcheck checks etcd on every control plane machine that is not being deleted or leaving etcd.
 //
 // It returns the first problem found as an error, but always inspects all machines so that the returned
-// etcdHealth reflects the whole cluster. Each machine gets its own timeout, so that an unreachable machine
-// doesn't prevent the others from being inspected.
+// etcdHealth reflects the whole cluster. The machines are inspected concurrently, each with its own timeout, so that
+// unreachable machines neither prevent the others from being inspected nor add up their timeouts.
 func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, ownedMachines []clusterv1.Machine) (etcdHealth, error) {
 	machines := []clusterv1.Machine{}
 
@@ -91,7 +146,22 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 	r.Log.Info("verifying etcd health on all nodes", params...)
 
-	health := etcdHealth{machines: len(machines)}
+	probes := make([]etcdMachineProbe, len(machines))
+
+	var wg sync.WaitGroup
+
+	for i, machine := range machines {
+		wg.Go(func() {
+			probes[i] = r.probeEtcd(ctx, tcp, machine)
+		})
+	}
+
+	wg.Wait()
+
+	health := etcdHealth{
+		machines: len(machines),
+		statuses: make(map[string]etcdMachineStatus, len(machines)),
+	}
 
 	// list of discovered etcd members, updated on each iteration
 	members := map[string]struct{}{}
@@ -99,42 +169,44 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 	var firstErr error
 
-	for _, machine := range machines {
-		// loop for each machine, the client created has endpoints which point to a single machine
+	// The probes are evaluated in the order of the machines, so that the result doesn't depend on which probe
+	// finished first.
+	for i, machine := range machines {
+		probe := probes[i]
+
+		health.statuses[machine.Name] = etcdMachineStatus{}
+
 		if err := func() error {
-			ctx, cancel := context.WithTimeout(ctx, time.Second*5)
-			defer cancel()
-
-			c, err := r.talosconfigForMachines(ctx, tcp, machine)
-			if err != nil {
-				return err
-			}
-
-			defer c.Close() //nolint:errcheck
-
-			svcs, err := c.ServiceInfo(ctx, etcdService)
-			if err != nil {
-				return err
+			if probe.inspectErr != nil {
+				return probe.inspectErr
 			}
 
 			health.inspected++
 
 			// check that etcd service is healthy on the node
-			if err := etcdServiceError(svcs); err != nil {
+			if err := etcdServiceError(probe.services); err != nil {
 				return err
 			}
 
 			health.healthy++
 
-			resp, err := c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
-			if err != nil {
-				return err
+			status := etcdMachineStatus{healthy: true, listErr: probe.listErr}
+
+			if probe.listErr == nil && len(probe.memberList.GetMessages()) > 0 {
+				// The client points to a single machine, so only 1 message should return.
+				status.members = probe.memberList.Messages[0].Members
+			}
+
+			health.statuses[machine.Name] = status
+
+			if probe.listErr != nil {
+				return probe.listErr
 			}
 
 			compareMembers := membersListed
 			membersListed = true
 
-			for _, message := range resp.Messages {
+			for _, message := range probe.memberList.Messages {
 				actualMembers := len(message.Members)
 				expectedMembers := len(machines)
 

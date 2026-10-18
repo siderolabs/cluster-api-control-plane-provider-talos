@@ -112,6 +112,49 @@ func (suite *ControllersSuite) TestEtcdHealthcheck() {
 		g.Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))
 	})
 
+	suite.Run("unreachable machines don't add up their timeouts", func() {
+		g := NewWithT(suite.T())
+
+		fakeClient := newFakeClient()
+		cluster, tcp, _ := suite.setupCluster(fakeClient, "test-etcd-health-concurrent", pointer.Int32(3))
+
+		msA, addrA := suite.startMachineServer()
+		addrB := suite.startBlackholeServer()
+		addrC := suite.startBlackholeServer()
+
+		g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, addrA)).To(Succeed())
+
+		members := []*machine.EtcdMember{
+			{Id: 1, Hostname: "foo-a"},
+			{Id: 2, Hostname: "foo-b"},
+			{Id: 3, Hostname: "foo-c"},
+		}
+
+		suite.setEtcdRunning(addrA)
+		msA.setEtcdMembersResponse(etcdMembers("foo-a", members...))
+
+		var machines []clusterv1.Machine
+
+		for _, m := range []struct{ name, address string }{{"foo-a", addrA}, {"foo-b", addrB}, {"foo-c", addrC}} {
+			cpMachine, _ := createMachineNodePair(m.name, cluster, tcp, true, m.address)
+			machines = append(machines, *cpMachine)
+		}
+
+		r := newReconciler(fakeClient)
+
+		start := time.Now()
+
+		healthy, listed, err := r.EtcdHealthcheckStatuses(suite.ctx, tcp, machines)
+		g.Expect(err).To(MatchError(ContainSubstring("foo-b")))
+
+		// Each unreachable machine times out after 5 seconds: one after the other, they would take 10 seconds.
+		g.Expect(time.Since(start)).To(BeNumerically("<", 9*time.Second))
+
+		// What was observed on each machine is kept for remediation.
+		g.Expect(healthy).To(Equal(map[string]bool{"foo-a": true, "foo-b": false, "foo-c": false}))
+		g.Expect(listed).To(Equal(map[string]int{"foo-a": 3, "foo-b": 0, "foo-c": 0}))
+	})
+
 	suite.Run("a learner doesn't count towards quorum", func() {
 		g := NewWithT(suite.T())
 

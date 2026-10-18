@@ -15,13 +15,16 @@ import (
 
 	"github.com/go-logr/logr/testr"
 	. "github.com/onsi/gomega"
+	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/contract"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,6 +58,9 @@ type fakeEtcd struct {
 	leaveErr  error
 	removeErr error
 
+	// healthDelay is how long each etcd service health check takes.
+	healthDelay time.Duration
+
 	calls []string
 }
 
@@ -73,6 +79,10 @@ func (f *fakeEtcd) getCalls() []string {
 }
 
 func (f *fakeEtcd) ServiceHealth(_ context.Context, _ *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error {
+	f.record("health:" + machine.Name)
+
+	time.Sleep(f.healthDelay)
+
 	if f.unhealthy[machine.Name] {
 		return fmt.Errorf("etcd is not healthy on %s", machine.Name)
 	}
@@ -349,7 +359,7 @@ func (e *remediationEnv) storedTCP() *controlplanev1.TalosControlPlane {
 }
 
 func (e *remediationEnv) remediate() (bool, error) {
-	_, remediated, err := e.r.reconcileUnhealthyMachines(e.ctx, e.tcp, e.cluster, e.machines())
+	_, remediated, err := e.r.reconcileUnhealthyMachines(e.ctx, e.tcp, e.cluster, e.machines(), nil)
 
 	return remediated, err
 }
@@ -660,6 +670,179 @@ func TestRemediationKeepsMachineWhenEtcdMemberCantBeRemoved(t *testing.T) {
 
 	// The remediation was recorded before the etcd member was removed, and is withdrawn since it did not happen.
 	g.Expect(e.storedTCP().Annotations).NotTo(HaveKey(remediationInProgressAnnotation))
+}
+
+func TestRemediationUsesObservedEtcdStatuses(t *testing.T) {
+	now := time.Now()
+
+	healthy := func(members ...string) etcdMachineStatus {
+		return etcdMachineStatus{healthy: true, members: etcdMembersFor(members...)}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		observed map[string]etcdMachineStatus
+		check    func(g *WithT, e *remediationEnv, remediated bool)
+	}{
+		{
+			name: "remediates when the other members were observed healthy",
+			observed: map[string]etcdMachineStatus{
+				"m1": {},
+				"m2": healthy("m1", "m2", "m3"),
+				"m3": healthy("m1", "m2", "m3"),
+			},
+			check: func(g *WithT, e *remediationEnv, remediated bool) {
+				g.Expect(remediated).To(BeTrue())
+				e.expectRemediated(g, "m1")
+			},
+		},
+		{
+			name: "refuses when another member was observed unhealthy",
+			observed: map[string]etcdMachineStatus{
+				"m1": {},
+				"m2": healthy("m1", "m2", "m3"),
+				"m3": {},
+			},
+			check: func(g *WithT, e *remediationEnv, remediated bool) {
+				g.Expect(remediated).To(BeFalse())
+				e.expectNotRemediated(g, "m1", cannotBeRemediatedReason, "etcd quorum loss")
+			},
+		},
+		{
+			name: "refuses when another machine was not observed",
+			observed: map[string]etcdMachineStatus{
+				"m1": {},
+				"m2": healthy("m1", "m2", "m3"),
+			},
+			check: func(g *WithT, e *remediationEnv, remediated bool) {
+				g.Expect(remediated).To(BeFalse())
+				e.expectNotRemediated(g, "m1", cannotBeRemediatedReason, "etcd quorum loss")
+			},
+		},
+		{
+			name: "defers when the members could not be listed",
+			observed: map[string]etcdMachineStatus{
+				"m1": {},
+				"m2": {healthy: true, listErr: errors.New("connection refused")},
+				"m3": {healthy: true, listErr: errors.New("connection refused")},
+			},
+			check: func(g *WithT, e *remediationEnv, remediated bool) {
+				g.Expect(remediated).To(BeFalse())
+				e.expectNotRemediated(g, "m1", remediationDeferredReason, "Failed to check etcd cluster health")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			e := newRemediationEnv(t, newTestTCP(3),
+				newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+				newTestMachine("m2", now.Add(-2*time.Hour)),
+				newTestMachine("m3", now.Add(-time.Hour)),
+			)
+			// etcd itself would tell otherwise: only the observed statuses must be used.
+			e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+			e.etcd.unhealthy = map[string]bool{"m1": true, "m2": true, "m3": true}
+
+			_, remediated, err := e.r.reconcileUnhealthyMachines(e.ctx, e.tcp, e.cluster, e.machines(), tc.observed)
+			g.Expect(err).NotTo(HaveOccurred())
+
+			tc.check(g, e, remediated)
+
+			g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("health:")))
+			g.Expect(e.etcd.getCalls()).NotTo(ContainElement(HavePrefix("list:")))
+		})
+	}
+}
+
+func TestRemediationInspectsEtcdConcurrently(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Now()
+
+	e := newRemediationEnv(t, newTestTCP(3),
+		newTestMachine("m1", now.Add(-3*time.Hour), withUnhealthy()),
+		newTestMachine("m2", now.Add(-2*time.Hour)),
+		newTestMachine("m3", now.Add(-time.Hour)),
+	)
+	e.etcd.members = etcdMembersFor("m1", "m2", "m3")
+	e.etcd.unhealthy["m1"] = true
+	e.etcd.healthDelay = time.Second
+
+	start := time.Now()
+
+	remediated, err := e.remediate()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(remediated).To(BeTrue())
+
+	// Inspected one after the other, the 3 machines would take 3 seconds.
+	g.Expect(time.Since(start)).To(BeNumerically("<", 2*time.Second))
+	g.Expect(e.etcd.getCalls()).To(ContainElements("health:m1", "health:m2", "health:m3"))
+}
+
+func TestMachineUpToDateConditionsReuseControlPlane(t *testing.T) {
+	now := time.Now()
+
+	// failInfraGets makes any fetch of an infrastructure machine or TalosConfig fail the test.
+	failInfraGets := func(t *testing.T, e *remediationEnv) {
+		e.r.Client = interceptor.NewClient(e.client.(client.WithWatch), interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				switch obj.(type) {
+				case *unstructured.Unstructured, *cabptv1.TalosConfig:
+					t.Errorf("unexpected fetch of %T %s", obj, key)
+				}
+
+				return c.Get(ctx, key, obj, opts...)
+			},
+		})
+	}
+
+	t.Run("the ControlPlane of the reconcile is reused", func(t *testing.T) {
+		g := NewWithT(t)
+
+		e := newRemediationEnv(t, newTestTCP(3),
+			newTestMachine("m1", now.Add(-2*time.Hour)),
+			newTestMachine("m2", now.Add(-time.Hour)),
+		)
+
+		list := &clusterv1.MachineList{Items: e.machines()}
+
+		controlPlane, err := newControlPlane(e.ctx, e.client, e.cluster, e.tcp, collections.FromMachineList(list))
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// m3 was created after the ControlPlane was built, and m2 runs an older version.
+		m3 := newTestMachine("m3", now)
+		g.Expect(e.client.Create(e.ctx, m3)).To(Succeed())
+
+		m2 := e.machine("m2")
+		m2.Spec.Version = "v1.33.0"
+		g.Expect(e.client.Update(e.ctx, m2)).To(Succeed())
+
+		failInfraGets(t, e)
+
+		machines := collections.FromMachineList(&clusterv1.MachineList{Items: e.machines()})
+		g.Expect(e.r.reconcileMachineUpToDateConditions(e.ctx, e.cluster, e.tcp, machines, controlPlane)).To(Succeed())
+
+		g.Expect(conditions.IsTrue(e.machine("m1"), clusterv1.MachineUpToDateCondition)).To(BeTrue())
+		g.Expect(conditions.IsFalse(e.machine("m2"), clusterv1.MachineUpToDateCondition)).To(BeTrue())
+		g.Expect(conditions.IsTrue(e.machine("m3"), clusterv1.MachineUpToDateCondition)).To(BeTrue())
+	})
+
+	t.Run("they are left as is while the TalosControlPlane is being deleted", func(t *testing.T) {
+		g := NewWithT(t)
+
+		e := newRemediationEnv(t, newTestTCP(3),
+			newTestMachine("m1", now.Add(-time.Hour)),
+		)
+
+		e.tcp.DeletionTimestamp = ptr.To(metav1.Now())
+
+		failInfraGets(t, e)
+
+		g.Expect(e.r.updateStatus(e.ctx, e.tcp, e.cluster, nil)).To(Succeed())
+
+		g.Expect(conditions.Has(e.machine("m1"), clusterv1.MachineUpToDateCondition)).To(BeFalse())
+		g.Expect(e.tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
+	})
 }
 
 func TestRemediationIsRecordedBeforeTheMachineIsTouched(t *testing.T) {
@@ -1267,7 +1450,7 @@ func TestRemediationAndScaleDownInTheSameReconcile(t *testing.T) {
 
 		machines := &clusterv1.MachineList{Items: e.machines()}
 
-		result, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, machines)
+		result, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, machines, nil, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(result.RequeueAfter).NotTo(BeZero())
 
@@ -1297,7 +1480,7 @@ func TestRemediationAndScaleDownInTheSameReconcile(t *testing.T) {
 
 		machines := &clusterv1.MachineList{Items: e.machines()}
 
-		_, err = e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, machines)
+		_, err = e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, machines, nil, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 
 		g.Expect(e.deletedMachines()).To(BeEmpty())
@@ -1496,7 +1679,7 @@ func TestEtcdLeavingMachines(t *testing.T) {
 		e.etcd.members = etcdMembersFor("m2", "m3")
 		e.etcd.unhealthy = map[string]bool{}
 
-		_, err = e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()})
+		_, err = e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 
 		// m1 is deleted first; m2 is only remediated once m1 is gone.
@@ -1514,7 +1697,7 @@ func TestEtcdLeavingMachines(t *testing.T) {
 		)
 		e.etcd.members = etcdMembersFor("m1", "m2", "m3")
 
-		_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()})
+		_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 
 		g.Expect(e.deletedMachines()).To(BeEmpty())
@@ -1531,7 +1714,7 @@ func TestEtcdLeavingMachines(t *testing.T) {
 		)
 		e.etcd.listErr = errors.New("connection refused")
 
-		_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()})
+		_, err := e.r.reconcileRemediationAndMachines(e.ctx, e.cluster, e.tcp, &clusterv1.MachineList{Items: e.machines()}, nil, nil)
 		g.Expect(err).To(HaveOccurred())
 
 		g.Expect(e.deletedMachines()).To(BeEmpty())
