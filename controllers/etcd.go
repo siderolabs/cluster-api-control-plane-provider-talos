@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 	"sync"
@@ -16,33 +17,272 @@ import (
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/collections"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// needsRemediation reports whether a MachineHealthCheck flagged the machine as unhealthy and left its
-// remediation to the control plane (MachineHealthCheckSucceeded=False and MachineOwnerRemediated=False).
-// Both conditions are required: when the machine recovers on its own the MachineHealthCheck controller
-// sets MachineHealthCheckSucceeded back to True but leaves MachineOwnerRemediated to the owner, so a
-// check on MachineOwnerRemediated alone would treat the machine as unhealthy forever.
-func needsRemediation(machine *clusterv1.Machine) bool {
-	return collections.IsUnhealthyAndOwnerRemediated(machine)
+// etcdHealth summarizes what etcdHealthcheck observed, so that callers can tell
+// a degraded etcd cluster that still has quorum from one that lost it.
+type etcdHealth struct {
+	// machines is the number of machines that are expected to run an etcd member.
+	machines int
+	// inspected is the number of machines whose etcd service status could be retrieved.
+	inspected int
+	// healthy is the number of machines running a healthy etcd service that is a voting member.
+	healthy int
+	// members is the number of voting members in the etcd member list, or 0 if no member list could be retrieved.
+	// Learners don't vote, so they don't count towards quorum.
+	members int
+	// statuses is what was observed on each machine that is expected to run an etcd member, by machine name. Machines
+	// that are being deleted or leaving etcd are not inspected, so they have no entry; a machine without an entry
+	// must be treated as unhealthy.
+	statuses map[string]etcdMachineStatus
 }
 
-// remainingMachines returns the owned machines that are staying in the control plane: those that are
-// not being deleted, not leaving etcd (see etcdLeavingAnnotation), and not flagged for remediation by
-// a MachineHealthCheck (see needsRemediation). A machine in any of these states is on its way out, so
-// its stopped or already-removed etcd must not keep EtcdClusterHealthyCondition false and deadlock
-// scale-down, rollout, and remediation. For the same reason the boot check before a scale-down only
-// waits for these machines.
+// etcdMachineStatus is what the etcd health check observed on a control plane machine.
+type etcdMachineStatus struct {
+	// healthy reports whether the etcd service of the machine is running and healthy; it is false if the machine
+	// could not be inspected.
+	healthy bool
+	// members is the etcd member list as seen by the machine, or nil if it could not be listed: it is only listed
+	// when the etcd service is healthy.
+	members []*machineapi.EtcdMember
+	// listErr is why the etcd member list could not be listed, if it could not.
+	listErr error
+}
+
+// etcdMachineProbe is what the Talos API of a control plane machine returned about etcd.
+type etcdMachineProbe struct {
+	// inspectErr is set if the etcd service status could not be retrieved.
+	inspectErr error
+	services   []talosclient.ServiceInfo
+	// memberList is only retrieved when the etcd service is healthy.
+	memberList *machineapi.EtcdMemberListResponse
+	listErr    error
+}
+
+// probeEtcd retrieves the etcd service status of the machine and, if it is healthy, the etcd member list as seen by
+// the machine, within its own timeout.
+func (r *TalosControlPlaneReconciler) probeEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine clusterv1.Machine) etcdMachineProbe {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	// the client created has endpoints which point to a single machine
+	c, err := r.talosconfigForMachines(ctx, tcp, machine)
+	if err != nil {
+		return etcdMachineProbe{inspectErr: err}
+	}
+
+	defer c.Close() //nolint:errcheck
+
+	svcs, err := c.ServiceInfo(ctx, etcdService)
+	if err != nil {
+		return etcdMachineProbe{inspectErr: err}
+	}
+
+	probe := etcdMachineProbe{services: svcs}
+
+	if etcdServiceError(svcs) == nil {
+		probe.memberList, probe.listErr = c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
+	}
+
+	return probe
+}
+
+// quorum returns the number of healthy voting members etcd needs to keep quorum.
+func (h etcdHealth) quorum() int {
+	total := h.members
+	if total == 0 {
+		total = h.machines
+	}
+
+	return total/2 + 1
+}
+
+// hasQuorum reports whether enough etcd members are healthy for etcd to keep quorum.
+func (h etcdHealth) hasQuorum() bool {
+	return h.healthy >= h.quorum()
+}
+
+// mayHaveQuorum reports whether etcd may still have quorum, assuming that the machines that could not be
+// inspected run a healthy etcd member. When it is false, etcd lost quorum whatever the state of those machines.
+func (h etcdHealth) mayHaveQuorum() bool {
+	return h.healthy+(h.machines-h.inspected) >= h.quorum()
+}
+
+// conditionReason returns the reason of the EtcdClusterHealthy condition when the healthcheck failed.
+func (h etcdHealth) conditionReason() string {
+	switch {
+	case h.inspected == 0:
+		return controlplanev1.EtcdClusterInspectionFailedReason
+	case h.hasQuorum():
+		return controlplanev1.EtcdClusterUnhealthyReason
+	case h.mayHaveQuorum():
+		// Whether etcd has quorum depends on machines that could not be inspected.
+		return controlplanev1.EtcdClusterInspectionFailedReason
+	default:
+		return controlplanev1.EtcdClusterQuorumLostReason
+	}
+}
+
+// etcdHealthcheck checks etcd on every control plane machine that is not being deleted or leaving etcd.
+//
+// It returns the first problem found as an error, but always inspects all machines so that the returned
+// etcdHealth reflects the whole cluster. The machines are inspected concurrently, each with its own timeout, so that
+// unreachable machines neither prevent the others from being inspected nor add up their timeouts.
+func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, ownedMachines []clusterv1.Machine) (etcdHealth, error) {
+	machines := remainingMachines(ownedMachines)
+
+	// If every owned machine is on its way out there is nothing left to verify. Reporting etcd healthy here would
+	// open the scale-down/rollout gate without a single member checked, so treat it as unhealthy.
+	if len(ownedMachines) > 0 && len(machines) == 0 {
+		return etcdHealth{}, fmt.Errorf("all %d owned control plane machines are excluded from the etcd health check", len(ownedMachines))
+	}
+
+	membership := newEtcdMembership(ownedMachines, machines)
+
+	params := make([]any, 0, len(machines)*2)
+	for _, machine := range machines {
+		params = append(params, "node", machine.Name)
+	}
+
+	r.Log.Info("verifying etcd health on all nodes", params...)
+
+	probes := make([]etcdMachineProbe, len(machines))
+
+	var wg sync.WaitGroup
+
+	for i, machine := range machines {
+		wg.Go(func() {
+			probes[i] = r.probeEtcd(ctx, tcp, machine)
+		})
+	}
+
+	wg.Wait()
+
+	health := etcdHealth{
+		machines: len(machines),
+		statuses: make(map[string]etcdMachineStatus, len(machines)),
+	}
+
+	// the member list reported by the previous node, to check that every node sees the same cluster
+	var (
+		previousNode    string
+		previousMembers map[string]struct{}
+	)
+
+	var firstErr error
+
+	// The probes are evaluated in the order of the machines, so that the result doesn't depend on which probe
+	// finished first.
+	for i, machine := range machines {
+		probe := probes[i]
+
+		health.statuses[machine.Name] = etcdMachineStatus{}
+
+		if err := func() error {
+			if probe.inspectErr != nil {
+				return probe.inspectErr
+			}
+
+			health.inspected++
+
+			// check that etcd service is healthy on the node
+			if err := etcdServiceError(probe.services); err != nil {
+				return err
+			}
+
+			health.healthy++
+
+			status := etcdMachineStatus{healthy: true, listErr: probe.listErr}
+
+			if probe.listErr == nil && len(probe.memberList.GetMessages()) > 0 {
+				// The client points to a single machine, so only 1 message should return.
+				status.members = probe.memberList.Messages[0].Members
+			}
+
+			health.statuses[machine.Name] = status
+
+			if probe.listErr != nil {
+				return probe.listErr
+			}
+
+			for _, message := range probe.memberList.Messages {
+				votingMembers := 0
+
+				for _, member := range message.Members {
+					if !member.IsLearner {
+						votingMembers++
+					}
+				}
+
+				health.members = max(health.members, votingMembers)
+
+				// a learner doesn't vote, so its health doesn't help etcd keep quorum
+				if member := findEtcdMember(message.Members, &machine); member != nil && member.IsLearner {
+					health.healthy--
+				}
+
+				node := message.Metadata.GetHostname()
+
+				members, err := membership.verify(node, message.Members)
+				if err != nil {
+					return err
+				}
+
+				if previousMembers != nil {
+					if err := compareEtcdMembers(node, members, previousNode, previousMembers); err != nil {
+						return err
+					}
+				}
+
+				previousNode, previousMembers = node, members
+			}
+
+			return nil
+		}(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("error checking etcd health on machine %q: %w", machine.Name, err)
+		}
+	}
+
+	return health, firstErr
+}
+
+// etcdService is the Talos service running the etcd member of a control plane machine.
+const etcdService = "etcd"
+
+// etcdServiceError returns an error unless the etcd service is running and healthy on every node of the response.
+func etcdServiceError(svcs []talosclient.ServiceInfo) error {
+	for _, svc := range svcs {
+		node := svc.Metadata.GetHostname()
+
+		if len(svc.Service.GetEvents().GetEvents()) == 0 {
+			return fmt.Errorf("%s: no events recorded yet for service %q", node, etcdService)
+		}
+
+		lastEvent := svc.Service.Events.Events[len(svc.Service.Events.Events)-1]
+		if lastEvent.State != "Running" {
+			return fmt.Errorf("%s: service %q not in expected state %q: current state [%s] %s", node, etcdService, "Running", lastEvent.State, lastEvent.Msg)
+		}
+
+		if !svc.Service.GetHealth().GetHealthy() {
+			return fmt.Errorf("%s: service is not healthy: %s", node, etcdService)
+		}
+	}
+
+	return nil
+}
+
+// remainingMachines returns the owned machines that are staying in the control plane: those that are neither being
+// deleted nor leaving etcd (see etcdLeavingAnnotation). Their etcd may already be stopped or removed, so they must
+// not keep EtcdClusterHealthyCondition false.
 func remainingMachines(ownedMachines []clusterv1.Machine) []clusterv1.Machine {
 	machines := make([]clusterv1.Machine, 0, len(ownedMachines))
 
 	for _, machine := range ownedMachines {
 		if machine.ObjectMeta.DeletionTimestamp.IsZero() &&
-			machine.Annotations[etcdLeavingAnnotation] != "true" &&
-			!needsRemediation(&machine) {
+			machine.Annotations[etcdLeavingAnnotation] != "true" {
 			machines = append(machines, machine)
 		}
 	}
@@ -50,11 +290,11 @@ func remainingMachines(ownedMachines []clusterv1.Machine) []clusterv1.Machine {
 	return machines
 }
 
-// nodeNamesForMachine returns the host names that can identify a machine's etcd member: the noderef
-// name and every MachineHostName address (some infrastructure providers report the infrastructure
-// machine name there, which may not match the node hostname). Each name is lowercased and has any
-// domain suffix trimmed (noderef names can be FQDNs, e.g. on AWS). The caller must ensure NodeRef is set.
-func nodeNamesForMachine(machine clusterv1.Machine) []string {
+// nodeNamesForMachine returns the host names that can identify a machine's etcd member: the nodeRef name and every
+// MachineHostName address (some infrastructure providers report the infrastructure machine name there, which may not
+// match the node hostname). Each name is lowercased and has any domain suffix trimmed (nodeRef names can be FQDNs,
+// e.g. on AWS); empty names are skipped.
+func nodeNamesForMachine(machine *clusterv1.Machine) []string {
 	candidates := []string{machine.Status.NodeRef.Name}
 
 	for _, address := range machine.Status.Addresses {
@@ -67,23 +307,23 @@ func nodeNamesForMachine(machine clusterv1.Machine) []string {
 
 	for _, hostname := range candidates {
 		hostname, _, _ = strings.Cut(hostname, ".")
+		if hostname == "" {
+			continue
+		}
+
 		names = append(names, strings.ToLower(hostname))
 	}
 
 	return names
 }
 
-// etcdMemberNames returns the set of host names (see nodeNamesForMachine) an etcd member may carry to
-// belong to one of the machines. Machines without a noderef have no known names and contribute nothing.
+// etcdMemberNames returns the set of host names (see nodeNamesForMachine) an etcd member may carry to belong to one
+// of the machines. Machines without a nodeRef have no known names and contribute nothing.
 func etcdMemberNames(machines []clusterv1.Machine) map[string]struct{} {
 	names := map[string]struct{}{}
 
-	for _, machine := range machines {
-		if machine.Status.NodeRef == nil {
-			continue
-		}
-
-		for _, name := range nodeNamesForMachine(machine) {
+	for i := range machines {
+		for _, name := range nodeNamesForMachine(&machines[i]) {
 			names[name] = struct{}{}
 		}
 	}
@@ -91,47 +331,47 @@ func etcdMemberNames(machines []clusterv1.Machine) map[string]struct{} {
 	return names
 }
 
-// etcdMembership holds what an etcd member list is verified against: the host names of the machines
-// that must be etcd members (expected, keyed by machine name), the machines that must be members but
-// whose names are not known yet because they have no noderef (pending), and the host names of every
-// owned machine (owned), which decide whether a member is an orphan.
+// etcdMembership holds what an etcd member list is verified against: the host names of the machines that must be
+// etcd members (expected, keyed by machine name), the machines that must be members but whose names are not known
+// yet because they have no nodeRef (pending), and the host names of every owned machine (owned), which decide
+// whether a member is an orphan.
 type etcdMembership struct {
 	expected map[string][]string
 	pending  []string
 	owned    map[string]struct{}
 }
 
-// newEtcdMembership builds the membership for the owned machines, of which machines is the subset
-// that takes part in the etcd health check (see remainingMachines).
+// newEtcdMembership builds the membership for the owned machines, of which machines is the subset that takes part in
+// the etcd health check (see remainingMachines).
 func newEtcdMembership(ownedMachines, machines []clusterv1.Machine) etcdMembership {
 	membership := etcdMembership{
 		expected: make(map[string][]string, len(machines)),
 		owned:    etcdMemberNames(ownedMachines),
 	}
 
-	for _, machine := range machines {
-		if machine.Status.NodeRef == nil {
-			membership.pending = append(membership.pending, machine.Name)
+	for i := range machines {
+		names := nodeNamesForMachine(&machines[i])
+		if len(names) == 0 {
+			membership.pending = append(membership.pending, machines[i].Name)
 
 			continue
 		}
 
-		membership.expected[machine.Name] = nodeNamesForMachine(machine)
+		membership.expected[machines[i].Name] = names
 	}
 
 	return membership
 }
 
-// verify checks the etcd member list reported by node and returns the set of member host names,
-// lowercased, for comparison across nodes.
+// verify checks the etcd member list reported by node and returns the set of member host names, lowercased, for
+// comparison across nodes.
 //
-// Every machine that must be a member has to have one, matched by any of its host names. A machine
-// that must be a member but has no noderef yet (it is new and the kubelet has not registered) cannot
-// be matched by name, so it is accounted for by count: each such machine claims one member matching
-// no owned machine. Any further unmatched member is an orphan (auditEtcd force-removes these), and
-// fewer unmatched members than pending machines means a new machine has not joined etcd yet. A member
-// of an excluded machine still matches an owned machine, so it is tolerated; that machine's member
-// may also already be gone, which is expected, so it is not required.
+// Every machine that must be a member has to have one, matched by any of its host names. A machine that must be a
+// member but has no nodeRef yet (it is new and the kubelet has not registered) cannot be matched by name, so it is
+// accounted for by count: each such machine claims one member matching no owned machine. Any further unmatched member
+// is an orphan (auditEtcd force-removes these), and fewer unmatched members than pending machines means a new machine
+// has not joined etcd yet. A member of an excluded machine still matches an owned machine, so it is tolerated; that
+// machine's member may also already be gone, which is expected, so it is not required.
 func (m etcdMembership) verify(node string, members []*machineapi.EtcdMember) (map[string]struct{}, error) {
 	present := make(map[string]struct{}, len(members))
 
@@ -167,8 +407,8 @@ func (m etcdMembership) verify(node string, members []*machineapi.EtcdMember) (m
 	return present, nil
 }
 
-// compareEtcdMembers reports a member list that differs from the one another node reported: each etcd
-// member must see the same cluster, so a member known to only one of the two nodes is an error.
+// compareEtcdMembers reports a member list that differs from the one another node reported: each etcd member must see
+// the same cluster, so a member known to only one of the two nodes is an error.
 func compareEtcdMembers(node string, members map[string]struct{}, previousNode string, previous map[string]struct{}) error {
 	for name := range members {
 		if _, ok := previous[name]; !ok {
@@ -185,131 +425,10 @@ func compareEtcdMembers(node string, members map[string]struct{}, previousNode s
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, ownedMachines []clusterv1.Machine) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-
-	machines := remainingMachines(ownedMachines)
-
-	// If every owned machine is on its way out (deleting, leaving, or being remediated) there is
-	// nothing left to verify. Reporting etcd healthy here would open the scale-down/rollout gate
-	// without a single member checked, so treat it as unhealthy until a machine is back in the set.
-	if len(ownedMachines) > 0 && len(machines) == 0 {
-		return fmt.Errorf("all %d owned control plane machines are excluded from the etcd health check", len(ownedMachines))
-	}
-
-	membership := newEtcdMembership(ownedMachines, machines)
-
-	params := make([]any, 0, len(machines)*2)
-	for _, machine := range machines {
-		params = append(params, "node", machine.Name)
-	}
-
-	r.Log.Info("verifying etcd health on all nodes", params...)
-
-	probes := make([]etcdMachineProbe, len(machines))
-
-	var wg sync.WaitGroup
-
-	for i, machine := range machines {
-		wg.Go(func() {
-			probes[i] = r.probeEtcd(ctx, tcp, machine)
-		})
-	}
-
-	wg.Wait()
-
-	health := etcdHealth{
-		machines: len(machines),
-		statuses: make(map[string]etcdMachineStatus, len(machines)),
-	}
-
-	// the member list reported by the previous node, to check that every node sees the same cluster
-	var (
-		previousNode    string
-		previousMembers map[string]struct{}
-	)
-
-	for _, machine := range machines {
-		// loop for each machine, the client created has endpoints which point to a single machine
-		if err := func() error {
-			if probe.inspectErr != nil {
-				return probe.inspectErr
-			}
-
-			health.inspected++
-
-			// check that etcd service is healthy on the node
-			if err := etcdServiceError(probe.services); err != nil {
-				return err
-			}
-
-			health.healthy++
-
-			status := etcdMachineStatus{healthy: true, listErr: probe.listErr}
-
-			if probe.listErr == nil && len(probe.memberList.GetMessages()) > 0 {
-				// The client points to a single machine, so only 1 message should return.
-				status.members = probe.memberList.Messages[0].Members
-			}
-
-			health.statuses[machine.Name] = status
-
-			if probe.listErr != nil {
-				return probe.listErr
-			}
-
-			for _, message := range resp.Messages {
-				node := message.Metadata.GetHostname()
-
-				members, err := membership.verify(node, message.Members)
-				if err != nil {
-					return err
-				}
-
-				if previousMembers != nil {
-					if err := compareEtcdMembers(node, members, previousNode, previousMembers); err != nil {
-						return err
-					}
-				}
-
-				previousNode, previousMembers = node, members
-			}
-
-			return nil
-		}(); err != nil {
-			return fmt.Errorf("error checking etcd health on machine %q: %w", machine.Name, err)
-		}
-	}
-
-	return nil
-}
-
-// etcdMemberMatchesMachine reports whether the etcd member runs on the machine. It matches the member hostname
-// against the nodeRef name and any MachineHostName addresses: some infrastructure providers report the
-// infrastructure machine name as MachineHostName, which may not match the actual node hostname.
+// etcdMemberMatchesMachine reports whether the etcd member runs on the machine, matched by any of its host names (see
+// nodeNamesForMachine).
 func etcdMemberMatchesMachine(member *machineapi.EtcdMember, machine *clusterv1.Machine) bool {
-	candidates := []string{machine.Status.NodeRef.Name}
-
-	for _, address := range machine.Status.Addresses {
-		if address.Type == clusterv1.MachineHostName {
-			candidates = append(candidates, address.Address)
-		}
-	}
-
-	for _, hostname := range candidates {
-		if hostname == "" {
-			continue
-		}
-
-		// break apart the hostname in case it is an fqdn (like in AWS)
-		hostname, _, _ = strings.Cut(hostname, ".")
-		if strings.EqualFold(hostname, member.Hostname) {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(nodeNamesForMachine(machine), strings.ToLower(member.Hostname))
 }
 
 // findEtcdMember returns the etcd member running on the machine, or nil if there is none.
@@ -656,15 +775,19 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	// Only querying one CP node, so only 1 message should return.
 	memberList := response.Messages[0]
 
-	// every member must carry a host name of one of the machines, matched the same way the health check does
-	owned := etcdMemberNames(machines.Items)
-
+	// For each etcd member, look through the list of machines and see if noderef matches
 	for _, member := range memberList.Members {
 		if member.Hostname == "" {
 			return fmt.Errorf("discovered etcd member with empty hostname: %s", member)
 		}
 
-		_, present := owned[strings.ToLower(member.Hostname)]
+		present := false
+		for i := range machines.Items {
+			if etcdMemberMatchesMachine(member, &machines.Items[i]) {
+				present = true
+				break
+			}
+		}
 
 		if !present {
 			r.Log.Info("found etcd member that doesn't exist as controlplane machine", "member", member)

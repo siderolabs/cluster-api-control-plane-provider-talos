@@ -9,12 +9,80 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
+
+func TestEtcdHealthConditionReason(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		health etcdHealth
+		reason string
+	}{
+		{
+			name:   "nothing inspected",
+			health: etcdHealth{machines: 3},
+			reason: controlplanev1.EtcdClusterInspectionFailedReason,
+		},
+		{
+			name:   "one unhealthy member out of 3",
+			health: etcdHealth{machines: 3, inspected: 3, healthy: 2, members: 3},
+			reason: controlplanev1.EtcdClusterUnhealthyReason,
+		},
+		{
+			name:   "one unreachable machine out of 3",
+			health: etcdHealth{machines: 3, inspected: 2, healthy: 2, members: 3},
+			reason: controlplanev1.EtcdClusterUnhealthyReason,
+		},
+		{
+			name:   "two unhealthy members out of 3",
+			health: etcdHealth{machines: 3, inspected: 3, healthy: 1, members: 3},
+			reason: controlplanev1.EtcdClusterQuorumLostReason,
+		},
+		{
+			// The unreachable machines may well run healthy members.
+			name:   "two unreachable machines out of 3",
+			health: etcdHealth{machines: 3, inspected: 1, healthy: 1, members: 3},
+			reason: controlplanev1.EtcdClusterInspectionFailedReason,
+		},
+		{
+			name:   "one unhealthy and one unreachable machine out of 3",
+			health: etcdHealth{machines: 3, inspected: 2, healthy: 1, members: 3},
+			reason: controlplanev1.EtcdClusterInspectionFailedReason,
+		},
+		{
+			name:   "two unhealthy members and one unreachable machine out of 5",
+			health: etcdHealth{machines: 5, inspected: 4, healthy: 2, members: 5},
+			reason: controlplanev1.EtcdClusterInspectionFailedReason,
+		},
+		{
+			name:   "three unhealthy members out of 5",
+			health: etcdHealth{machines: 5, inspected: 5, healthy: 2, members: 5},
+			reason: controlplanev1.EtcdClusterQuorumLostReason,
+		},
+		{
+			// A learner that is not healthy yet doesn't count towards quorum: 1 voting member, which is healthy.
+			name:   "unhealthy learner joining a single member",
+			health: etcdHealth{machines: 2, inspected: 2, healthy: 1, members: 1},
+			reason: controlplanev1.EtcdClusterUnhealthyReason,
+		},
+		{
+			name:   "no member list",
+			health: etcdHealth{machines: 3, inspected: 3, healthy: 1},
+			reason: controlplanev1.EtcdClusterQuorumLostReason,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			g.Expect(tc.health.conditionReason()).To(Equal(tc.reason))
+		})
+	}
+}
 
 func newMachine(name string, mutate func(*clusterv1.Machine)) clusterv1.Machine {
 	m := clusterv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: name}}
@@ -25,60 +93,35 @@ func newMachine(name string, mutate func(*clusterv1.Machine)) clusterv1.Machine 
 	return m
 }
 
-// markUnhealthy sets the two conditions the MachineHealthCheck controller sets when a machine fails a
-// health check and its remediation is left to the owner.
-func markUnhealthy(m *clusterv1.Machine) {
-	conditions.MarkFalse(m, clusterv1.MachineHealthCheckSucceededCondition, clusterv1.NodeNotFoundReason, clusterv1.ConditionSeverityWarning, "")
-	conditions.MarkFalse(m, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "")
+func markDeleting(m *clusterv1.Machine) {
+	now := metav1.Now()
+	m.DeletionTimestamp = &now
+}
+
+func markLeaving(m *clusterv1.Machine) {
+	m.Annotations = map[string]string{etcdLeavingAnnotation: "true"}
 }
 
 func TestRemainingMachines(t *testing.T) {
-	deleting := newMachine("deleting", func(m *clusterv1.Machine) {
-		now := metav1.Now()
-		m.DeletionTimestamp = &now
-	})
-	leaving := newMachine("leaving", func(m *clusterv1.Machine) {
-		m.Annotations = map[string]string{etcdLeavingAnnotation: "true"}
-	})
-	remediating := newMachine("remediating", markUnhealthy)
-	// A machine whose remediation is already done carries the condition set to True, which is a
-	// distinct branch from the condition being absent: both must stay in the set.
-	remediated := newMachine("remediated", func(m *clusterv1.Machine) {
-		conditions.MarkTrue(m, clusterv1.MachineOwnerRemediatedCondition)
-	})
-	// A machine that recovered on its own: the MachineHealthCheck controller sets
-	// MachineHealthCheckSucceeded back to True but leaves MachineOwnerRemediated=False to the owner.
-	// It is healthy again and must stay in the set, or it would be excluded forever.
-	recovered := newMachine("recovered", func(m *clusterv1.Machine) {
-		markUnhealthy(m)
-		conditions.MarkTrue(m, clusterv1.MachineHealthCheckSucceededCondition)
+	deleting := newMachine("deleting", markDeleting)
+	leaving := newMachine("leaving", markLeaving)
+	notLeaving := newMachine("not-leaving", func(m *clusterv1.Machine) {
+		m.Annotations = map[string]string{etcdLeavingAnnotation: "false"}
 	})
 	healthy := newMachine("healthy", nil)
 
-	// deleting, leaving, and remediating machines are all on their way out and must be excluded,
-	// so a single unhealthy member cannot keep EtcdClusterHealthyCondition false forever. The
-	// healthy, recovered, and already-remediated machines must remain.
-	got := remainingMachines([]clusterv1.Machine{deleting, leaving, remediating, remediated, recovered, healthy})
+	got := remainingMachines([]clusterv1.Machine{deleting, leaving, notLeaving, healthy})
 
-	gotNames := map[string]struct{}{}
+	gotNames := make([]string, 0, len(got))
 	for _, m := range got {
-		gotNames[m.Name] = struct{}{}
+		gotNames = append(gotNames, m.Name)
 	}
 
-	want := map[string]struct{}{"remediated": {}, "recovered": {}, "healthy": {}}
-	if len(gotNames) != len(want) {
-		t.Fatalf("expected remaining machines %v, got %v", want, gotNames)
+	if want := []string{"not-leaving", "healthy"}; !slices.Equal(gotNames, want) {
+		t.Fatalf("remainingMachines() = %q, want %q", gotNames, want)
 	}
 
-	for name := range want {
-		if _, ok := gotNames[name]; !ok {
-			t.Fatalf("expected %q among the remaining machines, got %v", name, gotNames)
-		}
-	}
-
-	// When every owned machine is on its way out, the set must be empty. etcdHealthcheck relies on
-	// this to refuse a healthy verdict instead of running zero checks.
-	if got := remainingMachines([]clusterv1.Machine{deleting, leaving, remediating}); len(got) != 0 {
+	if got := remainingMachines([]clusterv1.Machine{deleting, leaving}); len(got) != 0 {
 		t.Fatalf("expected no remaining machines when all are excluded, got %d", len(got))
 	}
 }
@@ -86,7 +129,7 @@ func TestRemainingMachines(t *testing.T) {
 func TestNodeNamesForMachine(t *testing.T) {
 	withNodeRef := func(nodeName string, addresses ...clusterv1.MachineAddress) clusterv1.Machine {
 		return newMachine("m", func(m *clusterv1.Machine) {
-			m.Status.NodeRef = &corev1.ObjectReference{Name: nodeName}
+			m.Status.NodeRef = clusterv1.MachineNodeReference{Name: nodeName}
 			m.Status.Addresses = addresses
 		})
 	}
@@ -120,11 +163,22 @@ func TestNodeNamesForMachine(t *testing.T) {
 				clusterv1.MachineAddress{Type: clusterv1.MachineHostName, Address: "host-c"}),
 			want: []string{"node-a", "host-b", "host-c"},
 		},
+		{
+			name: "without a noderef only the hostname addresses are candidates",
+			machine: withNodeRef("",
+				clusterv1.MachineAddress{Type: clusterv1.MachineHostName, Address: "host-b"}),
+			want: []string{"host-b"},
+		},
+		{
+			name:    "without a noderef or hostname address there are no candidates",
+			machine: withNodeRef(""),
+			want:    []string{},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := nodeNamesForMachine(tt.machine); !slices.Equal(got, tt.want) {
+			if got := nodeNamesForMachine(&tt.machine); !slices.Equal(got, tt.want) {
 				t.Fatalf("nodeNamesForMachine() = %q, want %q", got, tt.want)
 			}
 		})
@@ -134,7 +188,7 @@ func TestNodeNamesForMachine(t *testing.T) {
 func TestEtcdMembershipVerify(t *testing.T) {
 	withNode := func(name, nodeName string, mutate func(*clusterv1.Machine), addresses ...clusterv1.MachineAddress) clusterv1.Machine {
 		return newMachine(name, func(m *clusterv1.Machine) {
-			m.Status.NodeRef = &corev1.ObjectReference{Name: nodeName}
+			m.Status.NodeRef = clusterv1.MachineNodeReference{Name: nodeName}
 			m.Status.Addresses = addresses
 
 			if mutate != nil {
@@ -156,9 +210,9 @@ func TestEtcdMembershipVerify(t *testing.T) {
 	cpA := withNode("cp-a", "node-a", nil)
 	cpB := withNode("cp-b", "node-b", nil)
 	cpC := withNode("cp-c", "node-c", nil)
-	cpCRemediating := withNode("cp-c", "node-c", markUnhealthy)
+	cpCLeaving := withNode("cp-c", "node-c", markLeaving)
 	noNodeRef := newMachine("cp-new", nil)
-	noNodeRefRemediating := newMachine("cp-stuck", markUnhealthy)
+	noNodeRefDeleting := newMachine("cp-stuck", markDeleting)
 	// the infrastructure machine name is reported as MachineHostName and differs from the node hostname
 	cpInfraName := withNode("cp-d", "node-d", nil,
 		clusterv1.MachineAddress{Type: clusterv1.MachineHostName, Address: "infra-cp-d"})
@@ -187,13 +241,13 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			wantErr: `etcd member "node-x" does not match any control plane machine`,
 		},
 		{
-			name:    "a remediating machine whose member is still present is tolerated",
-			owned:   []clusterv1.Machine{cpA, cpB, cpCRemediating},
+			name:    "a leaving machine whose member is still present is tolerated",
+			owned:   []clusterv1.Machine{cpA, cpB, cpCLeaving},
 			members: members("node-a", "node-b", "node-c"),
 		},
 		{
-			name:    "a remediating machine whose member is already gone is tolerated",
-			owned:   []clusterv1.Machine{cpA, cpB, cpCRemediating},
+			name:    "a leaving machine whose member is already gone is tolerated",
+			owned:   []clusterv1.Machine{cpA, cpB, cpCLeaving},
 			members: members("node-a", "node-b"),
 		},
 		{
@@ -225,13 +279,13 @@ func TestEtcdMembershipVerify(t *testing.T) {
 		},
 		{
 			name:    "an excluded machine without a noderef does not disable the orphan check",
-			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefRemediating},
+			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
 			members: members("node-a", "node-b", "node-x"),
 			wantErr: `etcd member "node-x" does not match any control plane machine`,
 		},
 		{
 			name:    "an excluded machine without a noderef is not required to have a member",
-			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefRemediating},
+			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
 			members: members("node-a", "node-b"),
 		},
 	}
@@ -291,8 +345,7 @@ func TestCompareEtcdMembers(t *testing.T) {
 			wantErr:  `node-b: etcd member "node-x" is not known to node-a`,
 		},
 		{
-			// the old count check caught this; a member list that is shorter on a later node is
-			// as much of a split view as a longer one
+			// a member list that is shorter on a later node is as much of a split view as a longer one
 			name:     "a member only the previous node knows",
 			members:  set("node-a", "node-b"),
 			previous: set("node-a", "node-b", "node-x"),
