@@ -7,6 +7,7 @@ package integration_test
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
@@ -38,6 +39,11 @@ import (
 )
 
 var talosVersion *semver.Version
+
+// awsStandardTemplate is the default workload cluster template, see the header of the file for its origin.
+//
+//go:embed testdata/aws-standard.yaml
+var awsStandardTemplate []byte
 
 type clusterctlConfig struct {
 	Providers   []providerConfig  `yaml:"providers"`
@@ -183,15 +189,16 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	id := uuid.New()
 
-	clusterTemplate := env(
-		"CLUSTER_TEMPLATE",
-		"https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml",
-	)
+	// Default to the embedded template, CLUSTER_TEMPLATE overrides it with a URL or a local path.
+	clusterTemplate := capi.WithTemplate(awsStandardTemplate)
+	if path := os.Getenv("CLUSTER_TEMPLATE"); path != "" {
+		clusterTemplate = capi.WithTemplateFile(path)
+	}
 
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
 		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.34.6")), "v")),
-		capi.WithTemplateFile(clusterTemplate),
+		clusterTemplate,
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)

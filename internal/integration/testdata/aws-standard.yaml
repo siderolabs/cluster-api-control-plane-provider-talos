@@ -1,0 +1,192 @@
+# Copied from https://github.com/siderolabs/cluster-api-templates/blob/e4fd469c1da66ea8ae8e402dda6aad15591ff3ad/aws/standard/standard.yaml
+# with the worker generateType changed from "join" to "worker": CABPT v0.7 converts the v1alpha3
+# TalosConfigTemplate to v1beta1 verbatim, and the v1beta1 schema rejects "join".
+# The Cluster, MachineDeployment and MachineHealthCheck are converted to cluster.x-k8s.io/v1beta2.
+## Cluster configs
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+  infrastructureRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: AWSCluster
+    name: ${CLUSTER_NAME}
+  controlPlaneRef:
+    apiGroup: controlplane.cluster.x-k8s.io
+    kind: TalosControlPlane
+    name: ${CLUSTER_NAME}-controlplane
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  region: ${AWS_REGION}
+  sshKeyName: ${AWS_SSH_KEY_NAME}
+  network:
+    vpc:
+      id: ${AWS_VPC_ID}
+    subnets:
+      - id: ${AWS_SUBNET}
+        isPublic: true
+        availabilityZone: ${AWS_SUBNET_AZ}
+  controlPlaneLoadBalancer:
+    loadBalancerType: nlb
+    healthCheckProtocol: TCP
+    subnets:
+      - ${AWS_SUBNET}
+---
+## Control plane configs
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-controlplane
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      cloudInit:
+        insecureSkipSecretsManager: true
+      instanceType: ${AWS_CONTROL_PLANE_MACHINE_TYPE}
+      rootVolume:
+        size: ${AWS_CONTROL_PLANE_VOL_SIZE}
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+      ami:
+        id: ${AWS_CONTROL_PLANE_AMI_ID}
+      additionalSecurityGroups: ${AWS_CONTROL_PLANE_ADDL_SEC_GROUPS}
+      publicIP: true
+      iamInstanceProfile: ${AWS_CONTROL_PLANE_IAM_PROFILE}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-controlplane
+  namespace: ${NAMESPACE}
+spec:
+  version: v${KUBERNETES_VERSION}
+  replicas: ${CONTROL_PLANE_MACHINE_COUNT}
+  infrastructureTemplate:
+    kind: AWSMachineTemplate
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    name: ${CLUSTER_NAME}-controlplane
+    namespace: ${NAMESPACE}
+  controlPlaneConfig:
+    controlplane:
+      generateType: controlplane
+      talosVersion: ${TALOS_VERSION}
+      strategicPatches:
+        - |
+          machine:
+            kubelet:
+              registerWithFQDN: true
+        - |
+          cluster:
+            externalCloudProvider:
+              enabled: true
+              manifests:
+                - https://raw.githubusercontent.com/siderolabs/cluster-api-templates/main/aws/manifests/ccm.yaml
+---
+## Worker deployment configs
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      generateType: worker
+      talosVersion: ${TALOS_VERSION}
+      strategicPatches:
+        - |
+          machine:
+            kubelet:
+              registerWithFQDN: true
+        - |
+          cluster:
+            externalCloudProvider:
+              enabled: true
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+    nodepool: nodepool-a
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_MACHINE_COUNT}
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+      nodepool: nodepool-a
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/cluster-name: ${CLUSTER_NAME}
+        nodepool: nodepool-a
+    spec:
+      clusterName: ${CLUSTER_NAME}
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: TalosConfigTemplate
+          name: ${CLUSTER_NAME}-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: AWSMachineTemplate
+        name: ${CLUSTER_NAME}-workers
+      version: ${KUBERNETES_VERSION}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-workers
+  namespace: ${NAMESPACE}
+spec:
+  template:
+    spec:
+      cloudInit:
+        insecureSkipSecretsManager: true
+      instanceType: ${AWS_NODE_MACHINE_TYPE}
+      rootVolume:
+        size: ${AWS_NODE_VOL_SIZE}
+      sshKeyName: ${AWS_SSH_KEY_NAME}
+      ami:
+        id: ${AWS_NODE_AMI_ID}
+      additionalSecurityGroups: ${AWS_NODE_ADDL_SEC_GROUPS}
+      publicIP: true
+      iamInstanceProfile: ${AWS_NODE_IAM_PROFILE}
+---
+## Health check for workers
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineHealthCheck
+metadata:
+  name: ${CLUSTER_NAME}-worker-hc
+  namespace: ${NAMESPACE}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  selector:
+    matchLabels:
+      nodepool: nodepool-a
+  checks:
+    nodeStartupTimeoutSeconds: 1200
+    unhealthyNodeConditions:
+      - type: Ready
+        status: Unknown
+        timeoutSeconds: 300
+      - type: Ready
+        status: "False"
+        timeoutSeconds: 300
+  remediation:
+    triggerIf:
+      unhealthyLessThanOrEqualTo: 40%
