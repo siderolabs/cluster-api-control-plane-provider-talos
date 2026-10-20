@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile-upstream:1.14.1-labs
+# syntax = docker/dockerfile-upstream:1.28.0-labs
 
 # Meta args applied to stage base names.
 
@@ -22,14 +22,12 @@ ENV GOCACHE=/.cache/go-build
 ENV GOMODCACHE=/.cache/mod
 SHELL ["/bin/bash", "-c"]
 ARG CONTROLLER_GEN_VERSION
-ARG CONVERSION_GEN_VERSION
 RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION} \
   && mv /root/go/bin/controller-gen /usr/bin/controller-gen
-RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@${CONVERSION_GEN_VERSION} \
-  && mv /root/go/bin/conversion-gen /usr/bin/conversion-gen
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
+COPY ./hack/thirdparty ./hack/thirdparty
 RUN --mount=type=cache,target=/.cache go mod download
 RUN --mount=type=cache,target=/.cache go mod verify
 COPY ./ ./
@@ -56,9 +54,10 @@ RUN --mount=type=cache,target=/root/.cache --mount=type=cache,target=/tmp go tes
 FROM scratch AS unit-tests
 COPY --from=unit-tests-run /src/coverage.txt /coverage.txt
 
-FROM --platform=${BUILDPLATFORM} alpine:3.21 AS release-build
-ADD https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.0/kustomize_v4.1.0_linux_amd64.tar.gz .
-RUN  tar -xf kustomize_v4.1.0_linux_amd64.tar.gz -C /usr/local/bin && rm kustomize_v4.1.0_linux_amd64.tar.gz
+FROM --platform=${BUILDPLATFORM} alpine:3.24 AS release-build
+ARG BUILDARCH
+ADD https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.0/kustomize_v4.1.0_linux_${BUILDARCH}.tar.gz .
+RUN  tar -xf kustomize_v4.1.0_linux_${BUILDARCH}.tar.gz -C /usr/local/bin && rm kustomize_v4.1.0_linux_${BUILDARCH}.tar.gz
 COPY ./config ./config
 ARG REGISTRY_AND_USERNAME
 ARG NAME

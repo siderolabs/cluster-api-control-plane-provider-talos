@@ -16,7 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +38,7 @@ type ControlPlane struct {
 
 // newControlPlane returns an instantiated ControlPlane.
 func newControlPlane(ctx context.Context, client client.Client, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines collections.Machines) (*ControlPlane, error) {
-	infraObjects, err := getInfraResources(ctx, client, machines)
+	infraObjects, err := getInfraResources(ctx, client, machines, cluster.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -70,12 +70,6 @@ func (c *ControlPlane) MachineWithDeleteAnnotation(machines collections.Machines
 	return annotatedMachines
 }
 
-// UnhealthyMachines returns the machines a MachineHealthCheck flagged for remediation by the control
-// plane (see needsRemediation) that are not being deleted yet.
-func (c *ControlPlane) UnhealthyMachines() collections.Machines {
-	return c.Machines.Filter(needsRemediation, collections.Not(collections.HasDeletionTimestamp))
-}
-
 // MachinesNeedingRollout return a list of machines that need to be rolled out.
 func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	if c.TCP.Spec.RolloutStrategy != nil && c.TCP.Spec.RolloutStrategy.Type == controlplanev1.OnDeleteStrategyType {
@@ -88,21 +82,27 @@ func (c *ControlPlane) MachinesNeedingRollout() collections.Machines {
 	// Return machines if they are scheduled for rollout or if with an outdated configuration.
 	return machines.AnyFilter(
 		// Machines that do not match with TCP config.
-		collections.Not(
-			collections.And(
-				collections.MatchesKubernetesVersion(c.TCP.Spec.Version),
-				MatchesTemplateClonedFrom(c.infraObjects, c.TCP),
-				MatchesControlPlaneConfig(c.talosConfigs, c.TCP),
-			),
-		),
+		collections.Not(c.MatchesSpec()),
+	)
+}
+
+// MatchesSpec returns a filter to find all machines that match the current TCP spec:
+// Kubernetes version, infrastructure template and controlplane TalosConfig.
+//
+// It is the predicate used both to pick machines for rollout and to report the Machine UpToDate condition.
+func (c *ControlPlane) MatchesSpec() collections.Func {
+	return collections.And(
+		collections.MatchesKubernetesVersion(c.TCP.Spec.Version),
+		MatchesTemplateClonedFrom(c.infraObjects, c.TCP),
+		MatchesControlPlaneConfig(c.talosConfigs, c.TCP),
 	)
 }
 
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.
-func getInfraResources(ctx context.Context, cl client.Client, machines collections.Machines) (map[string]*unstructured.Unstructured, error) {
+func getInfraResources(ctx context.Context, cl client.Client, machines collections.Machines, namespace string) (map[string]*unstructured.Unstructured, error) {
 	result := map[string]*unstructured.Unstructured{}
 	for _, m := range machines {
-		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef)
+		infraObj, err := external.GetObjectFromContractVersionedRef(ctx, cl, m.Spec.InfrastructureRef, namespace)
 		if err != nil {
 			if apierrors.IsNotFound(errors.Cause(err)) {
 				continue
@@ -120,7 +120,7 @@ func getTalosConfigs(ctx context.Context, cl client.Client, machines collections
 
 	for _, m := range machines {
 		bootstrapRef := m.Spec.Bootstrap.ConfigRef
-		if bootstrapRef == nil {
+		if !bootstrapRef.IsDefined() {
 			continue
 		}
 

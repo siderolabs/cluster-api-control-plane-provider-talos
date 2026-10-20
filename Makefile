@@ -11,8 +11,7 @@ TESTPKGS ?= ./controllers/...
 
 KRES_IMAGE ?= ghcr.io/siderolabs/kres:latest
 
-CONTROLLER_GEN_VERSION ?= v0.17.0
-CONVERSION_GEN_VERSION ?= v0.32.3
+CONTROLLER_GEN_VERSION ?= v0.21.0
 
 ifneq (, $(filter $(WITH_RACE), t true TRUE y yes 1))
 GO_BUILDFLAGS += -race
@@ -44,7 +43,6 @@ COMMON_ARGS += --build-arg=GO_LDFLAGS="$(GO_LDFLAGS)"
 COMMON_ARGS += --build-arg=CGO_ENABLED="$(CGO_ENABLED)"
 COMMON_ARGS += --build-arg=TESTPKGS="$(TESTPKGS)"
 COMMON_ARGS += --build-arg=CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION)
-COMMON_ARGS += --build-arg=CONVERSION_GEN_VERSION=$(CONVERSION_GEN_VERSION)
 
 all: manifests container
 

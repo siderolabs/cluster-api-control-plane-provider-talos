@@ -5,6 +5,7 @@ commonLabels:
   cluster.x-k8s.io/v1alpha3: v1alpha3
   cluster.x-k8s.io/v1alpha4: v1alpha3
   cluster.x-k8s.io/v1beta1: v1alpha3
+  cluster.x-k8s.io/v1beta2: v1alpha3
 
 # This kustomization.yaml is not intended to be run by itself,
 # since it depends on service name and namespace that are out of this kustomize package.
@@ -13,15 +14,12 @@ resources:
 - bases/controlplane.cluster.x-k8s.io_taloscontrolplanes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
-patchesStrategicMerge:
-# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
-# patches here are for enabling the conversion webhook for each CRD
-- patches/webhook_in_taloscontrolplanes.yaml
+# TalosControlPlane serves a single API version, so the CRD uses the default
+# (None) conversion strategy and does not depend on a conversion webhook.
+# [WEBHOOK] To enable a conversion webhook once a second version is added, add
+# patches/webhook_in_taloscontrolplanes.yaml and
+# patches/cainjection_in_taloscontrolplanes.yaml under patchesStrategicMerge.
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
-
-# [CERTMANAGER] To enable webhook, uncomment all the sections with [CERTMANAGER] prefix.
-# patches here are for enabling the CA injection for each CRD
-- patches/cainjection_in_taloscontrolplanes.yaml
 # +kubebuilder:scaffold:crdkustomizecainjectionpatch
 
 # the following config is for teaching kustomize how to do kustomization for CRDs.

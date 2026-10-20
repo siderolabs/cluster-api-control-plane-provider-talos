@@ -1,3 +1,40 @@
+## [Unreleased]
+
+### Cluster API v1beta2 contract
+
+- The v0.6 release series implements the Cluster API v1beta2 contract (`config/metadata/metadata.yaml`: `0.6` -> `v1beta2`) and requires Cluster API core v1.11 or later; it is tested with Cluster API v1.14.
+- `v1alpha3` stays the only (storage) version of `TalosControlPlane`: the CRD is labelled `cluster.x-k8s.io/v1beta1: v1alpha3` and `cluster.x-k8s.io/v1beta2: v1alpha3`, so no conversion or storage migration is needed.
+- The controller is built with Cluster API v1.13.7 and controller-runtime v0.23 and uses the core `cluster.x-k8s.io/v1beta2` Cluster and Machine types, with the ClusterCache replacing the ClusterCacheTracker.
+- New v1beta2 contract status fields: `status.initialization.controlPlaneInitialized`, `status.readyReplicas`, `status.availableReplicas` and `status.upToDateReplicas`. `status.conditions` are now `metav1.Condition`s; the legacy `status.initialized`, `status.ready` and `status.unavailableReplicas` fields are still set.
+- New field `spec.minReadySeconds`, propagated to the Machines without a rollout.
+- The infrastructure template apiVersion is resolved through the contract labels of its CRD, so a `TalosControlPlane` that pins an older apiVersion keeps working after the infrastructure provider moved on.
+
+### Conditions
+
+- `Available` is `True` when the control plane is initialized, the workload cluster can be reached, etcd has quorum and a control plane Machine has a Node. A degraded etcd cluster that keeps quorum doesn't make it `False`, and it doesn't depend on the Node Ready condition (Nodes stay NotReady until a CNI is installed).
+- When the workload cluster can't be reached, `Available` keeps its last state for a 5 minute grace period, e.g. after a controller restart, then becomes `Unknown`.
+- Each Machine gets an `UpToDate` condition, computed with the same predicate that selects the Machines to roll out (version, infrastructure template and controlplane config); `MachinesReady` and `MachinesUpToDate` are set on the `TalosControlPlane`.
+- `EtcdClusterHealthy` and `ControlPlaneComponentsHealthy` tell an unhealthy cluster from one that can't be inspected; each machine is checked with its own timeout and etcd learners don't count towards quorum.
+- The `Paused` condition is reported, and empty condition reasons stored by v0.5.x are fixed up so that status patches are no longer rejected.
+
+### Remediation and scaling
+
+- Control plane Machines marked by a MachineHealthCheck are remediated, as KubeadmControlPlane does: one Machine at a time, only while etcd keeps quorum, with retry limits, and after removing the etcd member (gracefully, or through another control plane Machine when unreachable).
+- A Machine is never deleted while its etcd member could not be removed; a Machine that left etcd but could not be deleted is deleted on the next reconcile.
+- Machines are only created once `status.initialization.infrastructureProvisioned` is set on the Cluster.
+
+### Testing
+
+- The e2e test runs against Cluster API v1.14 with the bootstrap provider version from `go.mod`, the suite is bounded by a timeout, and on failure the workload clusters get a bounded amount of time to be deleted so that AWS resources are not leaked.
+
+### Contributors
+
+* [SNCF](https://github.com/SNCFdevelopers)
+* [InsideGroup](https://github.com/InsideCommunity)
+* [mstrohl](https://github.com/mstrohl)
+* [bephinix](https://github.com/bephinix)
+* [steffen-karlsson](https://github.com/steffen-karlsson)
+
 ## [CAPI Control Plane Provider Talos 0.5.14](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.14) (2026-09-21)
 
 Welcome to the v0.5.14 release of CAPI Control Plane Provider Talos!
