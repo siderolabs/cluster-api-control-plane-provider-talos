@@ -9,30 +9,31 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/gobuffalo/flect v1.0.3
 	github.com/google/uuid v1.6.0
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.44.0
 	github.com/pkg/errors v0.9.1
 	github.com/siderolabs/capi-utils v0.0.0-20251124160722-4ee8a1b7d4d0
 	github.com/siderolabs/cluster-api-bootstrap-provider-talos v0.7.0-alpha.3
 	github.com/siderolabs/crypto v0.6.5
 	github.com/siderolabs/gen v0.8.8
 	github.com/siderolabs/go-retry v0.3.3
-	github.com/siderolabs/talos/pkg/machinery v1.14.1
+	github.com/siderolabs/talos/pkg/machinery v1.14.4
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/sync v0.23.0
-	google.golang.org/grpc v1.83.2
+	golang.org/x/sync v0.24.0
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.35.4
-	k8s.io/apiextensions-apiserver v0.35.4
-	k8s.io/apimachinery v0.35.4
-	k8s.io/apiserver v0.35.4
-	k8s.io/client-go v0.35.4
-	k8s.io/component-base v0.35.4
+	k8s.io/api v0.37.1
+	k8s.io/apiextensions-apiserver v0.37.1
+	k8s.io/apimachinery v0.37.1
+	k8s.io/apiserver v0.37.1
+	k8s.io/client-go v0.37.1
+	k8s.io/component-base v0.37.1
 	k8s.io/klog/v2 v2.140.0
-	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
-	sigs.k8s.io/cluster-api v1.13.7
-	sigs.k8s.io/controller-runtime v0.23.3
+	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
+	sigs.k8s.io/cluster-api v1.14.3
+	sigs.k8s.io/cluster-api/api v1.14.3
+	sigs.k8s.io/controller-runtime v0.25.2
 )
 
 require (
@@ -79,7 +80,6 @@ require (
 	github.com/go-openapi/swag/typeutils v0.28.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.28.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.31.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -106,10 +106,10 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20260702190614-8ae5a48058df // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
+	github.com/prometheus/client_golang v1.24.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.67.5 // indirect
-	github.com/prometheus/procfs v0.20.1 // indirect
+	github.com/prometheus/common v0.70.0 // indirect
+	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.9 // indirect
@@ -151,11 +151,12 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	k8s.io/cluster-bootstrap v0.35.4 // indirect
-	k8s.io/kube-openapi v0.0.0-20260330154417-16be699c7b31 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
+	k8s.io/cluster-bootstrap v0.36.3 // indirect
+	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
+	k8s.io/streaming v0.37.1 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
