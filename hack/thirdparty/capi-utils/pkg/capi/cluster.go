@@ -186,6 +186,10 @@ func (cluster *Cluster) Sync(ctx context.Context) error {
 		return err
 	}
 
+	if cluster.client != nil {
+		cluster.client.Close() //nolint:errcheck
+	}
+
 	cluster.client = talosClient
 	cluster.controlPlaneNodes = controlPlaneNodes
 	cluster.workerNodes = workerNodes
@@ -228,10 +232,22 @@ func (cluster *Cluster) Health(ctx context.Context) error {
 }
 
 func (cluster *Cluster) health(ctx context.Context) error {
-	client, err := cluster.TalosClient(ctx)
+	// re-sync on every attempt: a node that has just registered might not carry the
+	// control-plane role label yet, and would otherwise stay classified as a worker
+	if err := cluster.Sync(ctx); err != nil {
+		return err
+	}
+
+	controlPlane, err := cluster.ControlPlanes(ctx)
 	if err != nil {
 		return err
 	}
+
+	if expected := getReplicas(controlPlane, "replicas"); int64(len(cluster.controlPlaneNodes)) != expected {
+		return fmt.Errorf("expected %d control plane nodes, found %d", expected, len(cluster.controlPlaneNodes))
+	}
+
+	client := cluster.client
 
 	resp, err := client.ClusterHealthCheck(talosclient.WithNodes(ctx, cluster.controlPlaneNodes[0]), 3*time.Minute, &talosclusterapi.ClusterInfo{
 		ControlPlaneNodes: cluster.controlPlaneNodes,
