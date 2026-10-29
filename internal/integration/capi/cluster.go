@@ -5,10 +5,12 @@
 package capi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/siderolabs/go-retry/retry"
@@ -34,6 +36,8 @@ type Cluster struct {
 	manager           *Manager
 	client            *talosclient.Client
 	clientConfig      *clientconfig.Config
+	clientConfigRaw   []byte   // talosconfig the current client was built from
+	clientEndpoints   []string // endpoints the current client was built from
 	cluster           unstructured.Unstructured
 	name              string
 	namespace         string
@@ -122,7 +126,9 @@ func (cluster *Cluster) Sync(ctx context.Context) error {
 		return err
 	}
 
-	cluster.clientConfig, err = clientconfig.FromBytes(talosConfig.Data["talosconfig"])
+	clientConfigRaw := talosConfig.Data["talosconfig"]
+
+	clientConfig, err := clientconfig.FromBytes(clientConfigRaw)
 	if err != nil {
 		return err
 	}
@@ -177,20 +183,30 @@ func (cluster *Cluster) Sync(ctx context.Context) error {
 		return fmt.Errorf("failed to find control plane nodes")
 	}
 
-	cluster.clientConfig.Contexts[cluster.clientConfig.Context].Endpoints = configEndpoints
+	slices.Sort(configEndpoints)
 
-	var talosClient *talosclient.Client
+	// keep the current client (and connection) unless the talosconfig or the endpoints
+	// changed, so that clients handed out by TalosClient are not closed on every sync
+	if cluster.client == nil ||
+		!bytes.Equal(cluster.clientConfigRaw, clientConfigRaw) ||
+		!slices.Equal(cluster.clientEndpoints, configEndpoints) {
+		clientConfig.Contexts[clientConfig.Context].Endpoints = configEndpoints
 
-	talosClient, err = talosclient.New(ctx, talosclient.WithConfig(cluster.clientConfig))
-	if err != nil {
-		return err
+		talosClient, err := talosclient.New(ctx, talosclient.WithConfig(clientConfig))
+		if err != nil {
+			return err
+		}
+
+		if cluster.client != nil {
+			cluster.client.Close() //nolint:errcheck
+		}
+
+		cluster.client = talosClient
+		cluster.clientConfig = clientConfig
+		cluster.clientConfigRaw = clientConfigRaw
+		cluster.clientEndpoints = configEndpoints
 	}
 
-	if cluster.client != nil {
-		cluster.client.Close() //nolint:errcheck
-	}
-
-	cluster.client = talosClient
 	cluster.controlPlaneNodes = controlPlaneNodes
 	cluster.workerNodes = workerNodes
 

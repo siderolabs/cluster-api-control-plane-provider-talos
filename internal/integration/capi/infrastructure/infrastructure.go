@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
 
-	"github.com/siderolabs/capi-utils/pkg/constants"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/integration/capi/constants"
 )
 
 // Variables is a map of key value pairs of config parameters.

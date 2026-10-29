@@ -16,8 +16,8 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/uuid"
-	"github.com/siderolabs/capi-utils/pkg/capi"
-	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/integration/capi"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/integration/capi/infrastructure"
 	"github.com/siderolabs/go-retry/retry"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/stretchr/testify/suite"

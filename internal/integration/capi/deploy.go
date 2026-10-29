@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client"
 
-	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/integration/capi/infrastructure"
 )
 
 // DeployOption defines a single CAPI cluster creation option.

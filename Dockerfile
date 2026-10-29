@@ -27,7 +27,6 @@ RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cm
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
-COPY ./hack/thirdparty ./hack/thirdparty
 RUN --mount=type=cache,target=/.cache go mod download
 RUN --mount=type=cache,target=/.cache go mod verify
 COPY ./ ./

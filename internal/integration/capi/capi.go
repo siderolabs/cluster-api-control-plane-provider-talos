@@ -3,6 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // Package capi manages CAPI installation, provides default client for CAPI CRDs.
+//
+// It was forked from the deprecated github.com/siderolabs/capi-utils for the integration tests.
 package capi
 
 import (
@@ -33,7 +35,7 @@ import (
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/siderolabs/capi-utils/pkg/capi/infrastructure"
+	"github.com/siderolabs/cluster-api-control-plane-provider-talos/internal/integration/capi/infrastructure"
 )
 
 // Manager installs and controls cluster API installation.
