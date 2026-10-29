@@ -43,6 +43,9 @@ spec:
       buildxOptions:
         enabled: true
       runnerGroup: generic
+      # covers the build, the e2e suite (E2E_TEST_TIMEOUT in hack/test/e2e-aws.sh) and the bounded
+      # workload cluster deletion on failure, so that CAPA can always deprovision the AWS resources
+      timeoutMinutes: 120
       conditions:
         - on-pull-request
       steps:

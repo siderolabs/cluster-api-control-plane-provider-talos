@@ -21,10 +21,9 @@ import (
 
 // SetupWebhookWithManager implements webhook methods.
 func (r *TalosControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(r).
-		WithDefaulter(r).
-		WithValidator(r).
+	return ctrl.NewWebhookManagedBy(mgr, r).
+		WithCustomDefaulter(r).
+		WithCustomValidator(r).
 		Complete()
 }
 

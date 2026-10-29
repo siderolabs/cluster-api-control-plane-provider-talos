@@ -7,6 +7,7 @@ package integration_test
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"gopkg.in/yaml.v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,8 +40,18 @@ import (
 
 var talosVersion *semver.Version
 
+// awsStandardTemplate is the default workload cluster template, see the header of the file for its origin.
+//
+//go:embed testdata/aws-standard.yaml
+var awsStandardTemplate []byte
+
 type clusterctlConfig struct {
-	Providers []providerConfig `yaml:"providers"`
+	Providers   []providerConfig  `yaml:"providers"`
+	CertManager certManagerConfig `yaml:"cert-manager,omitempty"`
+}
+
+type certManagerConfig struct {
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 type providerConfig struct {
@@ -120,30 +132,39 @@ func (suite *IntegrationSuite) SetupSuite() {
 		}
 	}
 
-	if clusterctlConfigs.Providers != nil {
-		config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
-
-		suite.Require().NoError(configError)
-
-		defer os.Remove(config.Name()) //nolint:errcheck
-
-		clusterctlConfigPath = config.Name()
-
-		encoder := yaml.NewEncoder(config)
-		suite.Require().NoError(encoder.Encode(clusterctlConfigs))
-		suite.Require().NoError(encoder.Close())
+	// clusterctl runs its cert-manager readiness check (create+delete a
+	// "cert-manager-test" namespace/Issuer/Certificate) once per Init() call, and
+	// Install() below issues two Init() calls back-to-back (core, then the
+	// infrastructure provider). The second call's namespace can still be
+	// terminating when the first one recreates it, so shorten clusterctl's
+	// default 10-minute wait here and retry Install() around that instead of
+	// stalling for the full default timeout.
+	clusterctlConfigs.CertManager = certManagerConfig{
+		Timeout: "30s",
 	}
 
+	config, configError := os.CreateTemp("", "clusterctlConfig*.yaml")
+
+	suite.Require().NoError(configError)
+
+	defer os.Remove(config.Name()) //nolint:errcheck
+
+	clusterctlConfigPath = config.Name()
+
+	encoder := yaml.NewEncoder(config)
+	suite.Require().NoError(encoder.Encode(clusterctlConfigs))
+	suite.Require().NoError(encoder.Close())
+
+	// Pin the core and bootstrap providers, so that the test runs against a known CAPI release under
+	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. The bootstrap
+	// provider version matches github.com/siderolabs/cluster-api-bootstrap-provider-talos in go.mod.
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api"),
-		BootstrapProviders:      []string{"talos"},
+		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.14.3"),
+		BootstrapProviders:      []string{env("BOOTSTRAP_PROVIDER", "talos:v0.7.0-alpha.3")},
 		InfrastructureProviders: []infrastructure.Provider{provider},
-		ControlPlaneProviders:   []string{"talos"},
+		ControlPlaneProviders:   []string{env("CONTROL_PLANE_PROVIDER", "talos")},
 		WaitProviderTimeout:     time.Minute,
-	}
-
-	if clusterctlConfigPath != "" {
-		options.ClusterctlConfigPath = clusterctlConfigPath
+		ClusterctlConfigPath:    clusterctlConfigPath,
 	}
 
 	manager, err := capi.NewManager(suite.ctx, options)
@@ -151,17 +172,33 @@ func (suite *IntegrationSuite) SetupSuite() {
 
 	suite.manager = manager
 
-	err = manager.Install(suite.ctx)
+	// Install() calls clusterctl Init() once per provider group (core, then
+	// infra), so a cert-manager-test namespace race between the two can still
+	// fail a single attempt even with the shortened timeout above. Bound the
+	// retries so a persistent failure still surfaces instead of looping forever.
+	err = retry.Constant(3*time.Minute, retry.WithUnits(time.Second), retry.WithErrorLogging(true)).Retry(func() error {
+		if err := manager.Install(suite.ctx); err != nil {
+			return retry.ExpectedError(err)
+		}
+
+		return nil
+	})
 	suite.Require().NoError(err)
 
 	time.Sleep(time.Second * 5)
 
 	id := uuid.New()
 
+	// Default to the embedded template, CLUSTER_TEMPLATE overrides it with a URL or a local path.
+	clusterTemplate := capi.WithTemplate(awsStandardTemplate)
+	if path := os.Getenv("CLUSTER_TEMPLATE"); path != "" {
+		clusterTemplate = capi.WithTemplateFile(path)
+	}
+
 	cluster, err := manager.DeployCluster(suite.ctx, fmt.Sprintf("caccpt-test-cluster-%s", id.String()[:7]),
 		capi.WithProvider(provider.Name()),
-		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.22.2")), "v")),
-		capi.WithTemplateFile("https://github.com/siderolabs/cluster-api-templates/blob/main/aws/standard/standard.yaml"),
+		capi.WithKubernetesVersion(strings.TrimLeft(env("WORKLOAD_KUBERNETES_VERSION", env("K8S_VERSION", "v1.34.6")), "v")),
+		clusterTemplate,
 		capi.WithControlPlaneNodes(3),
 	)
 	suite.Require().NoError(err)
@@ -377,7 +414,7 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 
 	suite.cluster.Scale(ctx, 0, capi.ControlPlaneNodes) //nolint:errcheck
 
-	err := retry.Constant(time.Second*20, retry.WithUnits(time.Second)).Retry(func() error {
+	err := retry.Constant(2*time.Minute, retry.WithUnits(time.Second)).Retry(func() error {
 		controlplane, err := suite.cluster.ControlPlanes(suite.ctx)
 		if err != nil {
 			return err
@@ -391,9 +428,21 @@ func (suite *IntegrationSuite) Test05ScaleControlPlaneToZero() {
 			return err
 		}
 
-		if !conditions.Has(&tcp, controlplanev1.ResizedCondition) &&
-			conditions.GetMessage(&tcp, controlplanev1.ResizedCondition) != "Cannot scale down control plane nodes to 0" {
-			return retry.ExpectedErrorf("node resized conditions error status hasn't updated")
+		resized := conditions.Get(&tcp, string(controlplanev1.ResizedCondition))
+		if resized == nil ||
+			resized.Status != metav1.ConditionFalse ||
+			resized.Reason != controlplanev1.ScalingDownReason ||
+			resized.Message != "Cannot scale down control plane nodes to 0" {
+			return retry.ExpectedErrorf("expected Resized condition refusing to scale down to 0, got %+v", resized)
+		}
+
+		replicas, found, err := unstructured.NestedInt64(controlplane.Object, "status", "replicas")
+		if err != nil {
+			return err
+		}
+
+		if !found || replicas == 0 {
+			return fmt.Errorf("control plane was scaled down to 0 replicas")
 		}
 
 		return nil

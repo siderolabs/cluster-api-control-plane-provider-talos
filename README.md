@@ -26,12 +26,16 @@ There are a few corequisites and assumptions that go into using this project:
 
 This provider's versions are compatible with the following versions of Cluster API:
 
-|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.x) |
-| -------------------------------------------- | --------------- | --------------- | -------------- |
-| Control Plane Provider Talos v1alpha3 (v0.2) | ✓               |                 |                |
-| Control Plane Provider Talos v1alpha3 (v0.3) |                 | ✓               |                |
-| Control Plane Provider Talos v1alpha3 (v0.4) |                 |                 | ✓              |
-| Control Plane Provider Talos v1alpha3 (v0.5) |                 |                 | ✓              |
+|                                              | v1alpha3 (v0.3) | v1alpha4 (v0.4) | v1beta1 (v1.x) | v1beta2 (v1.11+) |
+| -------------------------------------------- | --------------- | --------------- | -------------- | ---------------- |
+| Control Plane Provider Talos v1alpha3 (v0.2) | ✓               |                 |                |                  |
+| Control Plane Provider Talos v1alpha3 (v0.3) |                 | ✓               |                |                  |
+| Control Plane Provider Talos v1alpha3 (v0.4) |                 |                 | ✓              |                  |
+| Control Plane Provider Talos v1alpha3 (v0.5) |                 |                 | ✓              |                  |
+| Control Plane Provider Talos v1alpha3 (v0.6) |                 |                 |                | ✓                |
+
+The v0.6 release series implements the v1beta2 contract and uses the core `cluster.x-k8s.io/v1beta2` Cluster and Machine types, so it requires Cluster API core v1.11 or later.
+It is tested with Cluster API v1.14.
 
 This provider's versions are able to install and manage the following versions of Kubernetes:
 
