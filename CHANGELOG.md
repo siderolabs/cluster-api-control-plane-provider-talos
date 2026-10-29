@@ -1,3 +1,71 @@
+## [CAPI Control Plane Provider Talos 0.6.0-alpha.0](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.6.0-alpha.0) (2026-10-29)
+
+Welcome to the v0.6.0-alpha.0 release of CAPI Control Plane Provider Talos!
+
+
+
+Please try out the release binaries and report any issues at
+https://github.com/talos-systems/cluster-api-control-plane-provider-talos/issues.
+
+### CAPI updates for v1beta2
+
+Core CAPI contract updated to v1beta2.
+
+
+### Contributors
+
+* Andrey Smirnov
+* Matthieu S
+
+### Changes
+<details><summary>4 commits</summary>
+<p>
+
+* [`25d0027`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/25d0027986d3d914aca09bf0fbebb77baeea7e16) feat: upgrade to CAPI v1.14 and implement the v1beta2 contract
+* [`8144d35`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/8144d3592d668da974534807b09d8367895cc8ef) feat: remediate control plane machines flagged by a MachineHealthCheck
+* [`04b8d99`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/04b8d990a50489a5398a0c4e955547147f9de4f6) fix: tighten the etcd membership check
+* [`ef5bd86`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ef5bd86da62fb6ceec3e019a70ed8d7111b9a633) fix: skip remediating machines in etcd health check
+</p>
+</details>
+
+### Changes since v0.6.0-alpha.1
+<details><summary>10 commits</summary>
+<p>
+
+* [`25d0027`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/25d0027986d3d914aca09bf0fbebb77baeea7e16) feat: upgrade to CAPI v1.14 and implement the v1beta2 contract
+* [`8144d35`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/8144d3592d668da974534807b09d8367895cc8ef) feat: remediate control plane machines flagged by a MachineHealthCheck
+* [`04b8d99`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/04b8d990a50489a5398a0c4e955547147f9de4f6) fix: tighten the etcd membership check
+* [`ef5bd86`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ef5bd86da62fb6ceec3e019a70ed8d7111b9a633) fix: skip remediating machines in etcd health check
+* [`8fac5ae`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/8fac5ae5e405f4e4671639d8d803bdee04c4c020) release(v0.5.14): prepare release
+* [`ec104e0`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/ec104e032ee3ffa8f76832fec74dfc2ec400554e) feat: update Talos compat to 1.14
+* [`d5230cc`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/d5230cccb9f93f7e725d4b587a380afe684c5e8d) fix: spread control plane machines across failure domains (least-used)
+* [`1404e87`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1404e87142e4f73c88bbaa58765a4182698ecb42) fix: match etcd members against nodeRef and MachineHostName in auditEtcd
+* [`1b2562c`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/1b2562ce40254270f523970434cd27284918cd3e) chore: re-enable AWS for integration testing
+* [`9e552e4`](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/commit/9e552e428c2acc5f3d4a3e462299775444bd4eea) docs: add deprecation notice
+</p>
+</details>
+
+### Dependency Changes
+
+* **github.com/onsi/gomega**                                      v1.38.2 -> v1.44.0
+* **github.com/siderolabs/cluster-api-bootstrap-provider-talos**  v0.6.13 -> v0.7.0-alpha.3
+* **github.com/siderolabs/talos/pkg/machinery**                   v1.14.1 -> v1.14.4
+* **golang.org/x/sync**                                           v0.22.0 -> v0.24.0
+* **google.golang.org/grpc**                                      v1.83.2 -> v1.84.0
+* **k8s.io/api**                                                  v0.32.3 -> v0.37.1
+* **k8s.io/apiextensions-apiserver**                              v0.32.3 -> v0.37.1
+* **k8s.io/apimachinery**                                         v0.32.3 -> v0.37.1
+* **k8s.io/apiserver**                                            v0.32.3 -> v0.37.1
+* **k8s.io/client-go**                                            v0.32.3 -> v0.37.1
+* **k8s.io/component-base**                                       v0.32.3 -> v0.37.1
+* **k8s.io/klog/v2**                                              v2.130.1 -> v2.140.0
+* **k8s.io/utils**                                                bc988d571ff4 -> cf1189d6abe3
+* **sigs.k8s.io/cluster-api**                                     v1.10.9 -> v1.14.3
+* **sigs.k8s.io/cluster-api/api**                                 v1.14.3 **_new_**
+* **sigs.k8s.io/controller-runtime**                              v0.20.4 -> v0.25.2
+
+Previous release can be found at [v0.5.14](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.14)
+
 ## [Unreleased]
 
 ### Cluster API v1beta2 contract
