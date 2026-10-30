@@ -550,6 +550,12 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 }
 
 func ensureTalosControlPlaneFinalizers(tcp *controlplanev1.TalosControlPlane) bool {
+	// The API server rejects new finalizers on an object that is being deleted, so a TalosControlPlane
+	// that still carries the legacy finalizer keeps it until reconcileDelete removes both.
+	if !tcp.DeletionTimestamp.IsZero() {
+		return false
+	}
+
 	changed := false
 
 	if !controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer) {
