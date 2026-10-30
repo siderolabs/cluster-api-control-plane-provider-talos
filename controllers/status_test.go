@@ -310,8 +310,8 @@ func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 				g.Expect(conditions.Get(tcp, clusterv1.AvailableCondition).Message).To(ContainSubstring("Workload cluster can't be reached"))
 			}
 
-			g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
-			g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+			g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(3)))
+			g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 			g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(2)))
 			g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(3)))
 			g.Expect(tcp.V1Beta1DeprecatedStatus().UnavailableReplicas).To(BeEquivalentTo(1))
@@ -342,7 +342,7 @@ func TestStatusAvailableWithoutReadyMachines(t *testing.T) {
 	g.Expect(fakeClient.Get(ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
 
 	g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
-	g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(0))
+	g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(0)))
 	expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionTrue, controlplanev1.AvailableReason)
 	expectCondition(g, tcp, clusterv1.MachinesReadyCondition, metav1.ConditionFalse, controlplanev1.MachinesNotReadyReason)
 }

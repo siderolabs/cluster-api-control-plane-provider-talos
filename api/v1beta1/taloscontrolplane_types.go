@@ -206,11 +206,11 @@ type TalosControlPlaneStatus struct {
 	// Total number of non-terminated machines targeted by this control plane
 	// (their labels match the selector).
 	// +optional
-	Replicas int32 `json:"replicas,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
 
 	// Total number of fully running and ready control plane machines.
 	// +optional
-	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
+	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
 
 	// AvailableReplicas is the number of available replicas for this ControlPlane.
 	// A machine is considered available when Machine's Available condition is true.

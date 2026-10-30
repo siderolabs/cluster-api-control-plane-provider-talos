@@ -934,8 +934,8 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	replicas := int32(len(machines))
 
-	tcp.Status.Replicas = replicas
-	tcp.Status.ReadyReplicas = readyReplicas
+	tcp.Status.Replicas = ptr.To(replicas)
+	tcp.Status.ReadyReplicas = ptr.To(readyReplicas)
 	tcp.Status.AvailableReplicas = ptr.To(availableReplicas)
 	tcp.Status.UpToDateReplicas = ptr.To(upToDateReplicas)
 

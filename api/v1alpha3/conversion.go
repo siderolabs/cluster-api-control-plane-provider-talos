@@ -76,6 +76,10 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		dst.Spec.MachineTemplate.Spec.Deletion = restored.Spec.MachineTemplate.Spec.Deletion
 		dst.Status.AvailableReplicas = restored.Status.AvailableReplicas
 		dst.Status.UpToDateReplicas = restored.Status.UpToDateReplicas
+
+		// Recover intent for int32 values converted to *int32: an unset counter stays unset.
+		clusterv1.Convert_int32_To_Pointer_int32(src.Status.Replicas, ok, restored.Status.Replicas, &dst.Status.Replicas)
+		clusterv1.Convert_int32_To_Pointer_int32(src.Status.ReadyReplicas, ok, restored.Status.ReadyReplicas, &dst.Status.ReadyReplicas)
 	}
 
 	return nil

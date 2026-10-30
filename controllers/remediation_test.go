@@ -846,7 +846,7 @@ func TestMachineUpToDateConditionsReuseControlPlane(t *testing.T) {
 		g.Expect(e.r.updateStatus(e.ctx, e.tcp, e.cluster, nil)).To(Succeed())
 
 		g.Expect(conditions.Has(e.machine("m1"), clusterv1.MachineUpToDateCondition)).To(BeFalse())
-		g.Expect(e.tcp.Status.Replicas).To(BeEquivalentTo(1))
+		g.Expect(e.tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
 	})
 }
 

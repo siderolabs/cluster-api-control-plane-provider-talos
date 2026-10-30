@@ -282,8 +282,12 @@ func autoConvert_v1beta1_TalosControlPlaneSpec_To_v1alpha3_TalosControlPlaneSpec
 
 func autoConvert_v1alpha3_TalosControlPlaneStatus_To_v1beta1_TalosControlPlaneStatus(in *TalosControlPlaneStatus, out *v1beta1.TalosControlPlaneStatus, s conversion.Scope) error {
 	out.Selector = in.Selector
-	out.Replicas = in.Replicas
-	out.ReadyReplicas = in.ReadyReplicas
+	if err := v1.Convert_int32_To_Pointer_int32(&in.Replicas, &out.Replicas, s); err != nil {
+		return err
+	}
+	if err := v1.Convert_int32_To_Pointer_int32(&in.ReadyReplicas, &out.ReadyReplicas, s); err != nil {
+		return err
+	}
 	// WARNING: in.UnavailableReplicas requires manual conversion: does not exist in peer-type
 	// WARNING: in.Initialized requires manual conversion: does not exist in peer-type
 	// WARNING: in.Ready requires manual conversion: does not exist in peer-type
@@ -321,8 +325,12 @@ func autoConvert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneSt
 	}
 	// WARNING: in.Initialization requires manual conversion: does not exist in peer-type
 	out.Selector = in.Selector
-	out.Replicas = in.Replicas
-	out.ReadyReplicas = in.ReadyReplicas
+	if err := v1.Convert_Pointer_int32_To_int32(&in.Replicas, &out.Replicas, s); err != nil {
+		return err
+	}
+	if err := v1.Convert_Pointer_int32_To_int32(&in.ReadyReplicas, &out.ReadyReplicas, s); err != nil {
+		return err
+	}
 	// WARNING: in.AvailableReplicas requires manual conversion: does not exist in peer-type
 	// WARNING: in.UpToDateReplicas requires manual conversion: does not exist in peer-type
 	out.Version = (*string)(unsafe.Pointer(in.Version))

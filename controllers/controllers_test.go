@@ -294,8 +294,8 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 
 	// With no Machines the replica counters are set to an explicit 0 rather than left unset.
-	g.Expect(tcp.Status.Replicas).To(BeZero())
-	g.Expect(tcp.Status.ReadyReplicas).To(BeZero())
+	g.Expect(tcp.Status.Replicas).To(HaveValue(BeZero()))
+	g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeZero()))
 	g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeZero()))
 	g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeZero()))
 	expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionFalse, controlplanev1.NotAvailableReason)
@@ -398,9 +398,9 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(1)))
 
 		// v1beta2 contract fields read by Cluster API.
 		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
@@ -492,9 +492,9 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 
 		// The controller initializes the control plane by itself, nothing is seeded by the test.
 		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
@@ -553,7 +553,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
 
 		machines := suite.getMachines(fakeClient, cluster)
@@ -591,7 +591,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
 		expectCondition(g, tcp, string(controlplanev1.MachinesSpecUpToDateCondition), metav1.ConditionTrue, controlplanev1.MachinesSpecUpToDateReason)
 		expectCondition(g, tcp, clusterv1.MachinesUpToDateCondition, metav1.ConditionTrue, controlplanev1.MachinesUpToDateReason)
@@ -678,9 +678,9 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(3)))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(3)))
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())

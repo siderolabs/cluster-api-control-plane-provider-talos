@@ -303,6 +303,16 @@ func (in *TalosControlPlaneStatus) DeepCopyInto(out *TalosControlPlaneStatus) {
 		}
 	}
 	in.Initialization.DeepCopyInto(&out.Initialization)
+	if in.Replicas != nil {
+		in, out := &in.Replicas, &out.Replicas
+		*out = new(int32)
+		**out = **in
+	}
+	if in.ReadyReplicas != nil {
+		in, out := &in.ReadyReplicas, &out.ReadyReplicas
+		*out = new(int32)
+		**out = **in
+	}
 	if in.AvailableReplicas != nil {
 		in, out := &in.AvailableReplicas, &out.AvailableReplicas
 		*out = new(int32)
