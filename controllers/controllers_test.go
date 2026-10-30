@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 )
 
@@ -155,6 +155,15 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: InfrastructureGroupVersion.Group,
+						Kind:     "GenericInfrastructureMachineTemplate",
+						Name:     "infra-foo",
+					},
+				},
+			},
 		},
 	}
 	tcp.Default(suite.T().Context(), tcp)
@@ -233,11 +242,14 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       "UnknownInfraMachine",
-				APIVersion: "test/v1alpha1",
-				Name:       "foo",
-				Namespace:  metav1.NamespaceDefault,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
+				},
 			},
 		},
 	}
@@ -282,8 +294,8 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 	g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
 
 	// With no Machines the replica counters are set to an explicit 0 rather than left unset.
-	g.Expect(tcp.Status.Replicas).To(HaveValue(BeZero()))
-	g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeZero()))
+	g.Expect(tcp.Status.Replicas).To(BeZero())
+	g.Expect(tcp.Status.ReadyReplicas).To(BeZero())
 	g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeZero()))
 	g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeZero()))
 	expectCondition(g, tcp, clusterv1.AvailableCondition, metav1.ConditionFalse, controlplanev1.NotAvailableReason)
@@ -386,12 +398,12 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(1))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(1))
 
 		// v1beta2 contract fields read by Cluster API.
-		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
 		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
 		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(1)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(1)))
@@ -480,12 +492,12 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(2))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 
 		// The controller initializes the control plane by itself, nothing is seeded by the test.
-		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
 		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
 		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
@@ -541,7 +553,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
 
 		machines := suite.getMachines(fakeClient, cluster)
@@ -579,7 +591,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(r.APIReader.Get(suite.ctx, client.ObjectKey{Name: tcp.Name, Namespace: tcp.Namespace}, tcp)).To(Succeed())
-		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(2))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
 		expectCondition(g, tcp, string(controlplanev1.MachinesSpecUpToDateCondition), metav1.ConditionTrue, controlplanev1.MachinesSpecUpToDateReason)
 		expectCondition(g, tcp, clusterv1.MachinesUpToDateCondition, metav1.ConditionTrue, controlplanev1.MachinesUpToDateReason)
@@ -666,9 +678,9 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 		g.Expect(tcp.Finalizers).To(ContainElement(controlplanev1.TalosControlPlaneFinalizer))
 
 		g.Expect(tcp.Status.Selector).NotTo(BeEmpty())
-		g.Expect(tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(3)))
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
 		g.Expect(conditions.IsTrue(tcp, string(controlplanev1.AvailableCondition))).To(BeTrue())
-		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(3)))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -945,6 +957,10 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 		},
 	}
 	g.Expect(fakeClient.Create(suite.ctx, crd)).To(Succeed())
+
+	t.Log("Creating the dummy CRD for GenericInfrastructureMachineTemplate")
+	g.Expect(fakeClient.Create(suite.ctx, untypedCRD(InfrastructureGroupVersion.WithKind("GenericInfrastructureMachineTemplate")))).To(Succeed())
+
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachineTemplate",
@@ -980,11 +996,14 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Replicas: replicas,
 			Version:  "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       genericInfrastructureMachineTemplate.GetKind(),
-				APIVersion: genericInfrastructureMachineTemplate.GetAPIVersion(),
-				Name:       genericInfrastructureMachineTemplate.GetName(),
-				Namespace:  cluster.Namespace,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     genericInfrastructureMachineTemplate.GetKind(),
+						APIGroup: genericInfrastructureMachineTemplate.GroupVersionKind().Group,
+						Name:     genericInfrastructureMachineTemplate.GetName(),
+					},
+				},
 			},
 			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{},
 			RolloutStrategy: &controlplanev1.RolloutStrategy{

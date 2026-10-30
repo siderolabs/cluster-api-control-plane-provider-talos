@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
 const (
@@ -230,7 +230,6 @@ func newTestTCP(replicas int32) *controlplanev1.TalosControlPlane {
 			Version:  remediationTestVersion,
 		},
 		Status: controlplanev1.TalosControlPlaneStatus{
-			Initialized: true,
 			Initialization: controlplanev1.TalosControlPlaneInitializationStatus{
 				ControlPlaneInitialized: ptr.To(true),
 			},
@@ -449,7 +448,6 @@ func TestRemediationPreflightChecks(t *testing.T) {
 			name: "control plane not initialized",
 			tcp: func() *controlplanev1.TalosControlPlane {
 				tcp := newTestTCP(3)
-				tcp.Status.Initialized = false
 				tcp.Status.Initialization.ControlPlaneInitialized = nil
 
 				return tcp
@@ -848,7 +846,7 @@ func TestMachineUpToDateConditionsReuseControlPlane(t *testing.T) {
 		g.Expect(e.r.updateStatus(e.ctx, e.tcp, e.cluster, nil)).To(Succeed())
 
 		g.Expect(conditions.Has(e.machine("m1"), clusterv1.MachineUpToDateCondition)).To(BeFalse())
-		g.Expect(e.tcp.Status.Replicas).To(HaveValue(BeEquivalentTo(1)))
+		g.Expect(e.tcp.Status.Replicas).To(BeEquivalentTo(1))
 	})
 }
 

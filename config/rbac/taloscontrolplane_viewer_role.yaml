@@ -15,6 +15,14 @@ rules:
 - apiGroups:
   - controlplane.cluster.x-k8s.io
   resources:
+  - taloscontrolplanetemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
   - taloscontrolplanes/status
   verbs:
   - get
