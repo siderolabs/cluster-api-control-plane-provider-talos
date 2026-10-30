@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
+	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
@@ -72,9 +73,19 @@ type TalosControlPlaneReconciler struct {
 
 	// etcd runs etcd operations on individual machines; nil means through the Talos API.
 	etcd etcdMemberManager
+
+	// machineApplyCache remembers the Machine applies that changed nothing, so they are not sent again; nil disables it.
+	machineApplyCache *utilcache.Expiring
+
+	// classicManager is the field manager of the updates the controller makes without server-side apply, whose
+	// managed fields are handed over when a Machine is adopted for server-side apply.
+	classicManager string
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
+	r.machineApplyCache = utilcache.NewExpiring()
+	r.classicManager = classicManagerName(mgr.GetConfig().UserAgent)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&controlplanev1.TalosControlPlane{}).
 		Owns(&clusterv1.Machine{}).
@@ -341,70 +352,29 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 }
 
 // reconcileMachineTemplateState propagates the in-place mutable fields of the TalosControlPlane to its Machines,
-// without rolling them out.
+// without rolling them out. The Machines are applied with server-side apply, like KubeadmControlPlane does, so
+// that the labels, annotations and readiness gates removed from the machine template are removed from them too.
+//
+// Only the Machines the TalosControlPlane controls are applied: the apply sets the TalosControlPlane as their
+// controller, which would adopt a Machine without one, and fail for a Machine with another one.
 func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
-	desiredLabels := controlPlaneMachineLabelsForCluster(tcp, cluster.Name)
-	desiredAnnotations := tcp.Spec.MachineTemplate.ObjectMeta.Annotations
-	desiredReadinessGates := tcp.Spec.MachineTemplate.Spec.ReadinessGates
-	desiredDeletionSpec := buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion)
-
 	for i := range machines.Items {
 		machine := &machines.Items[i]
-		if !machine.DeletionTimestamp.IsZero() {
+		if !machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
 			continue
 		}
 
-		patchHelper, err := patch.NewHelper(machine, r.Client)
-		if err != nil {
+		if err := r.adoptMachineForServerSideApply(ctx, tcp, machine); err != nil {
 			return err
 		}
 
-		changed := false
+		desired := computeDesiredMachine(tcp, cluster, machine)
 
-		if machine.Labels == nil {
-			machine.Labels = map[string]string{}
-		}
-
-		for key, value := range desiredLabels {
-			if machine.Labels[key] != value {
-				machine.Labels[key] = value
-				changed = true
-			}
-		}
-
-		if len(desiredAnnotations) > 0 && machine.Annotations == nil {
-			machine.Annotations = map[string]string{}
-		}
-
-		for key, value := range desiredAnnotations {
-			if machine.Annotations[key] != value {
-				machine.Annotations[key] = value
-				changed = true
-			}
-		}
-
-		if !slices.Equal(machine.Spec.ReadinessGates, desiredReadinessGates) {
-			machine.Spec.ReadinessGates = slices.Clone(desiredReadinessGates)
-			changed = true
-		}
-
-		if !reflect.DeepEqual(machine.Spec.Deletion, desiredDeletionSpec) {
-			machine.Spec.Deletion = desiredDeletionSpec
-			changed = true
-		}
-
-		if !ptr.Equal(machine.Spec.MinReadySeconds, tcp.Spec.MinReadySeconds) {
-			machine.Spec.MinReadySeconds = copyInt32(tcp.Spec.MinReadySeconds)
-			changed = true
-		}
-
-		if !changed {
-			continue
-		}
-
-		if err := patchHelper.Patch(ctx, machine); err != nil {
+		if err := r.applyMachine(ctx, desired, machine); err != nil {
 			return errors.Wrapf(err, "failed to sync machine %s with the machine template", machine.Name)
 		}
+
+		*machine = *desired
 	}
 
 	return nil
@@ -574,6 +544,24 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, err
 	}
 
+	// The Machine is created with server-side apply, which would take over an existing Machine with the same name:
+	// treat it as a conflict instead, a new name is generated on the next attempt. The check reads from the API server,
+	// as a Machine that was just created may not be in the cache yet.
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: tcp.Namespace, Name: machineName}, &clusterv1.Machine{}); err == nil {
+		err = errors.Errorf("machine %s already exists", machineName)
+
+		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
+			Type:    string(controlplanev1.MachinesCreatedCondition),
+			Status:  metav1.ConditionFalse,
+			Reason:  controlplanev1.MachineGenerationFailedReason,
+			Message: fmt.Sprintf("Failed to generate machine name: %v", err),
+		})
+
+		return ctrl.Result{}, err
+	} else if !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to check for an existing machine %s", machineName)
+	}
+
 	// Clone the infrastructure template. The infrastructureRef is a ContractVersionedObjectReference,
 	// so the concrete apiVersion is resolved through the contract labels of the template CRD.
 	templateObj, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, tcp.Namespace)
@@ -641,44 +629,15 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, err
 	}
 
-	machine := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        machineName,
-			Namespace:   tcp.Namespace,
-			Labels:      controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
-			Annotations: maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
-			},
-		},
-		Spec: clusterv1.MachineSpec{
-			ClusterName:       cluster.Name,
-			Version:           tcp.Spec.Version,
-			InfrastructureRef: infraRef,
-			ReadinessGates:    slices.Clone(tcp.Spec.MachineTemplate.Spec.ReadinessGates),
-			Deletion:          buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion),
-			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: *bootstrapRef,
-			},
-			MinReadySeconds: copyInt32(tcp.Spec.MinReadySeconds),
-		},
-	}
-
-	// A Machine created while a remediation is in progress replaces the remediated Machine: record the remediation
-	// on it right away, so that its retries are counted even if the remediation completes without it.
-	if value, ok := tcp.Annotations[remediationInProgressAnnotation]; ok {
-		if machine.Annotations == nil {
-			machine.Annotations = map[string]string{}
-		}
-
-		machine.Annotations[remediationForAnnotation] = value
-	}
-
+	machine := computeDesiredMachine(tcp, cluster, nil)
+	machine.Name = machineName
+	machine.Spec.InfrastructureRef = infraRef
+	machine.Spec.Bootstrap.ConfigRef = *bootstrapRef
 	machine.Spec.FailureDomain = controlPlane.NextFailureDomainForScaleUp(ctx)
 
 	r.logFailureDomainSelection(tcp, controlPlane, machine)
 
-	if err := r.Client.Create(ctx, machine); err != nil {
+	if err := r.applyMachine(ctx, machine, nil); err != nil {
 		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
 			Type:    string(controlplanev1.MachinesCreatedCondition),
 			Status:  metav1.ConditionFalse,

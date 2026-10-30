@@ -13,6 +13,7 @@ import (
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -110,4 +111,97 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 
 	// A Machine created while a remediation is in progress records the remediation it replaces.
 	g.Expect(machine.Annotations).To(HaveKeyWithValue(remediationForAnnotation, inProgress))
+}
+
+// TestBootControlPlaneRejectsExistingMachineName checks that a generated name that is already taken by a Machine
+// fails the boot, instead of taking over that Machine, and that nothing is cloned for it.
+func TestBootControlPlaneRejectsExistingMachineName(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	const (
+		templateGroup = "infrastructure.cluster.x-k8s.io"
+		templateKind  = "GenericInfrastructureMachineTemplate"
+	)
+
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		clusterv1.AddToScheme,
+		controlplanev1.AddToScheme,
+		cabptv1.AddToScheme,
+		corev1.AddToScheme,
+		apiextensionsv1.AddToScheme,
+	} {
+		g.Expect(add(scheme)).To(Succeed())
+	}
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: contract.CalculateCRDName(templateGroup, templateKind),
+			Labels: map[string]string{
+				"cluster.x-k8s.io/v1beta2": "v1beta2",
+			},
+		},
+	}
+
+	template := &unstructured.Unstructured{}
+	template.SetAPIVersion(templateGroup + "/v1beta2")
+	template.SetKind(templateKind)
+	template.SetNamespace(remediationTestNamespace)
+	template.SetName("infra")
+	g.Expect(unstructured.SetNestedField(template.Object, map[string]any{"hello": "world"}, "spec", "template", "spec")).To(Succeed())
+
+	cluster := newTestCluster()
+
+	tcp := newTestTCP(3)
+	tcp.Spec.MachineNamingStrategy = &controlplanev1.MachineNamingStrategy{Template: "{{ .talosControlPlane.name }}-cp"}
+	tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+		APIGroup: templateGroup,
+		Kind:     templateKind,
+		Name:     "infra",
+	}
+
+	existing := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: remediationTestNamespace,
+			Name:      tcp.Name + "-cp",
+		},
+		Spec: clusterv1.MachineSpec{
+			ClusterName: cluster.Name,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: templateGroup,
+				Kind:     "GenericInfrastructureMachine",
+				Name:     "existing-infra",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(crd, template, cluster, tcp, existing).Build()
+
+	r := &TalosControlPlaneReconciler{
+		Client:    c,
+		APIReader: c,
+		Log:       testr.New(t),
+		Scheme:    scheme,
+	}
+
+	_, err := r.bootControlPlane(ctx, cluster, tcp, &ControlPlane{TCP: tcp, Cluster: cluster}, false)
+	g.Expect(err).To(MatchError(ContainSubstring("already exists")))
+
+	condition := apimeta.FindStatusCondition(tcp.Status.Conditions, string(controlplanev1.MachinesCreatedCondition))
+	g.Expect(condition).NotTo(BeNil())
+	g.Expect(condition.Reason).To(Equal(controlplanev1.MachineGenerationFailedReason))
+
+	g.Expect(c.Get(ctx, client.ObjectKeyFromObject(existing), existing)).To(Succeed())
+	g.Expect(existing.Spec.InfrastructureRef.Name).To(Equal("existing-infra"))
+
+	talosConfigs := &cabptv1.TalosConfigList{}
+	g.Expect(c.List(ctx, talosConfigs, client.InNamespace(remediationTestNamespace))).To(Succeed())
+	g.Expect(talosConfigs.Items).To(BeEmpty())
+
+	infraMachines := &unstructured.UnstructuredList{}
+	infraMachines.SetAPIVersion(templateGroup + "/v1beta2")
+	infraMachines.SetKind("GenericInfrastructureMachineList")
+	g.Expect(c.List(ctx, infraMachines, client.InNamespace(remediationTestNamespace))).To(Succeed())
+	g.Expect(infraMachines.Items).To(BeEmpty())
 }
