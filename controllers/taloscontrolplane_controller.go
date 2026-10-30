@@ -240,6 +240,19 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 
 	// Update ownerrefs on infra templates
 	if err := r.reconcileExternalReference(ctx, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, cluster); err != nil {
+		// A missing template is a user-recoverable misconfiguration; back off instead of
+		// returning the error so the controller does not hot-loop.
+		if apierrors.IsNotFound(err) {
+			apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
+				Type:    string(controlplanev1.MachinesCreatedCondition),
+				Status:  metav1.ConditionFalse,
+				Reason:  controlplanev1.InfrastructureTemplateCloningFailedReason,
+				Message: fmt.Sprintf("Failed to retrieve infrastructure template: %v", err),
+			})
+
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil, nil
+		}
+
 		return ctrl.Result{}, nil, err
 	}
 
