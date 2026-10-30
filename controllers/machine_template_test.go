@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/labels/format"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
@@ -143,5 +145,113 @@ func TestControlPlaneMachineLabelsHashLongName(t *testing.T) {
 
 	if got, want := labels[clusterv1.MachineControlPlaneNameLabel], format.MustFormatValue(tcp.Name); got != want {
 		t.Fatalf("expected control plane name label %q, got %q", want, got)
+	}
+}
+
+// TestReconcileMachineTemplateStateRemovesDroppedFields checks that a Machine created before the controller used
+// server-side apply is adopted, that a label removed from the machine template is removed from the Machine, and that
+// a Machine in sync with the machine template is not applied again.
+func TestReconcileMachineTemplateStateRemovesDroppedFields(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-cluster",
+			Namespace: "default",
+		},
+	}
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "talos-control-plane",
+			Namespace: "default",
+		},
+		Spec: controlplanev1.TalosControlPlaneSpec{
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				ObjectMeta: clusterv1.ObjectMeta{
+					Labels: map[string]string{"example.siderolabs.dev/dropped": "true"},
+				},
+			},
+		},
+	}
+
+	// The Machine as created by an earlier version of the controller, without server-side apply.
+	machine := computeDesiredMachine(tcp, cluster, nil)
+	machine.Name = "cp-0"
+	machine.Labels["unmanaged"] = "true"
+
+	applies := 0
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+			applies++
+
+			return c.Apply(ctx, obj, opts...)
+		},
+	}).Build()
+
+	if err := fakeClient.Create(context.Background(), machine, client.FieldOwner(classicManager)); err != nil {
+		t.Fatalf("failed to create machine: %v", err)
+	}
+
+	reconciler := &TalosControlPlaneReconciler{Client: fakeClient, machineApplyCache: utilcache.NewExpiring()}
+
+	sync := func() *clusterv1.Machine {
+		t.Helper()
+
+		machines := &clusterv1.MachineList{}
+		if err := fakeClient.List(context.Background(), machines); err != nil {
+			t.Fatalf("failed to list machines: %v", err)
+		}
+
+		if err := reconciler.reconcileMachineTemplateState(context.Background(), cluster, tcp, machines); err != nil {
+			t.Fatalf("reconcileMachineTemplateState failed: %v", err)
+		}
+
+		persisted := &clusterv1.Machine{}
+		if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(machine), persisted); err != nil {
+			t.Fatalf("failed to get reconciled machine: %v", err)
+		}
+
+		return persisted
+	}
+
+	persisted := sync()
+	if applies != 1 {
+		t.Fatalf("expected the adopted machine to be applied once, got %d applies", applies)
+	}
+
+	if persisted.Labels["example.siderolabs.dev/dropped"] != "true" {
+		t.Fatalf("expected the machine template label to be kept while it is in the template")
+	}
+
+	tcp.Spec.MachineTemplate.ObjectMeta.Labels = nil
+
+	persisted = sync()
+	if applies != 2 {
+		t.Fatalf("expected the changed machine template to be applied, got %d applies", applies)
+	}
+
+	if _, ok := persisted.Labels["example.siderolabs.dev/dropped"]; ok {
+		t.Fatalf("expected the label removed from the machine template to be removed from the machine")
+	}
+
+	if persisted.Labels["unmanaged"] != "true" {
+		t.Fatalf("expected the label not set by the controller to be kept")
+	}
+
+	if persisted.Labels[clusterv1.ClusterNameLabel] != cluster.Name {
+		t.Fatalf("expected the cluster label to be kept")
+	}
+
+	sync()
+
+	if applies != 2 {
+		t.Fatalf("expected the machine in sync not to be applied again, got %d applies", applies)
 	}
 }
