@@ -126,6 +126,16 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
+	// availableReplicas is the number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
+	// NOTE: v0.6.0-alpha.0 reported it in v1alpha3, it is kept for the clients of that release.
+	// +optional
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered up-to-date when Machine's UpToDate condition is true.
+	// NOTE: v0.6.0-alpha.0 reported it in v1alpha3, it is kept for the clients of that release.
+	// +optional
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+
 	// Total number of unavailable machines targeted by this control plane.
 	// This is the total number of machines that are still required for
 	// the deployment to have 100% available capacity. They may either
@@ -138,6 +148,11 @@ type TalosControlPlaneStatus struct {
 	// uploaded talos-config configmap.
 	// +optional
 	Initialized bool `json:"initialized"`
+
+	// Initialization provides observations of the TalosControlPlane initialization process.
+	// NOTE: v0.6.0-alpha.0 reported it in v1alpha3, it is kept for the clients of that release.
+	// +optional
+	Initialization TalosControlPlaneInitializationStatus `json:"initialization,omitempty"`
 
 	// Ready denotes that the TalosControlPlane API Server is ready to
 	// receive requests.
@@ -182,6 +197,12 @@ type TalosControlPlaneStatus struct {
 	// v1beta2 groups all the fields that will be added or modified in TalosControlPlane's status with the V1Beta2 version.
 	// +optional
 	V1Beta2 *TalosControlPlaneV1Beta2Status `json:"v1beta2Status,omitempty"`
+}
+
+// TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
+type TalosControlPlaneInitializationStatus struct {
+	// +optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
 }
 
 // TalosControlPlaneV1Beta2Status groups all the fields that will be added or modified in TalosControlPlane's status with the V1Beta2 version.

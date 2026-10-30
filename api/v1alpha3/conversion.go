@@ -55,15 +55,17 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
-	// Recover intent for bool values converted to *bool.
-	initialization := cpv1beta1.TalosControlPlaneInitializationStatus{}
-	var restoredControlPlaneInitialized *bool
-	if ok {
-		restoredControlPlaneInitialized = restored.Status.Initialization.ControlPlaneInitialized
-	}
-	clusterv1.Convert_bool_To_Pointer_bool(src.Status.Initialized, ok, restoredControlPlaneInitialized, &initialization.ControlPlaneInitialized)
-	if !reflect.DeepEqual(initialization, cpv1beta1.TalosControlPlaneInitializationStatus{}) {
-		dst.Status.Initialization = initialization
+	// Recover intent for bool values converted to *bool, unless the v1alpha3 status has the initialization.
+	if src.Status.Initialization.ControlPlaneInitialized == nil {
+		initialization := cpv1beta1.TalosControlPlaneInitializationStatus{}
+		var restoredControlPlaneInitialized *bool
+		if ok {
+			restoredControlPlaneInitialized = restored.Status.Initialization.ControlPlaneInitialized
+		}
+		clusterv1.Convert_bool_To_Pointer_bool(src.Status.Initialized, ok, restoredControlPlaneInitialized, &initialization.ControlPlaneInitialized)
+		if !reflect.DeepEqual(initialization, cpv1beta1.TalosControlPlaneInitializationStatus{}) {
+			dst.Status.Initialization = initialization
+		}
 	}
 
 	// Recover hub-only fields preserved via the data annotation.
@@ -79,9 +81,6 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		if src.Spec.InfrastructureTemplate.APIVersion == "" && infraRef.APIGroup == "" && infraRef.Kind == restoredInfraRef.Kind {
 			infraRef.APIGroup = restoredInfraRef.APIGroup
 		}
-
-		dst.Status.AvailableReplicas = restored.Status.AvailableReplicas
-		dst.Status.UpToDateReplicas = restored.Status.UpToDateReplicas
 
 		// UpdatedReplicas has no v1alpha3 field.
 		if restored.Status.Deprecated != nil && restored.Status.Deprecated.V1Beta1 != nil && restored.Status.Deprecated.V1Beta1.UpdatedReplicas != 0 {
@@ -174,6 +173,27 @@ func Convert_v1alpha3_TalosControlPlaneStatus_To_v1beta1_TalosControlPlaneStatus
 		out.Conditions = in.V1Beta2.Conditions
 	}
 
+	// v0.6.0-alpha.0 stored the v1beta2 conditions in status.conditions: they are no legacy conditions.
+	legacyConditions := in.Conditions
+	if isV060Alpha0Status(in) {
+		legacyConditions = nil
+
+		if in.Conditions != nil {
+			// The Cluster API conversion of a v1beta1 condition deliberately drops it: copy the fields both have.
+			// The observedGeneration was not kept by the v1alpha3 schema, the next status update sets it again.
+			out.Conditions = make([]metav1.Condition, len(in.Conditions))
+			for i, condition := range in.Conditions {
+				out.Conditions[i] = metav1.Condition{
+					Type:               string(condition.Type),
+					Status:             metav1.ConditionStatus(condition.Status),
+					LastTransitionTime: condition.LastTransitionTime,
+					Reason:             condition.Reason,
+					Message:            condition.Message,
+				}
+			}
+		}
+	}
+
 	// Move legacy conditions, failureReason, failureMessage and replica counters to the deprecated field,
 	// only when there is any: a status without them has no deprecated field.
 	deprecated := cpv1beta1.TalosControlPlaneV1Beta1DeprecatedStatus{
@@ -183,16 +203,16 @@ func Convert_v1alpha3_TalosControlPlaneStatus_To_v1beta1_TalosControlPlaneStatus
 		Initialized:         in.Initialized,
 		Ready:               in.Ready,
 	}
-	if in.Conditions != nil {
-		clusterv1beta1.Convert_v1beta1_Conditions_To_v1beta2_Deprecated_V1Beta1_Conditions(&in.Conditions, &deprecated.Conditions)
+	if legacyConditions != nil {
+		clusterv1beta1.Convert_v1beta1_Conditions_To_v1beta2_Deprecated_V1Beta1_Conditions(&legacyConditions, &deprecated.Conditions)
 	}
 	if !reflect.DeepEqual(deprecated, cpv1beta1.TalosControlPlaneV1Beta1DeprecatedStatus{}) {
 		out.Deprecated = &cpv1beta1.TalosControlPlaneDeprecatedStatus{V1Beta1: &deprecated}
 	}
 
-	// Move initialization to ControlPlaneInitialized; ConvertTo refines the bool intent against
-	// the restored hub data.
-	if in.Initialized {
+	// Move initialization to ControlPlaneInitialized, unless it is set already; ConvertTo refines the bool intent
+	// against the restored hub data.
+	if in.Initialized && in.Initialization.ControlPlaneInitialized == nil {
 		out.Initialization.ControlPlaneInitialized = ptr.To(true)
 	}
 
@@ -224,14 +244,24 @@ func Convert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneStatus
 	// v1beta1 deprecated holder is absent (e.g. fresh hub objects that never round-tripped).
 	out.Initialized = ptr.Deref(in.Initialization.ControlPlaneInitialized, false)
 
-	// Move new conditions (v1beta2) to the v1beta2 field.
-	if in.Conditions == nil {
+	// Move new conditions (v1beta2) to the v1beta2 field. It is also set when the status has the fields
+	// v0.6.0-alpha.0 reported, so that its status.conditions are not taken for the ones of that release.
+	if in.Conditions == nil && !isV060Alpha0Status(out) {
 		return nil
 	}
 	out.V1Beta2 = &TalosControlPlaneV1Beta2Status{}
 	out.V1Beta2.Conditions = in.Conditions
 
 	return nil
+}
+
+// isV060Alpha0Status reports whether a v1alpha3 status was written by v0.6.0-alpha.0, which stored the v1beta2
+// conditions in status.conditions. That release always set at least one of the fields it added to v1alpha3 next
+// to its conditions, and never the v1beta2 field; earlier releases never set those fields, and the conversion
+// from the hub sets the v1beta2 field whenever it sets them.
+func isV060Alpha0Status(in *TalosControlPlaneStatus) bool {
+	return in.V1Beta2 == nil &&
+		(in.AvailableReplicas != nil || in.UpToDateReplicas != nil || in.Initialization.ControlPlaneInitialized != nil)
 }
 
 // Implement local conversion func because conversion-gen is not aware of conversion func in other

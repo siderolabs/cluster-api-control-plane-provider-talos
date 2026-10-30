@@ -5,6 +5,7 @@
 package v1alpha3
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -167,4 +168,106 @@ func TestTalosControlPlaneConversionKeepsZeroReplicaCounters(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTalosControlPlaneConversionOfStoredStatus converts the status a TalosControlPlane was stored with in v1alpha3
+// by the earlier releases: v0.5.x stored v1beta1 conditions in status.conditions, v0.6.0-alpha.0 v1beta2 ones.
+func TestTalosControlPlaneConversionOfStoredStatus(t *testing.T) {
+	SetAPIVersionGetter(func(gk schema.GroupKind) (string, error) {
+		return gk.Group + "/v1beta2", nil
+	})
+
+	for _, tt := range []struct {
+		name   string
+		status string
+		// wantConditions are the types of the v1beta2 conditions, wantLegacyConditions of the deprecated v1beta1 ones.
+		wantConditions       []string
+		wantLegacyConditions []string
+		wantAvailable        *int32
+	}{
+		{
+			name: "v0.5.x",
+			status: `{
+				"replicas": 3, "readyReplicas": 3, "initialized": true, "ready": true,
+				"conditions": [
+					{"type": "Ready", "status": "True", "lastTransitionTime": "2026-09-01T00:00:00Z"},
+					{"type": "MachinesReady", "status": "False", "severity": "Warning", "reason": "Unhealthy", "lastTransitionTime": "2026-09-01T00:00:00Z"}
+				]
+			}`,
+			wantLegacyConditions: []string{"Ready", "MachinesReady"},
+		},
+		{
+			name: "v0.6.0-alpha.0",
+			status: `{
+				"replicas": 3, "readyReplicas": 3, "availableReplicas": 2, "upToDateReplicas": 3,
+				"initialized": true, "ready": true, "initialization": {"controlPlaneInitialized": true},
+				"conditions": [
+					{"type": "Available", "status": "True", "reason": "Available", "lastTransitionTime": "2026-10-29T00:00:00Z"},
+					{"type": "MachinesReady", "status": "False", "reason": "NotReady", "message": "1 Machine not ready", "lastTransitionTime": "2026-10-29T00:00:00Z"}
+				]
+			}`,
+			wantConditions: []string{"Available", "MachinesReady"},
+			wantAvailable:  ptr.To[int32](2),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			spoke := &TalosControlPlane{}
+			if err := json.Unmarshal([]byte(`{"metadata": {"name": "cp", "namespace": "default"}, "status": `+tt.status+`}`), spoke); err != nil {
+				t.Fatalf("failed to decode the stored TalosControlPlane: %v", err)
+			}
+
+			hub := &cpv1beta1.TalosControlPlane{}
+			if err := spoke.ConvertTo(hub); err != nil {
+				t.Fatalf("ConvertTo failed: %v", err)
+			}
+
+			var conditionTypes []string
+			for _, condition := range hub.Status.Conditions {
+				conditionTypes = append(conditionTypes, condition.Type)
+			}
+
+			var legacyConditionTypes []string
+			if hub.Status.Deprecated != nil && hub.Status.Deprecated.V1Beta1 != nil {
+				for _, condition := range hub.Status.Deprecated.V1Beta1.Conditions {
+					legacyConditionTypes = append(legacyConditionTypes, string(condition.Type))
+				}
+			}
+
+			if !equalStrings(conditionTypes, tt.wantConditions) {
+				t.Fatalf("unexpected v1beta2 conditions: got %v, want %v", conditionTypes, tt.wantConditions)
+			}
+
+			if !equalStrings(legacyConditionTypes, tt.wantLegacyConditions) {
+				t.Fatalf("unexpected v1beta1 conditions: got %v, want %v", legacyConditionTypes, tt.wantLegacyConditions)
+			}
+
+			if !ptr.Equal(hub.Status.AvailableReplicas, tt.wantAvailable) {
+				t.Fatalf("unexpected availableReplicas: got %v, want %v", hub.Status.AvailableReplicas, tt.wantAvailable)
+			}
+
+			if !ptr.Deref(hub.Status.Initialization.ControlPlaneInitialized, false) {
+				t.Fatalf("controlPlaneInitialized is not set")
+			}
+
+			for _, condition := range hub.Status.Conditions {
+				if condition.Type == "MachinesReady" && (condition.Reason != "NotReady" || condition.Message != "1 Machine not ready") {
+					t.Fatalf("condition MachinesReady was not kept: %+v", condition)
+				}
+			}
+		})
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }

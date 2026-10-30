@@ -115,8 +115,21 @@ func hubTalosControlPlaneStatus(in *cpv1beta1.TalosControlPlaneStatus, c randfil
 func spokeTalosControlPlaneStatus(in *TalosControlPlaneStatus, c randfill.Continue) {
 	c.FillNoCustom(in)
 
-	// A v1beta2 field without conditions is not kept, the same as a missing one.
-	if in.V1Beta2 != nil && in.V1Beta2.Conditions == nil {
+	// The controller sets the initialization together with initialized.
+	if in.Initialized || ptr.Deref(in.Initialization.ControlPlaneInitialized, false) {
+		in.Initialized = true
+		in.Initialization.ControlPlaneInitialized = ptr.To(true)
+	}
+
+	// The fields v0.6.0-alpha.0 added come with the v1beta2 field: without it, the status was written by that
+	// release, which is converted one way only. Otherwise, a v1beta2 field without conditions is not kept, the same
+	// as a missing one.
+	hasV060Alpha0Fields := in.AvailableReplicas != nil || in.UpToDateReplicas != nil || in.Initialization.ControlPlaneInitialized != nil
+
+	switch {
+	case hasV060Alpha0Fields && in.V1Beta2 == nil:
+		in.V1Beta2 = &TalosControlPlaneV1Beta2Status{}
+	case !hasV060Alpha0Fields && in.V1Beta2 != nil && in.V1Beta2.Conditions == nil:
 		in.V1Beta2 = nil
 	}
 }
