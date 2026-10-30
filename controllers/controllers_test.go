@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 )
 
@@ -155,6 +155,15 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: InfrastructureGroupVersion.Group,
+						Kind:     "GenericInfrastructureMachineTemplate",
+						Name:     "infra-foo",
+					},
+				},
+			},
 		},
 	}
 	tcp.Default(suite.T().Context(), tcp)
@@ -233,11 +242,14 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 		},
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Version: "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       "UnknownInfraMachine",
-				APIVersion: "test/v1alpha1",
-				Name:       "foo",
-				Namespace:  metav1.NamespaceDefault,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     "UnknownInfraMachine",
+						APIGroup: "test",
+						Name:     "foo",
+					},
+				},
 			},
 		},
 	}
@@ -391,7 +403,7 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(1)))
 
 		// v1beta2 contract fields read by Cluster API.
-		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
 		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
 		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(1)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(1)))
@@ -485,7 +497,7 @@ func (suite *ControllersSuite) TestRollingUpdate() {
 		g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 
 		// The controller initializes the control plane by itself, nothing is seeded by the test.
-		g.Expect(tcp.Status.Initialized).To(BeTrue())
+		g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(BeTrue())
 		g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
 		g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(2)))
 		g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(2)))
@@ -945,6 +957,10 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 		},
 	}
 	g.Expect(fakeClient.Create(suite.ctx, crd)).To(Succeed())
+
+	t.Log("Creating the dummy CRD for GenericInfrastructureMachineTemplate")
+	g.Expect(fakeClient.Create(suite.ctx, untypedCRD(InfrastructureGroupVersion.WithKind("GenericInfrastructureMachineTemplate")))).To(Succeed())
+
 	genericInfrastructureMachineTemplate := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericInfrastructureMachineTemplate",
@@ -980,11 +996,14 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 		Spec: controlplanev1.TalosControlPlaneSpec{
 			Replicas: replicas,
 			Version:  "v1.16.6",
-			InfrastructureTemplate: corev1.ObjectReference{
-				Kind:       genericInfrastructureMachineTemplate.GetKind(),
-				APIVersion: genericInfrastructureMachineTemplate.GetAPIVersion(),
-				Name:       genericInfrastructureMachineTemplate.GetName(),
-				Namespace:  cluster.Namespace,
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				Spec: controlplanev1.TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Kind:     genericInfrastructureMachineTemplate.GetKind(),
+						APIGroup: genericInfrastructureMachineTemplate.GroupVersionKind().Group,
+						Name:     genericInfrastructureMachineTemplate.GetName(),
+					},
+				},
 			},
 			ControlPlaneConfig: controlplanev1.ControlPlaneConfig{},
 			RolloutStrategy: &controlplanev1.RolloutStrategy{

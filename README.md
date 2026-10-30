@@ -113,31 +113,47 @@ It contains templates for `AWS` and `GCP`, which are verified by the integration
 
 If you wish to craft your own manifests, here is some important info.
 
-CACPPT supports a single API type, a TalosControlPlane.
-You can create YAML definitions of a TalosControlPlane and `kubectl apply` them as part of a larger CAPI cluster deployment.
+CACPPT supports two API types:
+
+- `TalosControlPlane` (`controlplane.cluster.x-k8s.io/v1beta1`) for direct control plane resources.
+- `TalosControlPlaneTemplate` (`controlplane.cluster.x-k8s.io/v1beta1`) for ClusterClass / managed topology.
+
+`v1beta1` is the storage version.
+`v1alpha3` is still served, and converted from and to `v1beta1` by the conversion webhook, so existing manifests keep working.
+
+You can create YAML definitions of a `TalosControlPlane` and `kubectl apply` them as part of a larger CAPI cluster deployment.
 Below is a bare-minimum example.
 
 A basic config:
 
 ```yaml
-apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: TalosControlPlane
 metadata:
   name: talos-cp
 spec:
   version: v1.18.1
   replicas: 1
-  infrastructureTemplate:
-    kind: MetalMachineTemplate
-    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
-    name: talos-cp
+  machineNamingStrategy:
+    template: "{{ .talosControlPlane.name }}-{{ .random }}"
+  machineTemplate:
+    spec:
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: MetalMachineTemplate
+        name: talos-cp
   controlPlaneConfig:
     controlplane:
       generateType: controlplane
 ```
 
-Note you must provide an infrastructure template for your control plane.
-See your infrastructure provider for how to craft that.
+Direct `TalosControlPlane` resources must reference an infrastructure machine template via `spec.machineTemplate.spec.infrastructureRef`.
+See your infrastructure provider for how to craft the referenced machine template.
+
+`spec.machineNamingStrategy` controls the names used for control plane `Machine` objects.
+The corresponding infrastructure machine and Talos bootstrap config reuse the same name.
+If you omit the field, the default template is `{{ .talosControlPlane.name }}-{{ .random }}`.
+Custom templates must include `{{ .random }}` and can use `.cluster.name`, `.talosControlPlane.name` and `.random`.
 
 Note the generateType mentioned above.
 This is a required value in the spec for both controlplane and worker ("join") nodes.
@@ -152,7 +168,7 @@ This full config is blindly copied from the `data` section of the spec and prese
 An example of a more complex config:
 
 ```yaml
-apiVersion: control-plane.cluster.x-k8s.io/v1alpha2
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: TalosControlPlane
 metadata:
   name: talos-0
@@ -160,19 +176,56 @@ metadata:
     cluster.x-k8s.io/cluster-name: talos
 spec:
   controlPlaneConfig:
-    init:
-        generateType: none
-        data: |
-            version: v1alpha1
-            machine:
-            type: controlplane
-            token: xxxxxx
-            ...
-            ...
-            ...
-  ...
+    controlplane:
+      generateType: none
+      data: |
+        version: v1alpha1
+        machine:
+          type: controlplane
+        cluster:
+          token: xxxxxx
+        ...
   ...
 ```
+
+### ClusterClass / managed topology
+
+For managed topology, define a `TalosControlPlaneTemplate` and reference it from a `ClusterClass`.
+`TalosControlPlaneTemplate.spec.template.spec` is immutable after creation, so create a new template resource when you need to roll out a spec change.
+`machineTemplate.spec.infrastructureRef` is omitted from the template: for ClusterClass-managed topology, it comes from `ClusterClass.spec.controlPlane.machineInfrastructure.templateRef`.
+
+```yaml
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: TalosControlPlaneTemplate
+metadata:
+  name: talos-cp-template
+spec:
+  template:
+    spec:
+      machineNamingStrategy:
+        template: "{{ .talosControlPlane.name }}-{{ .random }}"
+      controlPlaneConfig:
+        controlplane:
+          generateType: controlplane
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: ClusterClass
+metadata:
+  name: talos-quickstart
+spec:
+  controlPlane:
+    templateRef:
+      apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+      kind: TalosControlPlaneTemplate
+      name: talos-cp-template
+    machineInfrastructure:
+      templateRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: DockerMachineTemplate
+        name: talos-cp-machine-template
+```
+
+See `config/samples` for complete examples.
 
 Note that specifying the full config above removes the ability for our control plane provider to generate a talosconfig for use.
 As such, you should keep track of the talosconfig that's generated when running `talosctl config generate`.

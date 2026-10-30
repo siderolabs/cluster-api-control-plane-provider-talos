@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
 // newStatusTestObjects returns a Cluster without a control plane endpoint, so that reconcile stops right after
@@ -206,10 +206,8 @@ func (c failingProbeClusterCache) GetHealthCheckingState(context.Context, client
 func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// initialized sets both the legacy and the v1beta2 contract initialization fields.
+		// initialized sets the contract initialization field and the deprecated v1beta1 one.
 		initialized bool
-		// legacyInitialized only sets the legacy status.initialized field, as v0.5.x did.
-		legacyInitialized bool
 		// previouslyAvailable sets Available=True before the connection was lost.
 		previouslyAvailable bool
 		// lastProbeSuccess, if set, is how long ago the ClusterCache health probe last succeeded.
@@ -222,12 +220,6 @@ func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 			initialized:     true,
 			availableStatus: metav1.ConditionUnknown,
 			availableReason: controlplanev1.RemoteConnectionProbeFailedReason,
-		},
-		{
-			name:              "initialized by v0.5.x",
-			legacyInitialized: true,
-			availableStatus:   metav1.ConditionUnknown,
-			availableReason:   controlplanev1.RemoteConnectionProbeFailedReason,
 		},
 		{
 			// e.g. right after a controller restart, before the ClusterCache connected.
@@ -265,11 +257,8 @@ func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 
 			cluster, tcp := newStatusTestObjects("unreachable", 3)
 
-			if tc.initialized || tc.legacyInitialized {
-				tcp.Status.Initialized = true
-			}
-
 			if tc.initialized {
+				tcp.V1Beta1DeprecatedStatus().Initialized = true
 				tcp.Status.Initialization.ControlPlaneInitialized = pointer.Bool(true)
 			}
 
@@ -309,10 +298,9 @@ func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 			expectCondition(g, tcp, clusterv1.AvailableCondition, tc.availableStatus, tc.availableReason)
 
 			// A lost connection doesn't reset the initialization.
-			initialized := tc.initialized || tc.legacyInitialized
-			g.Expect(tcp.Status.Initialized).To(Equal(initialized))
+			g.Expect(tcp.V1Beta1DeprecatedStatus().Initialized).To(Equal(tc.initialized))
 
-			if initialized {
+			if tc.initialized {
 				g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(HaveValue(BeTrue()))
 			} else {
 				g.Expect(tcp.Status.Initialization.ControlPlaneInitialized).To(BeNil())
@@ -326,8 +314,8 @@ func TestStatusWorkloadClusterUnreachable(t *testing.T) {
 			g.Expect(tcp.Status.ReadyReplicas).To(HaveValue(BeEquivalentTo(2)))
 			g.Expect(tcp.Status.AvailableReplicas).To(HaveValue(BeEquivalentTo(2)))
 			g.Expect(tcp.Status.UpToDateReplicas).To(HaveValue(BeEquivalentTo(3)))
-			g.Expect(tcp.Status.UnavailableReplicas).To(BeEquivalentTo(1))
-			g.Expect(tcp.Status.Ready).To(BeTrue())
+			g.Expect(tcp.V1Beta1DeprecatedStatus().UnavailableReplicas).To(BeEquivalentTo(1))
+			g.Expect(tcp.V1Beta1DeprecatedStatus().Ready).To(BeTrue())
 			expectCondition(g, tcp, clusterv1.MachinesReadyCondition, metav1.ConditionFalse, controlplanev1.MachinesNotReadyReason)
 			expectCondition(g, tcp, clusterv1.MachinesUpToDateCondition, metav1.ConditionTrue, controlplanev1.MachinesUpToDateReason)
 		})

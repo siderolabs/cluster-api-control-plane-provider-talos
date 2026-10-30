@@ -2,17 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// +kubebuilder:object:generate=true
-// +groupName=controlplane.cluster.x-k8s.io
 package v1alpha3
 
-import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 
 // Conditions and condition Reasons for the TalosControlPlane object
 
 const (
-	// MachinesAllReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
-	MachinesAllReadyCondition clusterv1.ConditionType = "MachinesAllReady"
+	// MachinesReadyCondition reports an aggregate of current status of the machines controlled by the TalosControlPlane.
+	MachinesReadyCondition clusterv1.ConditionType = "MachinesReady"
 )
 
 const (
@@ -22,9 +20,6 @@ const (
 	// WaitingForMachinesReason (Severity=Info) documents a TalosControlPlane bootstrap is waiting
 	// for all control plane nodes to be created.
 	WaitingForMachinesReason = "WaitingForMachines"
-
-	// MachinesBootstrapped documents control planes bootstrap status.
-	MachinesBootstrappedReason = "ControlPlaneBootstrapped"
 )
 
 const (
@@ -39,46 +34,12 @@ const (
 	// InvalidControlPlaneConfigReason (Severity=Error) documents that controlplane config is invalid and the provider
 	// can not proceed with the bootstrap.
 	InvalidControlPlaneConfigReason = "InvalidControlPlaneConfig"
-
-	// AvailableReason surfaces when the control plane is initialized, etcd has quorum and at least one
-	// control plane machine is ready.
-	AvailableReason = clusterv1.AvailableReason
-
-	// NotAvailableReason surfaces when the control plane is not initialized, etcd lost quorum, no control plane
-	// machine is ready, or the TalosControlPlane is being deleted.
-	NotAvailableReason = clusterv1.NotAvailableReason
-
-	// RemoteConnectionProbeFailedReason surfaces when the workload cluster can not be reached, so the availability
-	// of the control plane is unknown.
-	RemoteConnectionProbeFailedReason = "RemoteConnectionProbeFailed"
-
-	// AvailableInspectionFailedReason surfaces when the availability of the control plane could not be determined,
-	// e.g. because the etcd cluster could not be inspected.
-	AvailableInspectionFailedReason = clusterv1.InspectionFailedReason
-)
-
-const (
-	// MachinesReadyReason surfaces when at least spec.replicas control plane machines are ready.
-	MachinesReadyReason = clusterv1.ReadyReason
-
-	// MachinesNotReadyReason surfaces when fewer than spec.replicas control plane machines are ready.
-	MachinesNotReadyReason = clusterv1.NotReadyReason
-
-	// MachinesUpToDateReason surfaces when all control plane machines are up-to-date.
-	MachinesUpToDateReason = clusterv1.UpToDateReason
-
-	// MachinesNotUpToDateReason surfaces when at least one control plane machine is not up-to-date.
-	MachinesNotUpToDateReason = clusterv1.NotUpToDateReason
 )
 
 const (
 	// MachinesSpecUpToDateCondition documents that the spec of the machines controlled by the TalosControlPlane
 	// is up to date. When this condition is false, the TalosControlPlane is executing a rolling upgrade.
 	MachinesSpecUpToDateCondition clusterv1.ConditionType = "MachinesSpecUpToDate"
-
-	// MachinesSpecUpToDateReason documents that the spec of all the machines controlled by the TalosControlPlane is
-	// up to date.
-	MachinesSpecUpToDateReason = "MachinesSpecUpToDate"
 
 	// RollingUpdateInProgressReason (Severity=Warning) documents a TalosControlPlane object executing a
 	// rolling upgrade for aligning the machines spec to the desired state.
@@ -94,9 +55,6 @@ const (
 
 	// ScalingDownReason (Severity=Info) documents a TalosControlPlane that is decreasing the number of replicas.
 	ScalingDownReason = "ScalingDown"
-
-	// ResizedReason documents a TalosControlPlane that has been resized.
-	ResizedReason = "Resized"
 )
 
 const (
@@ -108,9 +66,6 @@ const (
 	// ControlPlaneComponentsUnhealthyReason (Severity=Error) documents a control plane component not healthy.
 	ControlPlaneComponentsUnhealthyReason = "ControlPlaneComponentsUnhealthy"
 
-	// ControlPlaneComponentsHealthyReason documents that all control plane components are healthy.
-	ControlPlaneComponentsHealthyReason = "ControlPlaneComponentsHealthy"
-
 	// ControlPlaneComponentsInspectionFailedReason documents a failure in inspecting the control plane component status.
 	ControlPlaneComponentsInspectionFailedReason = "ControlPlaneComponentsInspectionFailed"
 )
@@ -121,15 +76,6 @@ const (
 
 	// EtcdClusterUnhealthyReason (Severity=Error) is set when the etcd cluster is unhealthy.
 	EtcdClusterUnhealthyReason = "EtcdClusterUnhealthy"
-
-	// EtcdClusterHealthyReason is set when the etcd cluster is healthy.
-	EtcdClusterHealthyReason = "EtcdClusterHealthy"
-
-	// EtcdClusterQuorumLostReason (Severity=Error) is set when too few etcd members are healthy for etcd to keep quorum.
-	EtcdClusterQuorumLostReason = "EtcdClusterQuorumLost"
-
-	// EtcdClusterInspectionFailedReason is set when the etcd service could not be inspected on any control plane machine.
-	EtcdClusterInspectionFailedReason = "EtcdClusterInspectionFailed"
 )
 
 const (
@@ -137,8 +83,6 @@ const (
 	// When this condition is false, it indicates that there was an error when cloning the infrastructure/bootstrap template or
 	// when generating the machine object.
 	MachinesCreatedCondition clusterv1.ConditionType = "MachinesCreated"
-
-	MachinesCreatedReason = "MachinesCreated"
 
 	// InfrastructureTemplateCloningFailedReason (Severity=Error) documents a TalosControlPlane failing to
 	// clone the infrastructure template.

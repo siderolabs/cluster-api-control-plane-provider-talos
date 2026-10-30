@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
 const (
@@ -59,17 +60,10 @@ type TalosControlPlaneSpec struct {
 	// +optional
 	// +kubebuilder:default={type: "RollingUpdate", rollingUpdate: {maxSurge: 1}}
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
-
 	// MinReadySeconds is the minimum number of seconds a machine must be Ready
 	// before it is considered available.
 	// +optional
 	MinReadySeconds *int32 `json:"minReadySeconds,omitempty"`
-}
-
-// TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
-type TalosControlPlaneInitializationStatus struct {
-	// +optional
-	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
 }
 
 // GetReplicas reads spec replicas in a safe way.
@@ -126,19 +120,11 @@ type TalosControlPlaneStatus struct {
 	// Total number of non-terminated machines targeted by this control plane
 	// (their labels match the selector).
 	// +optional
-	Replicas *int32 `json:"replicas,omitempty"`
+	Replicas int32 `json:"replicas,omitempty"`
 
-	// readyReplicas is the number of ready replicas for this ControlPlane. A machine is considered ready when Machine's Ready condition is true.
+	// Total number of fully running and ready control plane machines.
 	// +optional
-	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
-
-	// availableReplicas is the number of available replicas for this ControlPlane. A machine is considered available when Machine's Available condition is true.
-	// +optional
-	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
-
-	// upToDateReplicas is the number of up-to-date replicas targeted by this ControlPlane. A machine is considered up-to-date when Machine's UpToDate condition is true.
-	// +optional
-	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
+	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
 	// Total number of unavailable machines targeted by this control plane.
 	// This is the total number of machines that are still required for
@@ -153,12 +139,6 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	Initialized bool `json:"initialized"`
 
-	// Initialization provides observations of the TalosControlPlane initialization process.
-	// NOTE: Fields in this struct are part of the Cluster API contract and are used by the
-	// Cluster controller to compute the Cluster's ControlPlaneInitialized condition.
-	// +optional
-	Initialization TalosControlPlaneInitializationStatus `json:"initialization,omitempty"`
-
 	// Ready denotes that the TalosControlPlane API Server is ready to
 	// receive requests.
 	// +optional
@@ -172,11 +152,17 @@ type TalosControlPlaneStatus struct {
 	// FailureReason indicates that there is a terminal problem reconciling the
 	// state, and will be set to a token value suitable for
 	// programmatic interpretation.
+	//
+	// Deprecated: this field will be removed in the next apiVersion.
+	//
 	// +optional
 	FailureReason *string `json:"failureReason,omitempty"`
 
 	// ErrorMessage indicates that there is a terminal problem reconciling the
 	// state, and will be set to a descriptive error message.
+	//
+	// Deprecated: this field will be removed in the next apiVersion.
+	//
 	// +optional
 	FailureMessage *string `json:"failureMessage,omitempty"`
 
@@ -186,17 +172,30 @@ type TalosControlPlaneStatus struct {
 
 	// Conditions defines current service state of the KubeadmControlPlane.
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
 
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
 	// +optional
 	Version *string `json:"version,omitempty"`
+
+	// v1beta2 groups all the fields that will be added or modified in TalosControlPlane's status with the V1Beta2 version.
+	// +optional
+	V1Beta2 *TalosControlPlaneV1Beta2Status `json:"v1beta2Status,omitempty"`
+}
+
+// TalosControlPlaneV1Beta2Status groups all the fields that will be added or modified in TalosControlPlane's status with the V1Beta2 version.
+// See https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20240916-improve-status-in-CAPI-resources.md for more context.
+type TalosControlPlaneV1Beta2Status struct {
+	// Conditions represents the observations of a TalosControlPlane's current state.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=taloscontrolplanes,shortName=tcp,scope=Namespaced,categories=cluster-api
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=".status.ready",description="TalosControlPlane API Server is ready to receive requests"
@@ -215,13 +214,29 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (r *TalosControlPlane) GetConditions() []metav1.Condition {
+func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
 	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (r *TalosControlPlane) SetConditions(conditions []metav1.Condition) {
+func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
 	r.Status.Conditions = conditions
+}
+
+// GetV1Beta2Conditions returns the set of conditions for this object.
+func (r *TalosControlPlane) GetV1Beta2Conditions() []metav1.Condition {
+	if r.Status.V1Beta2 == nil {
+		return nil
+	}
+	return r.Status.V1Beta2.Conditions
+}
+
+// SetV1Beta2Conditions sets conditions for an API object.
+func (r *TalosControlPlane) SetV1Beta2Conditions(conditions []metav1.Condition) {
+	if r.Status.V1Beta2 == nil {
+		r.Status.V1Beta2 = &TalosControlPlaneV1Beta2Status{}
+	}
+	r.Status.V1Beta2.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

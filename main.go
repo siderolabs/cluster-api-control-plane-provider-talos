@@ -11,12 +11,14 @@ import (
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1beta1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -54,6 +56,7 @@ func init() {
 	_ = clusterv1.AddToScheme(scheme)
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
+	_ = controlplanev1beta1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -174,8 +177,26 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosControlPlane")
 		os.Exit(1)
 	}
-	if err = (&controlplanev1alpha3.TalosControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "TalosConfigTemplate")
+
+	// Resolves the apiVersion of a ContractVersionedObjectReference (apiGroup + kind) when the conversion
+	// down-converts to v1alpha3. The RESTMapper returns the preferred version of the API server, which matches
+	// the contract-resolved version unless the infrastructure CRD serves several versions.
+	controlplanev1alpha3.SetAPIVersionGetter(func(gk schema.GroupKind) (string, error) {
+		mapping, err := mgr.GetRESTMapper().RESTMapping(gk)
+		if err != nil {
+			return "", err
+		}
+
+		return mapping.GroupVersionKind.GroupVersion().String(), nil
+	})
+
+	if err = (&controlplanev1beta1.TalosControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlane")
+		os.Exit(1)
+	}
+
+	if err = (&controlplanev1beta1.TalosControlPlaneTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlaneTemplate")
 		os.Exit(1)
 	}
 
