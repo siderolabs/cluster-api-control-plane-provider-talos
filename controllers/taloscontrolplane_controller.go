@@ -7,7 +7,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"reflect"
 	"slices"
@@ -32,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -43,6 +41,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	"sigs.k8s.io/cluster-api/util/labels/format"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/secret"
@@ -429,20 +428,9 @@ func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, 
 
 	labels[clusterv1.ClusterNameLabel] = clusterName
 	labels[clusterv1.MachineControlPlaneLabel] = ""
-	labels[clusterv1.MachineControlPlaneNameLabel] = mustFormatValue(tcp.Name)
+	labels[clusterv1.MachineControlPlaneNameLabel] = format.MustFormatValue(tcp.Name)
 
 	return labels
-}
-
-func mustFormatValue(str string) string {
-	if len(validation.IsValidLabelValue(str)) == 0 {
-		return str
-	}
-
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(str))
-
-	return fmt.Sprintf("%x", hasher.Sum32())
 }
 
 func copyStringMap(in map[string]string) map[string]string {

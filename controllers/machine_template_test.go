@@ -6,6 +6,7 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +15,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/labels/format"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -106,7 +108,7 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 	if persisted.Labels[clusterv1.MachineControlPlaneLabel] != "" {
 		t.Fatalf("expected control plane label to be enforced")
 	}
-	if persisted.Labels[clusterv1.MachineControlPlaneNameLabel] == "" {
+	if persisted.Labels[clusterv1.MachineControlPlaneNameLabel] != tcp.Name {
 		t.Fatalf("expected control plane name label to be set")
 	}
 	if len(persisted.Spec.ReadinessGates) != 1 || persisted.Spec.ReadinessGates[0].ConditionType != "APIServerReady" {
@@ -123,5 +125,23 @@ func TestReconcileMachineTemplateStatePropagatesMachineFieldsInPlace(t *testing.
 	}
 	if persisted.Spec.InfrastructureRef != (clusterv1.ContractVersionedObjectReference{}) {
 		t.Fatalf("expected reconcileMachineTemplateState to avoid mutating infrastructureRef")
+	}
+}
+
+// TestControlPlaneMachineLabelsHashLongName checks that a TalosControlPlane name that is not a valid label value
+// is hashed the same way as Cluster API does, so that its selectors match the control plane Machines.
+func TestControlPlaneMachineLabelsHashLongName(t *testing.T) {
+	t.Parallel()
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: strings.Repeat("talos-control-plane-", 4),
+		},
+	}
+
+	labels := controlPlaneMachineLabelsForCluster(tcp, "workload-cluster")
+
+	if got, want := labels[clusterv1.MachineControlPlaneNameLabel], format.MustFormatValue(tcp.Name); got != want {
+		t.Fatalf("expected control plane name label %q, got %q", want, got)
 	}
 }
