@@ -11,6 +11,7 @@ import (
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1alpha3 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1beta1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
 	"github.com/spf13/pflag"
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,6 +55,7 @@ func init() {
 	_ = clusterv1.AddToScheme(scheme)
 	_ = bootstrapv1alpha3.AddToScheme(scheme)
 	_ = controlplanev1alpha3.AddToScheme(scheme)
+	_ = controlplanev1beta1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -174,8 +176,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosControlPlane")
 		os.Exit(1)
 	}
-	if err = (&controlplanev1alpha3.TalosControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "TalosConfigTemplate")
+
+	// Resolves the apiVersion of a ContractVersionedObjectReference (apiGroup + kind) when the conversion
+	// down-converts to v1alpha3, through the contract labels of the CRD like the controller does.
+	controlplanev1alpha3.SetAPIVersionGetter(controllers.ContractAPIVersionGetter(mgr.GetClient(), mgr.GetAPIReader(), ctrl.Log.WithName("conversion")))
+
+	if err = (&controlplanev1beta1.TalosControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlane")
+		os.Exit(1)
+	}
+
+	if err = (&controlplanev1beta1.TalosControlPlaneTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TalosControlPlaneTemplate")
 		os.Exit(1)
 	}
 

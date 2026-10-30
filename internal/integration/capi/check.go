@@ -65,19 +65,21 @@ func (clusterAPI *Manager) CheckClusterReady(ctx context.Context, cluster *Clust
 		return err
 	}
 
-	if ready, found, err = unstructured.NestedBool(controlPlane.Object, "status", "ready"); err != nil {
+	// v1beta2 contract: the control plane reports its availability in the Available condition,
+	// the top-level status.ready and status.initialized fields only exist in the legacy API versions.
+	if conditions, found, err = unstructured.NestedSlice(controlPlane.Object, "status", "conditions"); err != nil {
 		return err
 	}
 
-	if !ready || !found {
+	if !found {
 		return retry.ExpectedError(fmt.Errorf("control plane is not ready"))
 	}
 
-	if initialized, found, err = unstructured.NestedBool(controlPlane.Object, "status", "initialized"); err != nil {
+	if ready, err = hasTrueCondition(conditions, clusterv1.AvailableCondition); err != nil {
 		return err
 	}
 
-	if !initialized || !found {
+	if !ready {
 		return retry.ExpectedError(fmt.Errorf("control plane is not ready"))
 	}
 

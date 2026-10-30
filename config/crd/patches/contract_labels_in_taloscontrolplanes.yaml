@@ -1,0 +1,10 @@
+# The following patch maps the legacy contracts to v1alpha3, the only version of the TalosControlPlane
+# that implements them. The TalosControlPlaneTemplate has no v1alpha3 version.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: taloscontrolplanes.controlplane.cluster.x-k8s.io
+  labels:
+    cluster.x-k8s.io/v1alpha3: v1alpha3
+    cluster.x-k8s.io/v1alpha4: v1alpha3
+    cluster.x-k8s.io/v1beta1: v1alpha3

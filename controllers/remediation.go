@@ -28,7 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
 const (
@@ -307,7 +307,7 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		return ctrl.Result{}, false, nil
 	}
 
-	if !tcp.Status.Initialized && !ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) {
+	if !ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) {
 		setOwnerRemediated(remediationDeferredReason, "TalosControlPlane can't remediate before the control plane is initialized")
 
 		return ctrl.Result{}, false, nil

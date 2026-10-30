@@ -13,9 +13,10 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
-	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2/klogr"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -275,8 +276,10 @@ func MatchesTemplateClonedFrom(infraConfigs map[string]*unstructured.Unstructure
 		}
 
 		// Check if the machine's infrastructure reference has been created from the current TCP infrastructure template.
-		if clonedFromName != tcp.Spec.InfrastructureTemplate.Name ||
-			clonedFromGroupKind != tcp.Spec.InfrastructureTemplate.GroupVersionKind().GroupKind().String() {
+		templateRef := tcp.Spec.MachineTemplate.Spec.InfrastructureRef
+		templateGroupKind := schema.GroupKind{Group: templateRef.APIGroup, Kind: templateRef.Kind}.String()
+
+		if clonedFromName != templateRef.Name || clonedFromGroupKind != templateGroupKind {
 			return false
 		}
 

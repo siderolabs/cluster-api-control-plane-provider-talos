@@ -22,8 +22,11 @@ ENV GOCACHE=/.cache/go-build
 ENV GOMODCACHE=/.cache/mod
 SHELL ["/bin/bash", "-c"]
 ARG CONTROLLER_GEN_VERSION
+ARG CONVERSION_GEN_VERSION
 RUN --mount=type=cache,target=/.cache go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION} \
   && mv /root/go/bin/controller-gen /usr/bin/controller-gen
+RUN --mount=type=cache,target=/.cache go install k8s.io/code-generator/cmd/conversion-gen@${CONVERSION_GEN_VERSION} \
+  && mv /root/go/bin/conversion-gen /usr/bin/conversion-gen
 WORKDIR /src
 COPY ./go.mod ./
 COPY ./go.sum ./
@@ -41,6 +44,7 @@ COPY --from=manifests-build /src/config /config
 
 FROM build AS generate-build
 RUN --mount=type=cache,target=/.cache controller-gen object:headerFile=./hack/boilerplate.go.txt paths="./..."
+RUN --mount=type=cache,target=/.cache conversion-gen --output-file=zz_generated.conversion.go --go-header-file=./hack/boilerplate.go.txt ./api/v1alpha3
 
 FROM scratch AS generate
 COPY --from=generate-build /src/api /api
@@ -48,7 +52,7 @@ COPY --from=generate-build /src/api /api
 # runs unit-tests
 FROM build AS unit-tests-run
 ARG TESTPKGS
-RUN --mount=type=cache,target=/root/.cache --mount=type=cache,target=/tmp go test -v -covermode=atomic -coverprofile=coverage.txt -coverpkg=${TESTPKGS} -count 1 ${TESTPKGS}
+RUN --mount=type=cache,target=/root/.cache --mount=type=cache,target=/tmp go test -v -covermode=atomic -coverprofile=coverage.txt -coverpkg=$(echo ${TESTPKGS} | tr ' ' ',') -count 1 ${TESTPKGS}
 
 FROM scratch AS unit-tests
 COPY --from=unit-tests-run /src/coverage.txt /coverage.txt
