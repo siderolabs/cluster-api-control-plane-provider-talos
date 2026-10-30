@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -354,8 +355,8 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 // without rolling them out.
 func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
 	desiredLabels := controlPlaneMachineLabelsForCluster(tcp, cluster.Name)
-	desiredAnnotations := copyStringMap(tcp.Spec.MachineTemplate.ObjectMeta.Annotations)
-	desiredReadinessGates := copyMachineReadinessGates(tcp.Spec.MachineTemplate.Spec.ReadinessGates)
+	desiredAnnotations := tcp.Spec.MachineTemplate.ObjectMeta.Annotations
+	desiredReadinessGates := tcp.Spec.MachineTemplate.Spec.ReadinessGates
 	desiredDeletionSpec := buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion)
 
 	for i := range machines.Items {
@@ -393,8 +394,8 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 			}
 		}
 
-		if !reflect.DeepEqual(machine.Spec.ReadinessGates, desiredReadinessGates) {
-			machine.Spec.ReadinessGates = copyMachineReadinessGates(desiredReadinessGates)
+		if !slices.Equal(machine.Spec.ReadinessGates, desiredReadinessGates) {
+			machine.Spec.ReadinessGates = slices.Clone(desiredReadinessGates)
 			changed = true
 		}
 
@@ -421,7 +422,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 }
 
 func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, clusterName string) map[string]string {
-	labels := copyStringMap(tcp.Spec.MachineTemplate.ObjectMeta.Labels)
+	labels := maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Labels)
 	if labels == nil {
 		labels = map[string]string{}
 	}
@@ -431,30 +432,6 @@ func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, 
 	labels[clusterv1.MachineControlPlaneNameLabel] = format.MustFormatValue(tcp.Name)
 
 	return labels
-}
-
-func copyStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-
-	return out
-}
-
-func copyMachineReadinessGates(in []clusterv1.MachineReadinessGate) []clusterv1.MachineReadinessGate {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make([]clusterv1.MachineReadinessGate, len(in))
-	copy(out, in)
-
-	return out
 }
 
 func buildMachineDeletionSpec(deletion controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec) clusterv1.MachineDeletionSpec {
@@ -707,7 +684,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Name:        machineName,
 			Namespace:   tcp.Namespace,
 			Labels:      controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
-			Annotations: copyStringMap(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
+			Annotations: maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
 			},
@@ -716,7 +693,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			ClusterName:       cluster.Name,
 			Version:           tcp.Spec.Version,
 			InfrastructureRef: infraRef,
-			ReadinessGates:    copyMachineReadinessGates(tcp.Spec.MachineTemplate.Spec.ReadinessGates),
+			ReadinessGates:    slices.Clone(tcp.Spec.MachineTemplate.Spec.ReadinessGates),
 			Deletion:          buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion),
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: *bootstrapRef,
