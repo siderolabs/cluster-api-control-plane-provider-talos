@@ -27,7 +27,7 @@ import (
 
 // TestInfrastructureTemplateAPIVersionResolution checks that a TalosControlPlane that pins an older apiVersion of its
 // infrastructure template uses the apiVersion the template CRD maps to the contract, to set the owner reference and
-// to clone the template.
+// to clone the template, and that the cloned objects get the labels and annotations of the Machine.
 func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
@@ -78,6 +78,10 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 		Kind:     templateKind,
 		Name:     "infra",
 	}
+	tcp.Spec.MachineTemplate.ObjectMeta = clusterv1.ObjectMeta{
+		Labels:      map[string]string{"example.siderolabs.dev/role": "cp"},
+		Annotations: map[string]string{"example.siderolabs.dev/note": "hello"},
+	}
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(crd, template, cluster, tcp).Build()
 
@@ -108,6 +112,17 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 	infraMachine.SetAPIVersion(templateGroup + "/v1beta2")
 	infraMachine.SetKind("GenericInfrastructureMachine")
 	g.Expect(c.Get(ctx, client.ObjectKey{Namespace: remediationTestNamespace, Name: machine.Spec.InfrastructureRef.Name}, infraMachine)).To(Succeed())
+
+	talosConfig := &cabptv1.TalosConfig{}
+	g.Expect(c.Get(ctx, client.ObjectKey{Namespace: remediationTestNamespace, Name: machine.Spec.Bootstrap.ConfigRef.Name}, talosConfig)).To(Succeed())
+
+	for _, obj := range []client.Object{infraMachine, talosConfig} {
+		g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.ClusterNameLabel, cluster.Name))
+		g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.MachineControlPlaneLabel, ""))
+		g.Expect(obj.GetLabels()).To(HaveKeyWithValue(clusterv1.MachineControlPlaneNameLabel, tcp.Name))
+		g.Expect(obj.GetLabels()).To(HaveKeyWithValue("example.siderolabs.dev/role", "cp"))
+		g.Expect(obj.GetAnnotations()).To(HaveKeyWithValue("example.siderolabs.dev/note", "hello"))
+	}
 
 	// A Machine created while a remediation is in progress records the remediation it replaces.
 	g.Expect(machine.Annotations).To(HaveKeyWithValue(remediationForAnnotation, inProgress))

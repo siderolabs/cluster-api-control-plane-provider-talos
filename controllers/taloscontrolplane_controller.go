@@ -596,9 +596,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		Name:        machineName,
 		OwnerRef:    infraCloneOwner,
 		ClusterName: cluster.Name,
-		Labels: map[string]string{
-			clusterv1.MachineControlPlaneLabel: "",
-		},
+		Labels:      controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
+		Annotations: maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
 	})
 	if err != nil {
 		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
@@ -617,7 +616,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	// Clone the bootstrap configuration
-	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, machineName, bootstrapConfig)
+	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, cluster.Name, machineName, bootstrapConfig)
 	if err != nil {
 		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
 			Type:    string(controlplanev1.MachinesCreatedCondition),
@@ -736,7 +735,9 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, name string, spec *cabptv1.TalosConfigSpec) (*clusterv1.ContractVersionedObjectReference, error) {
+// generateTalosConfig creates the TalosConfig of a new Machine, with the labels and annotations of the Machine,
+// like the infrastructure machine.
+func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, clusterName, name string, spec *cabptv1.TalosConfigSpec) (*clusterv1.ContractVersionedObjectReference, error) {
 	owner := metav1.OwnerReference{
 		APIVersion:         controlplanev1.GroupVersion.String(),
 		Kind:               "TalosControlPlane",
@@ -749,6 +750,8 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       tcp.Namespace,
+			Labels:          controlPlaneMachineLabelsForCluster(tcp, clusterName),
+			Annotations:     maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
 		Spec: *spec,
