@@ -38,6 +38,9 @@ type ControlPlane struct {
 
 	infraObjects map[string]*unstructured.Unstructured
 	talosConfigs map[string]*cabptv1.TalosConfig
+
+	// infraTemplate is the infrastructure template the reconcile resolved, cloned for new Machines.
+	infraTemplate *unstructured.Unstructured
 }
 
 // newControlPlane returns an instantiated ControlPlane.

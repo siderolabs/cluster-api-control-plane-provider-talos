@@ -28,6 +28,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
@@ -249,22 +250,22 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		return ctrl.Result{}, nil, nil
 	}
 
-	// Update ownerrefs on infra templates
-	if err := r.reconcileExternalReference(ctx, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, cluster); err != nil {
-		// A missing template is a user-recoverable misconfiguration; back off instead of
-		// returning the error so the controller does not hot-loop.
-		if apierrors.IsNotFound(err) {
-			apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
-				Type:    string(controlplanev1.MachinesCreatedCondition),
-				Status:  metav1.ConditionFalse,
-				Reason:  controlplanev1.InfrastructureTemplateCloningFailedReason,
-				Message: fmt.Sprintf("Failed to retrieve infrastructure template: %v", err),
-			})
+	// Resolve the infrastructure template once: it is cloned for new Machines, and owned by the Cluster.
+	var infraTemplate *unstructured.Unstructured
 
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil, nil
+	if strings.HasSuffix(tcp.Spec.MachineTemplate.Spec.InfrastructureRef.Kind, clusterv1.TemplateSuffix) {
+		var (
+			res ctrl.Result
+			err error
+		)
+
+		if infraTemplate, res, err = r.getInfrastructureTemplate(ctx, tcp); infraTemplate == nil {
+			return res, nil, err
 		}
 
-		return ctrl.Result{}, nil, err
+		if err := r.reconcileExternalReference(ctx, infraTemplate, cluster); err != nil {
+			return ctrl.Result{}, nil, err
+		}
 	}
 
 	// If ControlPlaneEndpoint is not set, return early
@@ -309,6 +310,8 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		logger.Info("failed to build the control plane", "error", err)
 
 		controlPlane = nil
+	} else {
+		controlPlane.infraTemplate = infraTemplate
 	}
 
 	var (
@@ -583,36 +586,24 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, errors.Wrapf(err, "failed to check for an existing machine %s", machineName)
 	}
 
-	// Clone the infrastructure template. The infrastructureRef is a ContractVersionedObjectReference,
-	// so the concrete apiVersion is resolved through the contract labels of the template CRD.
-	templateObj, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, tcp.Namespace)
-	if err != nil {
-		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
-			Type:    string(controlplanev1.MachinesCreatedCondition),
-			Status:  metav1.ConditionFalse,
-			Reason:  controlplanev1.InfrastructureTemplateCloningFailedReason,
-			Message: fmt.Sprintf("Failed to retrieve infrastructure template: %v", err),
-		})
+	// Clone the infrastructure template the reconcile resolved, unless the ControlPlane was built without it.
+	infraTemplate := controlPlane.infraTemplate
+	if infraTemplate == nil {
+		var res ctrl.Result
 
-		// A missing template is a user-recoverable misconfiguration; back off instead of
-		// returning the error so the controller does not hot-loop.
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		if infraTemplate, res, err = r.getInfrastructureTemplate(ctx, tcp); infraTemplate == nil {
+			return res, err
 		}
-
-		return ctrl.Result{}, err
 	}
 
-	templateRef := corev1.ObjectReference{
-		APIVersion: templateObj.GetAPIVersion(),
-		Kind:       templateObj.GetKind(),
-		Name:       templateObj.GetName(),
-		Namespace:  templateObj.GetNamespace(),
-	}
-
-	infraMachine, infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
-		Client:      r.Client,
-		TemplateRef: &templateRef,
+	infraMachine, err := external.GenerateTemplate(&external.GenerateTemplateInput{
+		Template: infraTemplate,
+		TemplateRef: &corev1.ObjectReference{
+			APIVersion: infraTemplate.GetAPIVersion(),
+			Kind:       infraTemplate.GetKind(),
+			Name:       infraTemplate.GetName(),
+			Namespace:  infraTemplate.GetNamespace(),
+		},
 		Namespace:   tcp.Namespace,
 		Name:        machineName,
 		OwnerRef:    infraCloneOwner,
@@ -620,6 +611,10 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		Labels:      controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
 		Annotations: maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
 	})
+	if err == nil {
+		err = r.Client.Create(ctx, infraMachine)
+	}
+
 	if err != nil {
 		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
 			Type:    string(controlplanev1.MachinesCreatedCondition),
@@ -651,7 +646,11 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 
 	machine := computeDesiredMachine(tcp, cluster, nil)
 	machine.Name = machineName
-	machine.Spec.InfrastructureRef = infraRef
+	machine.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+		APIGroup: infraMachine.GroupVersionKind().Group,
+		Kind:     infraMachine.GetKind(),
+		Name:     infraMachine.GetName(),
+	}
 	machine.Spec.Bootstrap.ConfigRef = *bootstrapRef
 	machine.Spec.FailureDomain = controlPlane.NextFailureDomainForScaleUp(ctx)
 
@@ -1113,16 +1112,40 @@ func setAvailableCondition(tcp *controlplanev1.TalosControlPlane, machinesWithNo
 	conditions.Set(tcp, condition)
 }
 
-func (r *TalosControlPlaneReconciler) reconcileExternalReference(ctx context.Context, ref clusterv1.ContractVersionedObjectReference, cluster *clusterv1.Cluster) error {
-	if !strings.HasSuffix(ref.Kind, clusterv1.TemplateSuffix) {
-		return nil
+// getInfrastructureTemplate returns the infrastructure template of the TalosControlPlane. The infrastructureRef is a
+// ContractVersionedObjectReference, so the concrete apiVersion is resolved through the contract labels of the
+// template CRD.
+//
+// When the template cannot be resolved, it returns nil with the result and error to return, and reports the failure
+// in the MachinesCreated condition. A missing template is a user-recoverable misconfiguration: it backs off instead
+// of returning the error, so the controller does not hot-loop.
+func (r *TalosControlPlaneReconciler) getInfrastructureTemplate(ctx context.Context, tcp *controlplanev1.TalosControlPlane) (*unstructured.Unstructured, ctrl.Result, error) {
+	infraTemplate, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, tcp.Namespace)
+	if err == nil {
+		return infraTemplate, ctrl.Result{}, nil
 	}
 
-	obj, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, ref, cluster.Namespace)
-	if err != nil {
-		return err
+	reason := controlplanev1.InfrastructureTemplateResolutionFailedReason
+	if apierrors.IsNotFound(err) {
+		reason = controlplanev1.InfrastructureTemplateCloningFailedReason
 	}
 
+	apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{
+		Type:    string(controlplanev1.MachinesCreatedCondition),
+		Status:  metav1.ConditionFalse,
+		Reason:  reason,
+		Message: fmt.Sprintf("Failed to retrieve infrastructure template: %v", err),
+	})
+
+	if apierrors.IsNotFound(err) {
+		return nil, ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	return nil, ctrl.Result{}, err
+}
+
+// reconcileExternalReference sets the Cluster as an owner of the infrastructure template.
+func (r *TalosControlPlaneReconciler) reconcileExternalReference(ctx context.Context, obj *unstructured.Unstructured, cluster *clusterv1.Cluster) error {
 	objPatchHelper, err := patch.NewHelper(obj, r.Client)
 	if err != nil {
 		return err

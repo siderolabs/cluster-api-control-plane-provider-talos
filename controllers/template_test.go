@@ -117,12 +117,17 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 		Scheme:    scheme,
 	}
 
-	g.Expect(r.reconcileExternalReference(ctx, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, cluster)).To(Succeed())
+	infraTemplate, _, err := r.getInfrastructureTemplate(ctx, tcp)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(infraTemplate.GetAPIVersion()).To(Equal(bootTestTemplateGroup + "/v1beta2"))
+
+	g.Expect(r.reconcileExternalReference(ctx, infraTemplate, cluster)).To(Succeed())
 
 	g.Expect(c.Get(ctx, client.ObjectKeyFromObject(template), template)).To(Succeed())
 	g.Expect(template.GetOwnerReferences()).To(ContainElement(HaveField("UID", cluster.UID)))
 
-	_, err = r.bootControlPlane(ctx, cluster, tcp, &ControlPlane{TCP: tcp, Cluster: cluster}, false)
+	// The Machine is booted from the template the reconcile resolved.
+	_, err = r.bootControlPlane(ctx, cluster, tcp, &ControlPlane{TCP: tcp, Cluster: cluster, infraTemplate: infraTemplate}, false)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	machines := &clusterv1.MachineList{}
@@ -252,6 +257,60 @@ func TestBootControlPlaneCleansUpAfterFailure(t *testing.T) {
 			infraMachines, talosConfigs := listBootTestClones(ctx, g, c)
 			g.Expect(infraMachines).To(BeEmpty())
 			g.Expect(talosConfigs).To(BeEmpty())
+		})
+	}
+}
+
+// TestGetInfrastructureTemplateReportsFailures checks that a template that cannot be resolved is reported in the
+// MachinesCreated condition: a missing template backs off, while a template whose CRD has no contract version labels
+// fails the reconcile.
+func TestGetInfrastructureTemplateReportsFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		mutate         func(objs []client.Object, tcp *controlplanev1.TalosControlPlane)
+		expectedReason string
+		expectError    bool
+	}{
+		{
+			name: "template not found",
+			mutate: func(_ []client.Object, tcp *controlplanev1.TalosControlPlane) {
+				tcp.Spec.MachineTemplate.Spec.InfrastructureRef.Name = "missing"
+			},
+			expectedReason: controlplanev1.InfrastructureTemplateCloningFailedReason,
+		},
+		{
+			name: "CRD without contract labels",
+			mutate: func(objs []client.Object, _ *controlplanev1.TalosControlPlane) {
+				objs[0].SetLabels(nil)
+			},
+			expectedReason: controlplanev1.InfrastructureTemplateResolutionFailedReason,
+			expectError:    true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			ctx := context.Background()
+
+			scheme, cluster, tcp, objs := bootTestObjects(g)
+			tc.mutate(objs, tcp)
+
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cluster, tcp)...).Build()
+			r := &TalosControlPlaneReconciler{Client: c, APIReader: c, Log: testr.New(t), Scheme: scheme}
+
+			infraTemplate, res, err := r.getInfrastructureTemplate(ctx, tcp)
+			g.Expect(infraTemplate).To(BeNil())
+
+			if tc.expectError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(res.RequeueAfter).NotTo(BeZero())
+			}
+
+			condition := apimeta.FindStatusCondition(tcp.Status.Conditions, string(controlplanev1.MachinesCreatedCondition))
+			g.Expect(condition).NotTo(BeNil())
+			g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(condition.Reason).To(Equal(tc.expectedReason))
 		})
 	}
 }

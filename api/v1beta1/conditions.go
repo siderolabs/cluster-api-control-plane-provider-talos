@@ -143,6 +143,10 @@ const (
 	// clone the infrastructure template.
 	InfrastructureTemplateCloningFailedReason = "InfrastructureTemplateCloningFailed"
 
+	// InfrastructureTemplateResolutionFailedReason (Severity=Error) documents a TalosControlPlane failing to
+	// resolve the infrastructure template, e.g. because its CRD is not installed or has no contract version labels.
+	InfrastructureTemplateResolutionFailedReason = "InfrastructureTemplateResolutionFailed"
+
 	// BootstrapTemplateCloningFailedReason (Severity=Error) documents a TalosControlPlane failing to
 	// clone the bootstrap template.
 	BootstrapTemplateCloningFailedReason = "BootstrapTemplateCloningFailed"
