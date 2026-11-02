@@ -610,7 +610,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		Namespace:  templateObj.GetNamespace(),
 	}
 
-	_, infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
+	infraMachine, infraRef, err := external.CreateFromTemplate(ctx, &external.CreateFromTemplateInput{
 		Client:      r.Client,
 		TemplateRef: &templateRef,
 		Namespace:   tcp.Namespace,
@@ -646,7 +646,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Message: fmt.Sprintf("Failed to create bootstrap configuration: %v", err),
 		})
 
-		return ctrl.Result{}, err
+		return ctrl.Result{}, kerrors.NewAggregate([]error{err, r.cleanupFromGeneration(ctx, infraMachine)})
 	}
 
 	machine := computeDesiredMachine(tcp, cluster, nil)
@@ -665,10 +665,32 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 			Message: fmt.Sprintf("Failed to create machine: %v", err),
 		})
 
-		return ctrl.Result{}, errors.Wrap(err, "Failed to create machine")
+		talosConfig := &cabptv1.TalosConfig{
+			TypeMeta:   metav1.TypeMeta{APIVersion: cabptv1.GroupVersion.String(), Kind: "TalosConfig"},
+			ObjectMeta: metav1.ObjectMeta{Namespace: tcp.Namespace, Name: bootstrapRef.Name},
+		}
+
+		return ctrl.Result{}, kerrors.NewAggregate([]error{
+			errors.Wrap(err, "Failed to create machine"),
+			r.cleanupFromGeneration(ctx, infraMachine, talosConfig),
+		})
 	}
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// cleanupFromGeneration deletes the objects cloned for a Machine that could not be created, like KubeadmControlPlane
+// does, so that each failed attempt does not leave them behind: the next attempt clones them under a new name.
+func (r *TalosControlPlaneReconciler) cleanupFromGeneration(ctx context.Context, objects ...client.Object) error {
+	var errs []error
+
+	for _, obj := range objects {
+		if err := r.Client.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+			errs = append(errs, errors.Wrapf(err, "failed to clean up %s %s after a failed machine creation", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+		}
+	}
+
+	return kerrors.NewAggregate(errs)
 }
 
 func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {

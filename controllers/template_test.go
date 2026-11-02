@@ -6,6 +6,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
@@ -21,22 +22,20 @@ import (
 	"sigs.k8s.io/cluster-api/util/contract"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
-// TestInfrastructureTemplateAPIVersionResolution checks that a TalosControlPlane that pins an older apiVersion of its
-// infrastructure template uses the apiVersion the template CRD maps to the contract, to set the owner reference and
-// to clone the template, and that the cloned objects get the labels and annotations of the Machine.
-func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
-	g := NewWithT(t)
-	ctx := context.Background()
+const (
+	bootTestTemplateGroup = "infrastructure.cluster.x-k8s.io"
+	bootTestTemplateKind  = "GenericInfrastructureMachineTemplate"
+)
 
-	const (
-		templateGroup = "infrastructure.cluster.x-k8s.io"
-		templateKind  = "GenericInfrastructureMachineTemplate"
-	)
-
+// bootTestObjects returns the scheme, the Cluster and the TalosControlPlane to boot a Machine with, and the
+// infrastructure template CRD and template it clones. The template only exists in the version its CRD maps to the
+// contract, v1beta2.
+func bootTestObjects(g *WithT) (*runtime.Scheme, *clusterv1.Cluster, *controlplanev1.TalosControlPlane, []client.Object) {
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		clusterv1.AddToScheme,
@@ -50,17 +49,16 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: contract.CalculateCRDName(templateGroup, templateKind),
+			Name: contract.CalculateCRDName(bootTestTemplateGroup, bootTestTemplateKind),
 			Labels: map[string]string{
 				"cluster.x-k8s.io/v1beta2": "v1beta1_v1beta2",
 			},
 		},
 	}
 
-	// The template only exists in the resolved version: getting it through the pinned version fails.
 	template := &unstructured.Unstructured{}
-	template.SetAPIVersion(templateGroup + "/v1beta2")
-	template.SetKind(templateKind)
+	template.SetAPIVersion(bootTestTemplateGroup + "/v1beta2")
+	template.SetKind(bootTestTemplateKind)
 	template.SetNamespace(remediationTestNamespace)
 	template.SetName("infra")
 	g.Expect(unstructured.SetNestedField(template.Object, map[string]any{"hello": "world"}, "spec", "template", "spec")).To(Succeed())
@@ -68,22 +66,49 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 	cluster := newTestCluster()
 	cluster.UID = "cluster-uid"
 
+	tcp := newTestTCP(3)
+	tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
+		APIGroup: bootTestTemplateGroup,
+		Kind:     bootTestTemplateKind,
+		Name:     "infra",
+	}
+
+	return scheme, cluster, tcp, []client.Object{crd, template}
+}
+
+// listBootTestClones returns the infrastructure machines and the TalosConfigs cloned by the boot of a Machine.
+func listBootTestClones(ctx context.Context, g *WithT, c client.Client) ([]unstructured.Unstructured, []cabptv1.TalosConfig) {
+	infraMachines := &unstructured.UnstructuredList{}
+	infraMachines.SetAPIVersion(bootTestTemplateGroup + "/v1beta2")
+	infraMachines.SetKind("GenericInfrastructureMachineList")
+	g.Expect(c.List(ctx, infraMachines, client.InNamespace(remediationTestNamespace))).To(Succeed())
+
+	talosConfigs := &cabptv1.TalosConfigList{}
+	g.Expect(c.List(ctx, talosConfigs, client.InNamespace(remediationTestNamespace))).To(Succeed())
+
+	return infraMachines.Items, talosConfigs.Items
+}
+
+// TestInfrastructureTemplateAPIVersionResolution checks that a TalosControlPlane that pins an older apiVersion of its
+// infrastructure template uses the apiVersion the template CRD maps to the contract, to set the owner reference and
+// to clone the template, and that the cloned objects get the labels and annotations of the Machine.
+func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+
+	scheme, cluster, tcp, objs := bootTestObjects(g)
+	template := objs[1]
+
 	inProgress, err := (&remediationData{Machine: "m0", Timestamp: metav1.Now()}).marshal()
 	g.Expect(err).NotTo(HaveOccurred())
 
-	tcp := newTestTCP(3)
 	tcp.Annotations = map[string]string{remediationInProgressAnnotation: inProgress}
-	tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
-		APIGroup: templateGroup,
-		Kind:     templateKind,
-		Name:     "infra",
-	}
 	tcp.Spec.MachineTemplate.ObjectMeta = clusterv1.ObjectMeta{
 		Labels:      map[string]string{"example.siderolabs.dev/role": "cp"},
 		Annotations: map[string]string{"example.siderolabs.dev/note": "hello"},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(crd, template, cluster, tcp).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cluster, tcp)...).Build()
 
 	r := &TalosControlPlaneReconciler{
 		Client:    c,
@@ -105,11 +130,11 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 	g.Expect(machines.Items).To(HaveLen(1))
 
 	machine := machines.Items[0]
-	g.Expect(machine.Spec.InfrastructureRef.APIGroup).To(Equal(templateGroup))
+	g.Expect(machine.Spec.InfrastructureRef.APIGroup).To(Equal(bootTestTemplateGroup))
 	g.Expect(machine.Spec.InfrastructureRef.Kind).To(Equal("GenericInfrastructureMachine"))
 
 	infraMachine := &unstructured.Unstructured{}
-	infraMachine.SetAPIVersion(templateGroup + "/v1beta2")
+	infraMachine.SetAPIVersion(bootTestTemplateGroup + "/v1beta2")
 	infraMachine.SetKind("GenericInfrastructureMachine")
 	g.Expect(c.Get(ctx, client.ObjectKey{Namespace: remediationTestNamespace, Name: machine.Spec.InfrastructureRef.Name}, infraMachine)).To(Succeed())
 
@@ -134,47 +159,8 @@ func TestBootControlPlaneRejectsExistingMachineName(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
 
-	const (
-		templateGroup = "infrastructure.cluster.x-k8s.io"
-		templateKind  = "GenericInfrastructureMachineTemplate"
-	)
-
-	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{
-		clusterv1.AddToScheme,
-		controlplanev1.AddToScheme,
-		cabptv1.AddToScheme,
-		corev1.AddToScheme,
-		apiextensionsv1.AddToScheme,
-	} {
-		g.Expect(add(scheme)).To(Succeed())
-	}
-
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: contract.CalculateCRDName(templateGroup, templateKind),
-			Labels: map[string]string{
-				"cluster.x-k8s.io/v1beta2": "v1beta2",
-			},
-		},
-	}
-
-	template := &unstructured.Unstructured{}
-	template.SetAPIVersion(templateGroup + "/v1beta2")
-	template.SetKind(templateKind)
-	template.SetNamespace(remediationTestNamespace)
-	template.SetName("infra")
-	g.Expect(unstructured.SetNestedField(template.Object, map[string]any{"hello": "world"}, "spec", "template", "spec")).To(Succeed())
-
-	cluster := newTestCluster()
-
-	tcp := newTestTCP(3)
+	scheme, cluster, tcp, objs := bootTestObjects(g)
 	tcp.Spec.MachineNamingStrategy = &controlplanev1.MachineNamingStrategy{Template: "{{ .talosControlPlane.name }}-cp"}
-	tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
-		APIGroup: templateGroup,
-		Kind:     templateKind,
-		Name:     "infra",
-	}
 
 	existing := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -184,14 +170,14 @@ func TestBootControlPlaneRejectsExistingMachineName(t *testing.T) {
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster.Name,
 			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-				APIGroup: templateGroup,
+				APIGroup: bootTestTemplateGroup,
 				Kind:     "GenericInfrastructureMachine",
 				Name:     "existing-infra",
 			},
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(crd, template, cluster, tcp, existing).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cluster, tcp, existing)...).Build()
 
 	r := &TalosControlPlaneReconciler{
 		Client:    c,
@@ -210,13 +196,62 @@ func TestBootControlPlaneRejectsExistingMachineName(t *testing.T) {
 	g.Expect(c.Get(ctx, client.ObjectKeyFromObject(existing), existing)).To(Succeed())
 	g.Expect(existing.Spec.InfrastructureRef.Name).To(Equal("existing-infra"))
 
-	talosConfigs := &cabptv1.TalosConfigList{}
-	g.Expect(c.List(ctx, talosConfigs, client.InNamespace(remediationTestNamespace))).To(Succeed())
-	g.Expect(talosConfigs.Items).To(BeEmpty())
+	infraMachines, talosConfigs := listBootTestClones(ctx, g, c)
+	g.Expect(infraMachines).To(BeEmpty())
+	g.Expect(talosConfigs).To(BeEmpty())
+}
 
-	infraMachines := &unstructured.UnstructuredList{}
-	infraMachines.SetAPIVersion(templateGroup + "/v1beta2")
-	infraMachines.SetKind("GenericInfrastructureMachineList")
-	g.Expect(c.List(ctx, infraMachines, client.InNamespace(remediationTestNamespace))).To(Succeed())
-	g.Expect(infraMachines.Items).To(BeEmpty())
+// TestBootControlPlaneCleansUpAfterFailure checks that the objects cloned for a Machine that could not be created
+// are deleted, so that each failed attempt does not leave them behind.
+func TestBootControlPlaneCleansUpAfterFailure(t *testing.T) {
+	errInjected := errors.New("injected failure")
+
+	for _, tc := range []struct {
+		name  string
+		funcs interceptor.Funcs
+	}{
+		{
+			name: "TalosConfig creation fails",
+			funcs: interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*cabptv1.TalosConfig); ok {
+						return errInjected
+					}
+
+					return c.Create(ctx, obj, opts...)
+				},
+			},
+		},
+		{
+			name: "Machine apply fails",
+			funcs: interceptor.Funcs{
+				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+					return errInjected
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			ctx := context.Background()
+
+			scheme, cluster, tcp, objs := bootTestObjects(g)
+
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cluster, tcp)...).WithInterceptorFuncs(tc.funcs).Build()
+
+			r := &TalosControlPlaneReconciler{
+				Client:    c,
+				APIReader: c,
+				Log:       testr.New(t),
+				Scheme:    scheme,
+			}
+
+			_, err := r.bootControlPlane(ctx, cluster, tcp, &ControlPlane{TCP: tcp, Cluster: cluster}, false)
+			g.Expect(err).To(MatchError(ContainSubstring(errInjected.Error())))
+
+			infraMachines, talosConfigs := listBootTestClones(ctx, g, c)
+			g.Expect(infraMachines).To(BeEmpty())
+			g.Expect(talosConfigs).To(BeEmpty())
+		})
+	}
 }
