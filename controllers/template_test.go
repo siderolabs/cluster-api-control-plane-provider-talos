@@ -117,7 +117,7 @@ func TestInfrastructureTemplateAPIVersionResolution(t *testing.T) {
 		Scheme:    scheme,
 	}
 
-	infraTemplate, _, err := r.getInfrastructureTemplate(ctx, tcp)
+	infraTemplate, err := r.getInfrastructureTemplate(ctx, tcp)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(infraTemplate.GetAPIVersion()).To(Equal(bootTestTemplateGroup + "/v1beta2"))
 
@@ -261,10 +261,10 @@ func TestBootControlPlaneCleansUpAfterFailure(t *testing.T) {
 	}
 }
 
-// TestGetInfrastructureTemplateReportsFailures checks that a template that cannot be resolved is reported in the
+// TestInfrastructureTemplateFailedReportsFailures checks that a template that cannot be resolved is reported in the
 // MachinesCreated condition: a missing template backs off, while a template whose CRD has no contract version labels
 // fails the reconcile.
-func TestGetInfrastructureTemplateReportsFailures(t *testing.T) {
+func TestInfrastructureTemplateFailedReportsFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		mutate         func(objs []client.Object, tcp *controlplanev1.TalosControlPlane)
@@ -297,9 +297,10 @@ func TestGetInfrastructureTemplateReportsFailures(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cluster, tcp)...).Build()
 			r := &TalosControlPlaneReconciler{Client: c, APIReader: c, Log: testr.New(t), Scheme: scheme}
 
-			infraTemplate, res, err := r.getInfrastructureTemplate(ctx, tcp)
-			g.Expect(infraTemplate).To(BeNil())
+			_, err := r.getInfrastructureTemplate(ctx, tcp)
+			g.Expect(err).To(HaveOccurred())
 
+			res, err := infrastructureTemplateFailed(tcp, err)
 			if tc.expectError {
 				g.Expect(err).To(HaveOccurred())
 			} else {

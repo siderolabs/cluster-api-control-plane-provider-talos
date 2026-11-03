@@ -237,7 +237,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 // reconcile runs the reconcile steps of a TalosControlPlane that is not being deleted. It also returns the
 // ControlPlane it built, if any, so that the status update reuses it instead of fetching the same objects again.
-func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane) (ctrl.Result, *ControlPlane, error) {
+func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane) (res ctrl.Result, _ *ControlPlane, reterr error) {
 	logger := ctrl.LoggerFrom(ctx, "cluster", cluster.Name)
 	logger.Info("reconcile TalosControlPlane")
 
@@ -254,16 +254,25 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	var infraTemplate *unstructured.Unstructured
 
 	if strings.HasSuffix(tcp.Spec.MachineTemplate.Spec.InfrastructureRef.Kind, clusterv1.TemplateSuffix) {
-		var (
-			res ctrl.Result
-			err error
-		)
+		var err error
 
-		if infraTemplate, res, err = r.getInfrastructureTemplate(ctx, tcp); infraTemplate == nil {
-			return res, nil, err
-		}
+		if infraTemplate, err = r.getInfrastructureTemplate(ctx, tcp); err != nil {
+			// Only creating Machines needs the template: the other steps, such as remediation, scale down and the
+			// propagation of the machine template, still run. The failure is reported once they ran, as the
+			// Machines are marked created when the control plane has all its replicas.
+			logger.Info("failed to resolve the infrastructure template, no Machine can be created", "error", err)
 
-		if err := r.reconcileExternalReference(ctx, infraTemplate, cluster); err != nil {
+			defer func() {
+				templateRes, templateErr := infrastructureTemplateFailed(tcp, err)
+
+				res = util.LowestNonZeroResult(res, templateRes)
+				reterr = kerrors.NewAggregate([]error{reterr, templateErr})
+
+				if reterr != nil {
+					res = ctrl.Result{}
+				}
+			}()
+		} else if err := r.reconcileExternalReference(ctx, infraTemplate, cluster); err != nil {
 			return ctrl.Result{}, nil, err
 		}
 	}
@@ -589,10 +598,8 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	// Clone the infrastructure template the reconcile resolved, unless the ControlPlane was built without it.
 	infraTemplate := controlPlane.infraTemplate
 	if infraTemplate == nil {
-		var res ctrl.Result
-
-		if infraTemplate, res, err = r.getInfrastructureTemplate(ctx, tcp); infraTemplate == nil {
-			return res, err
+		if infraTemplate, err = r.getInfrastructureTemplate(ctx, tcp); err != nil {
+			return infrastructureTemplateFailed(tcp, err)
 		}
 	}
 
@@ -1115,16 +1122,14 @@ func setAvailableCondition(tcp *controlplanev1.TalosControlPlane, machinesWithNo
 // getInfrastructureTemplate returns the infrastructure template of the TalosControlPlane. The infrastructureRef is a
 // ContractVersionedObjectReference, so the concrete apiVersion is resolved through the contract labels of the
 // template CRD.
-//
-// When the template cannot be resolved, it returns nil with the result and error to return, and reports the failure
-// in the MachinesCreated condition. A missing template is a user-recoverable misconfiguration: it backs off instead
-// of returning the error, so the controller does not hot-loop.
-func (r *TalosControlPlaneReconciler) getInfrastructureTemplate(ctx context.Context, tcp *controlplanev1.TalosControlPlane) (*unstructured.Unstructured, ctrl.Result, error) {
-	infraTemplate, err := external.GetObjectFromContractVersionedRef(ctx, r.Client, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, tcp.Namespace)
-	if err == nil {
-		return infraTemplate, ctrl.Result{}, nil
-	}
+func (r *TalosControlPlaneReconciler) getInfrastructureTemplate(ctx context.Context, tcp *controlplanev1.TalosControlPlane) (*unstructured.Unstructured, error) {
+	return external.GetObjectFromContractVersionedRef(ctx, r.Client, tcp.Spec.MachineTemplate.Spec.InfrastructureRef, tcp.Namespace)
+}
 
+// infrastructureTemplateFailed reports that the infrastructure template could not be resolved in the MachinesCreated
+// condition, and returns the result and error to return. A missing template is a user-recoverable misconfiguration:
+// it backs off instead of returning the error, so the controller does not hot-loop.
+func infrastructureTemplateFailed(tcp *controlplanev1.TalosControlPlane, err error) (ctrl.Result, error) {
 	reason := controlplanev1.InfrastructureTemplateResolutionFailedReason
 	if apierrors.IsNotFound(err) {
 		reason = controlplanev1.InfrastructureTemplateCloningFailedReason
@@ -1138,10 +1143,10 @@ func (r *TalosControlPlaneReconciler) getInfrastructureTemplate(ctx context.Cont
 	})
 
 	if apierrors.IsNotFound(err) {
-		return nil, ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	return nil, ctrl.Result{}, err
+	return ctrl.Result{}, err
 }
 
 // reconcileExternalReference sets the Cluster as an owner of the infrastructure template.
