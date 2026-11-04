@@ -180,9 +180,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
-	if !controllerutil.ContainsFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer) {
-		controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
-
+	if ensureTalosControlPlaneFinalizer(tcp) {
 		// patch and return right away instead of reusing the main defer,
 		// because the main defer may take too much time to get cluster status
 
@@ -484,6 +482,16 @@ func (r *TalosControlPlaneReconciler) getControlPlaneMachinesForCluster(ctx cont
 	}
 
 	return machineList, nil
+}
+
+// ensureTalosControlPlaneFinalizer adds the finalizer to the TalosControlPlane, and reports whether it was added.
+// The API server rejects new finalizers on an object that is being deleted, so none is added to one.
+func ensureTalosControlPlaneFinalizer(tcp *controlplanev1.TalosControlPlane) bool {
+	if !tcp.DeletionTimestamp.IsZero() {
+		return false
+	}
+
+	return controllerutil.AddFinalizer(tcp, controlplanev1.TalosControlPlaneFinalizer)
 }
 
 // logFailureDomainSelection reports where a new control plane machine is about to be placed, and
