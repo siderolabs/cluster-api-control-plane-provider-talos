@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/yaml"
 )
 
@@ -506,4 +509,103 @@ func cabptControlPlaneConfig(generateType string, strategicPatches []string) cab
 		GenerateType:     generateType,
 		StrategicPatches: strategicPatches,
 	}
+}
+
+// TestValidateMachineTaints checks that the taints of the machine template are validated like KubeadmControlPlane
+// does, in the TalosControlPlane and the TalosControlPlaneTemplate.
+func TestValidateMachineTaints(t *testing.T) {
+	validate := func(taints []clusterv1.MachineTaint) []error {
+		tcp := &TalosControlPlane{
+			Spec: TalosControlPlaneSpec{
+				Version: "v1.31.0",
+				MachineTemplate: TalosControlPlaneMachineTemplate{
+					Spec: TalosControlPlaneMachineTemplateSpec{
+						InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+							Name:     "cp-template",
+							Kind:     "DockerMachineTemplate",
+							APIGroup: "infrastructure.cluster.x-k8s.io",
+						},
+						Taints: taints,
+					},
+				},
+			},
+		}
+
+		tcpt := &TalosControlPlaneTemplate{
+			Spec: TalosControlPlaneTemplateSpec{
+				Template: TalosControlPlaneTemplateResource{
+					Spec: TalosControlPlaneTemplateResourceSpec{
+						MachineTemplate: TalosControlPlaneTemplateMachineTemplate{
+							Spec: TalosControlPlaneTemplateMachineTemplateSpec{Taints: taints},
+						},
+					},
+				},
+			},
+		}
+
+		_, tcpErr := tcp.ValidateCreate(context.Background(), tcp)
+		_, tcptErr := tcpt.ValidateCreate(context.Background(), tcpt)
+
+		return []error{tcpErr, tcptErr}
+	}
+
+	taint := clusterv1.MachineTaint{
+		Key:         "example.siderolabs.dev/dedicated",
+		Value:       "control-plane",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	t.Run("feature gate disabled", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+		for _, err := range validate(nil) {
+			if err != nil {
+				t.Fatalf("expected no taints to be valid, got %v", err)
+			}
+		}
+
+		for _, err := range validate([]clusterv1.MachineTaint{taint}) {
+			if err == nil || !strings.Contains(err.Error(), "feature gate MachineTaintPropagation is disabled") {
+				t.Fatalf("expected the taints to be forbidden, got %v", err)
+			}
+		}
+	})
+
+	t.Run("feature gate enabled", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+
+		for _, err := range validate([]clusterv1.MachineTaint{taint}) {
+			if err != nil {
+				t.Fatalf("expected the taint to be valid, got %v", err)
+			}
+		}
+
+		for _, key := range []string{
+			clusterv1.NodeUninitializedTaint.Key,
+			clusterv1.NodeOutdatedRevisionTaint.Key,
+			"node.kubernetes.io/not-ready",
+			"node.cloudprovider.kubernetes.io/uninitialized",
+			"node-role.kubernetes.io/master",
+			"not a key",
+		} {
+			invalid := taint
+			invalid.Key = key
+
+			for _, err := range validate([]clusterv1.MachineTaint{invalid}) {
+				if err == nil || !strings.Contains(err.Error(), "taints[0].key") {
+					t.Fatalf("expected the taint key %q to be rejected, got %v", key, err)
+				}
+			}
+		}
+
+		outOfService := taint
+		outOfService.Key = "node.kubernetes.io/out-of-service"
+
+		for _, err := range validate([]clusterv1.MachineTaint{outOfService}) {
+			if err != nil {
+				t.Fatalf("expected the out-of-service taint to be valid, got %v", err)
+			}
+		}
+	})
 }
