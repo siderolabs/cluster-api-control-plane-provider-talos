@@ -447,3 +447,149 @@ func TestReconcileMachineTemplateStateResetsMinReadySecondsOnAdoption(t *testing
 		})
 	}
 }
+
+// TestReconcileMachineTemplateStateSyncsDeletionTimeoutsOfDeletingMachines checks that the deletion timeouts set on
+// the TalosControlPlane reach a Machine that is already being deleted, so that a drain blocked by a
+// PodDisruptionBudget can be ended from the TalosControlPlane, that no other field of that Machine is applied, and
+// that a Machine already in sync is not patched again.
+func TestReconcileMachineTemplateStateSyncsDeletionTimeoutsOfDeletingMachines(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-cluster",
+			Namespace: "default",
+		},
+	}
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "talos-control-plane",
+			Namespace: "default",
+			UID:       "tcp-uid",
+		},
+		Spec: controlplanev1.TalosControlPlaneSpec{
+			MachineTemplate: controlplanev1.TalosControlPlaneMachineTemplate{
+				ObjectMeta: clusterv1.ObjectMeta{
+					Labels: map[string]string{"example.siderolabs.dev/new": "true"},
+				},
+			},
+		},
+	}
+
+	// A Machine created without timeouts, defaulted by the Machine webhook, and stuck in deletion.
+	machine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "cp-0",
+			Namespace:         "default",
+			Labels:            map[string]string{"keep": "true"},
+			Finalizers:        []string{clusterv1.MachineFinalizer},
+			DeletionTimestamp: ptr.To(metav1.Now()),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(tcp, controlplanev1.GroupVersion.WithKind("TalosControlPlane")),
+			},
+		},
+		Spec: clusterv1.MachineSpec{
+			ClusterName: "workload-cluster",
+			Deletion: clusterv1.MachineDeletionSpec{
+				NodeDeletionTimeoutSeconds: ptr.To[int32](10),
+			},
+		},
+	}
+
+	applies, patches := 0, 0
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(machine).WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+			applies++
+
+			return c.Apply(ctx, obj, opts...)
+		},
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+
+	reconciler := &TalosControlPlaneReconciler{Client: fakeClient, machineApplyCache: utilcache.NewExpiring()}
+
+	sync := func() *clusterv1.Machine {
+		t.Helper()
+
+		machines := &clusterv1.MachineList{}
+		if err := fakeClient.List(context.Background(), machines); err != nil {
+			t.Fatalf("failed to list machines: %v", err)
+		}
+
+		if err := reconciler.reconcileMachineTemplateState(context.Background(), cluster, tcp, machines); err != nil {
+			t.Fatalf("reconcileMachineTemplateState failed: %v", err)
+		}
+
+		persisted := &clusterv1.Machine{}
+		if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(machine), persisted); err != nil {
+			t.Fatalf("failed to get reconciled machine: %v", err)
+		}
+
+		return persisted
+	}
+
+	// Without timeouts on the TalosControlPlane, the defaulted Machine is left alone.
+	sync()
+
+	if patches != 0 || applies != 0 {
+		t.Fatalf("expected a deleting machine in sync not to be updated, got %d patches and %d applies", patches, applies)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Deletion = controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{
+		NodeDrainTimeoutSeconds:        ptr.To[int32](600),
+		NodeVolumeDetachTimeoutSeconds: ptr.To[int32](300),
+		NodeDeletionTimeoutSeconds:     ptr.To[int32](60),
+	}
+
+	persisted := sync()
+
+	if patches != 1 || applies != 0 {
+		t.Fatalf("expected the deleting machine to be patched once and never applied, got %d patches and %d applies", patches, applies)
+	}
+
+	if got := persisted.Spec.Deletion.NodeDrainTimeoutSeconds; got == nil || *got != 600 {
+		t.Fatalf("expected nodeDrainTimeoutSeconds 600 on the deleting machine, got %v", got)
+	}
+
+	if got := persisted.Spec.Deletion.NodeVolumeDetachTimeoutSeconds; got == nil || *got != 300 {
+		t.Fatalf("expected nodeVolumeDetachTimeoutSeconds 300 on the deleting machine, got %v", got)
+	}
+
+	if got := persisted.Spec.Deletion.NodeDeletionTimeoutSeconds; got == nil || *got != 60 {
+		t.Fatalf("expected nodeDeletionTimeoutSeconds 60 on the deleting machine, got %v", got)
+	}
+
+	if persisted.Labels["keep"] != "true" || persisted.Labels["example.siderolabs.dev/new"] != "" {
+		t.Fatalf("expected the labels of the deleting machine to be left alone, got %v", persisted.Labels)
+	}
+
+	sync()
+
+	if patches != 1 {
+		t.Fatalf("expected a deleting machine in sync not to be patched again, got %d patches", patches)
+	}
+
+	// Removing the timeouts from the TalosControlPlane removes them from the Machine, with the webhook default kept.
+	tcp.Spec.MachineTemplate.Spec.Deletion = controlplanev1.TalosControlPlaneMachineTemplateDeletionSpec{}
+
+	persisted = sync()
+
+	if persisted.Spec.Deletion.NodeDrainTimeoutSeconds != nil || persisted.Spec.Deletion.NodeVolumeDetachTimeoutSeconds != nil {
+		t.Fatalf("expected the removed timeouts to be removed from the deleting machine, got %+v", persisted.Spec.Deletion)
+	}
+
+	if got := persisted.Spec.Deletion.NodeDeletionTimeoutSeconds; got == nil || *got != 10 {
+		t.Fatalf("expected the default nodeDeletionTimeoutSeconds 10 on the deleting machine, got %v", got)
+	}
+}
