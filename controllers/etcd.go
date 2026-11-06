@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -154,7 +156,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 		}
 	}
 
-	excludedNames := etcdMemberNames(excludedMachines)
+	excluded := etcdMachineIdentities(excludedMachines)
 
 	params := make([]any, 0, len(machines)*2)
 	for _, machine := range machines {
@@ -232,7 +234,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 					votingMembers++
 
-					if _, ok := excludedNames[strings.ToLower(member.Hostname)]; ok {
+					if etcdMemberIn(excluded, member) {
 						excludedMembers++
 					}
 				}
@@ -343,47 +345,121 @@ func nodeNamesForMachine(machine *clusterv1.Machine) []string {
 	return names
 }
 
-// etcdMemberNames returns the set of host names (see nodeNamesForMachine) an etcd member may carry to belong to one
-// of the machines. Machines without a nodeRef have no known names and contribute nothing.
-func etcdMemberNames(machines []clusterv1.Machine) map[string]struct{} {
-	names := map[string]struct{}{}
+// etcdAddress returns the normalized form of an IP address, used to match the host of an etcd member's peer URL with
+// a machine address, and false if address is not an IP address.
+func etcdAddress(address string) (string, bool) {
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return "", false
+	}
 
-	for i := range machines {
-		for _, name := range nodeNamesForMachine(&machines[i]) {
-			names[name] = struct{}{}
+	return ip.Unmap().WithZone("").String(), true
+}
+
+// etcdAddressesForMachine returns the IP addresses that can identify a machine's etcd member by the host of its peer
+// URLs: every InternalIP and ExternalIP address of the machine, normalized (see etcdAddress).
+func etcdAddressesForMachine(machine *clusterv1.Machine) []string {
+	var addresses []string
+
+	for _, address := range machine.Status.Addresses {
+		if address.Type != clusterv1.MachineInternalIP && address.Type != clusterv1.MachineExternalIP {
+			continue
+		}
+
+		if addr, ok := etcdAddress(address.Address); ok {
+			addresses = append(addresses, addr)
 		}
 	}
 
-	return names
+	return addresses
 }
 
-// etcdMembership holds what an etcd member list is verified against: the host names of the machines that must be
-// etcd members (expected, keyed by machine name), the machines that must be members but whose names are not known
-// yet because they have no nodeRef (pending), and the host names of every owned machine (owned), which decide
-// whether a member is an orphan.
+// etcdIdentitiesForMachine returns everything that can identify a machine's etcd member: its host names (see
+// nodeNamesForMachine) and its IP addresses (see etcdAddressesForMachine).
+//
+// The member name is not enough on its own: a node can join etcd before it gets its final hostname (e.g. with the
+// hostname Talos generates when the infrastructure provider sets it later), and the member keeps the name it joined
+// with. Host names and IP addresses share one namespace: host names have no dots (nodeNamesForMachine trims the
+// domain) and no colons, IP addresses always have one of the two.
+func etcdIdentitiesForMachine(machine *clusterv1.Machine) []string {
+	return append(nodeNamesForMachine(machine), etcdAddressesForMachine(machine)...)
+}
+
+// etcdMemberIdentities returns everything that identifies an etcd member (see etcdIdentitiesForMachine): its name,
+// lowercased, and the host of each of its peer URLs that is an IP address, normalized (see etcdAddress).
+func etcdMemberIdentities(member *machineapi.EtcdMember) []string {
+	identities := make([]string, 0, 1+len(member.PeerUrls))
+
+	if member.Hostname != "" {
+		identities = append(identities, strings.ToLower(member.Hostname))
+	}
+
+	for _, peerURL := range member.PeerUrls {
+		u, err := url.Parse(peerURL)
+		if err != nil {
+			continue
+		}
+
+		if addr, ok := etcdAddress(u.Hostname()); ok {
+			identities = append(identities, addr)
+		}
+	}
+
+	return identities
+}
+
+// etcdMachineIdentities returns the set of identities (see etcdIdentitiesForMachine) an etcd member may have to
+// belong to one of the machines.
+func etcdMachineIdentities(machines []clusterv1.Machine) map[string]struct{} {
+	identities := map[string]struct{}{}
+
+	for i := range machines {
+		for _, identity := range etcdIdentitiesForMachine(&machines[i]) {
+			identities[identity] = struct{}{}
+		}
+	}
+
+	return identities
+}
+
+// etcdMemberIn reports whether any identity of the member (see etcdMemberIdentities) is in identities.
+func etcdMemberIn(identities map[string]struct{}, member *machineapi.EtcdMember) bool {
+	return slices.ContainsFunc(etcdMemberIdentities(member), func(identity string) bool {
+		_, ok := identities[identity]
+
+		return ok
+	})
+}
+
+// etcdMembership holds what an etcd member list is verified against: the identities (see etcdIdentitiesForMachine)
+// of the machines that must be etcd members (expected, keyed by machine name), the machines that must be members but
+// whose names are not known yet because they have no nodeRef (pending, with their IP addresses in pendingAddresses),
+// and the identities of every owned machine (owned), which decide whether a member is an orphan.
 type etcdMembership struct {
-	expected map[string][]string
-	pending  []string
-	owned    map[string]struct{}
+	expected         map[string][]string
+	pending          []string
+	pendingAddresses map[string][]string
+	owned            map[string]struct{}
 }
 
 // newEtcdMembership builds the membership for the owned machines, of which machines is the subset that takes part in
 // the etcd health check (see remainingMachines).
 func newEtcdMembership(ownedMachines, machines []clusterv1.Machine) etcdMembership {
 	membership := etcdMembership{
-		expected: make(map[string][]string, len(machines)),
-		owned:    etcdMemberNames(ownedMachines),
+		expected:         make(map[string][]string, len(machines)),
+		pendingAddresses: map[string][]string{},
+		owned:            etcdMachineIdentities(ownedMachines),
 	}
 
 	for i := range machines {
-		names := nodeNamesForMachine(&machines[i])
-		if len(names) == 0 {
+		if len(nodeNamesForMachine(&machines[i])) == 0 {
 			membership.pending = append(membership.pending, machines[i].Name)
+			membership.pendingAddresses[machines[i].Name] = etcdAddressesForMachine(&machines[i])
 
 			continue
 		}
 
-		membership.expected[machines[i].Name] = names
+		membership.expected[machines[i].Name] = etcdIdentitiesForMachine(&machines[i])
 	}
 
 	return membership
@@ -392,42 +468,54 @@ func newEtcdMembership(ownedMachines, machines []clusterv1.Machine) etcdMembersh
 // verify checks the etcd member list reported by node and returns the set of member host names, lowercased, for
 // comparison across nodes.
 //
-// Every machine that must be a member has to have one, matched by any of its host names. A machine that must be a
-// member but has no nodeRef yet (it is new and the kubelet has not registered) cannot be matched by name, so it is
-// accounted for by count: each such machine claims one member matching no owned machine. Any further unmatched member
-// is an orphan (auditEtcd force-removes these), and fewer unmatched members than pending machines means a new machine
-// has not joined etcd yet. A member of an excluded machine still matches an owned machine, so it is tolerated; that
+// Every machine that must be a member has to have one, matched by any of its identities (see
+// etcdIdentitiesForMachine). A machine that must be a member but has no nodeRef yet (it is new and the kubelet has not
+// registered) cannot be matched by name; it is matched by its IP addresses if possible, and otherwise accounted for by
+// count: each such machine claims one member matching no owned machine. Any further unmatched member is an orphan
+// (auditEtcd force-removes these), and fewer unmatched members than pending machines means a new machine has not
+// joined etcd yet. A member of an excluded machine still matches an owned machine, so it is tolerated; that
 // machine's member may also already be gone, which is expected, so it is not required.
 func (m etcdMembership) verify(node string, members []*machineapi.EtcdMember) (map[string]struct{}, error) {
 	present := make(map[string]struct{}, len(members))
+	identities := make(map[string]struct{}, len(members))
 
 	var unmatched []string
 
 	for _, member := range members {
-		name := strings.ToLower(member.Hostname)
-		present[name] = struct{}{}
+		present[strings.ToLower(member.Hostname)] = struct{}{}
 
-		if _, ok := m.owned[name]; !ok {
+		for _, identity := range etcdMemberIdentities(member) {
+			identities[identity] = struct{}{}
+		}
+
+		if !etcdMemberIn(m.owned, member) {
 			unmatched = append(unmatched, member.Hostname)
 		}
 	}
 
-	for machineName, names := range m.expected {
-		if !slices.ContainsFunc(names, func(name string) bool {
-			_, ok := present[name]
+	isPresent := func(identity string) bool {
+		_, ok := identities[identity]
 
-			return ok
-		}) {
+		return ok
+	}
+
+	for machineName, machineIdentities := range m.expected {
+		if !slices.ContainsFunc(machineIdentities, isPresent) {
 			return nil, fmt.Errorf("%s: etcd is missing a member for control plane machine %q", node, machineName)
 		}
 	}
 
+	// pending machines whose member is matched by IP address don't claim an unmatched member
+	pending := slices.DeleteFunc(slices.Clone(m.pending), func(machineName string) bool {
+		return slices.ContainsFunc(m.pendingAddresses[machineName], isPresent)
+	})
+
 	switch {
-	case len(unmatched) > len(m.pending):
-		return nil, fmt.Errorf("%s: etcd member %q does not match any control plane machine", node, unmatched[len(m.pending)])
-	case len(unmatched) < len(m.pending):
+	case len(unmatched) > len(pending):
+		return nil, fmt.Errorf("%s: etcd member %q does not match any control plane machine", node, unmatched[len(pending)])
+	case len(unmatched) < len(pending):
 		return nil, fmt.Errorf("%s: etcd is missing a member for %d of the control plane machines without a noderef yet %q",
-			node, len(m.pending)-len(unmatched), m.pending)
+			node, len(pending)-len(unmatched), pending)
 	}
 
 	return present, nil
@@ -451,10 +539,14 @@ func compareEtcdMembers(node string, members map[string]struct{}, previousNode s
 	return nil
 }
 
-// etcdMemberMatchesMachine reports whether the etcd member runs on the machine, matched by any of its host names (see
-// nodeNamesForMachine).
+// etcdMemberMatchesMachine reports whether the etcd member runs on the machine, matched by any of its identities (see
+// etcdIdentitiesForMachine).
 func etcdMemberMatchesMachine(member *machineapi.EtcdMember, machine *clusterv1.Machine) bool {
-	return slices.Contains(nodeNamesForMachine(machine), strings.ToLower(member.Hostname))
+	machineIdentities := etcdIdentitiesForMachine(machine)
+
+	return slices.ContainsFunc(etcdMemberIdentities(member), func(identity string) bool {
+		return slices.Contains(machineIdentities, identity)
+	})
 }
 
 // findEtcdMember returns the etcd member running on the machine, or nil if there is none.
@@ -470,11 +562,16 @@ func findEtcdMember(members []*machineapi.EtcdMember, machine *clusterv1.Machine
 
 // identifyEtcdMember returns the etcd member running on the machine, or nil if there is none; machines are all the
 // control plane machines. A machine without host names yet (see nodeNamesForMachine) can't be matched by name, so its
-// member is found by elimination: it is the only member that matches no other machine, if every other machine has
-// host names. known is false when it can't be told whether the machine has a member.
+// member is matched by IP address, or else found by elimination: it is the only member that matches no other
+// machine, if every other machine has host names. known is false when it can't be told whether the machine has a
+// member.
 func identifyEtcdMember(members []*machineapi.EtcdMember, machine *clusterv1.Machine, machines []*clusterv1.Machine) (member *machineapi.EtcdMember, known bool) {
+	if member := findEtcdMember(members, machine); member != nil {
+		return member, true
+	}
+
 	if len(nodeNamesForMachine(machine)) > 0 {
-		return findEtcdMember(members, machine), true
+		return nil, true
 	}
 
 	others := make([]*clusterv1.Machine, 0, len(machines))
@@ -832,15 +929,15 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 	// Only querying one CP node, so only 1 message should return.
 	memberList := response.Messages[0]
 
-	owned := etcdMemberNames(machines.Items)
+	owned := etcdMachineIdentities(machines.Items)
 
-	// For each etcd member, check that it matches one of the host names of the machines
+	// For each etcd member, check that it matches one of the machines, by host name or by the host of its peer URLs
 	for _, member := range memberList.Members {
 		if member.Hostname == "" {
 			return fmt.Errorf("discovered etcd member with empty hostname: %s", member)
 		}
 
-		if _, present := owned[strings.ToLower(member.Hostname)]; !present {
+		if !etcdMemberIn(owned, member) {
 			r.Log.Info("found etcd member that doesn't exist as controlplane machine", "member", member)
 
 			if err = r.forceEtcdLeave(ctx, c, member); err != nil {

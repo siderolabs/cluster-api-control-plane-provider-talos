@@ -214,6 +214,15 @@ func TestEtcdMembershipVerify(t *testing.T) {
 		return out
 	}
 
+	// peer returns a member that joined etcd under hostname, with a peer URL on address
+	peer := func(hostname, address string) *machineapi.EtcdMember {
+		return &machineapi.EtcdMember{Id: 100, Hostname: hostname, PeerUrls: []string{"https://" + address + ":2380"}}
+	}
+
+	with := func(base []*machineapi.EtcdMember, extra ...*machineapi.EtcdMember) []*machineapi.EtcdMember {
+		return append(base, extra...)
+	}
+
 	cpA := withNode("cp-a", "node-a", nil)
 	cpB := withNode("cp-b", "node-b", nil)
 	cpC := withNode("cp-c", "node-c", nil)
@@ -223,6 +232,14 @@ func TestEtcdMembershipVerify(t *testing.T) {
 	// the infrastructure machine name is reported as MachineHostName and differs from the node hostname
 	cpInfraName := withNode("cp-d", "node-d", nil,
 		clusterv1.MachineAddress{Type: clusterv1.MachineHostName, Address: "infra-cp-d"})
+	// the infrastructure provider reports only an ExternalIP, as CAPH does
+	cpExternal := withNode("cp-e", "cp-e", nil,
+		clusterv1.MachineAddress{Type: clusterv1.MachineExternalIP, Address: "203.0.113.5"})
+	cpIPv6 := withNode("cp-f", "cp-f", nil,
+		clusterv1.MachineAddress{Type: clusterv1.MachineInternalIP, Address: "2001:db8::5"})
+	noNodeRefWithIP := newMachine("cp-new-ip", func(m *clusterv1.Machine) {
+		m.Status.Addresses = []clusterv1.MachineAddress{{Type: clusterv1.MachineInternalIP, Address: "10.0.0.9"}}
+	})
 
 	tests := []struct {
 		name    string
@@ -266,6 +283,38 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			name:    "a member matches the MachineHostName address",
 			owned:   []clusterv1.Machine{cpA, cpInfraName},
 			members: members("node-a", "infra-cp-d"),
+		},
+		{
+			name:    "a member that joined under a temporary hostname matches by the host of its peer URL",
+			owned:   []clusterv1.Machine{cpA, cpExternal},
+			members: with(members("node-a"), peer("talos-4y4-bo8", "203.0.113.5")),
+		},
+		{
+			name:    "a member matches by an IPv6 peer URL",
+			owned:   []clusterv1.Machine{cpA, cpIPv6},
+			members: with(members("node-a"), peer("talos-9zy-x09", "[2001:db8::5]")),
+		},
+		{
+			name:    "a member whose name and peer URL match no machine is an orphan",
+			owned:   []clusterv1.Machine{cpA, cpExternal},
+			members: with(members("node-a", "cp-e"), peer("talos-dtq-420", "198.51.100.1")),
+			wantErr: `etcd member "talos-dtq-420" does not match any control plane machine`,
+		},
+		{
+			name:    "a machine without a noderef yet is matched by the host of the peer URL",
+			owned:   []clusterv1.Machine{cpA, noNodeRefWithIP},
+			members: with(members("node-a"), peer("talos-new", "10.0.0.9")),
+		},
+		{
+			name:    "a machine without a noderef matched by peer URL does not excuse an unmatched member",
+			owned:   []clusterv1.Machine{cpA, noNodeRefWithIP},
+			members: with(members("node-a", "node-x"), peer("talos-new", "10.0.0.9")),
+			wantErr: `etcd member "node-x" does not match any control plane machine`,
+		},
+		{
+			name:    "a machine without a noderef yet whose address is not a peer URL claims one unmatched member",
+			owned:   []clusterv1.Machine{cpA, noNodeRefWithIP},
+			members: members("node-a", "node-new"),
 		},
 		{
 			name:    "a machine without a noderef yet claims one unmatched member",
@@ -388,6 +437,9 @@ func TestIdentifyEtcdMember(t *testing.T) {
 	unnamed := newTestMachine("new", now, withoutNodeRef())
 	other := newTestMachine("m2", now)
 	otherUnnamed := newTestMachine("new2", now, withoutNodeRef())
+	unnamedWithIP := newTestMachine("new-ip", now, withoutNodeRef())
+	unnamedWithIP.Status.Addresses = []clusterv1.MachineAddress{{Type: clusterv1.MachineInternalIP, Address: "10.0.0.9"}}
+	tempHostname := &machineapi.EtcdMember{Id: 100, Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://10.0.0.9:2380"}}
 
 	for _, tc := range []struct {
 		name       string
@@ -434,6 +486,14 @@ func TestIdentifyEtcdMember(t *testing.T) {
 			members:  etcdMembersFor("m2", "ip-10-0-0-1", "ip-10-0-0-2"),
 		},
 		{
+			name:       "without host names, by the host of the peer URL",
+			machine:    unnamedWithIP,
+			machines:   []*clusterv1.Machine{unnamedWithIP, otherUnnamed, other},
+			members:    append(etcdMembersFor("m2", "ip-10-0-0-1"), tempHostname),
+			wantMember: "talos-4y4-bo8",
+			wantKnown:  true,
+		},
+		{
 			name:     "without host names, another machine without host names",
 			machine:  unnamed,
 			machines: []*clusterv1.Machine{unnamed, otherUnnamed, other},
@@ -451,6 +511,39 @@ func TestIdentifyEtcdMember(t *testing.T) {
 			} else {
 				g.Expect(member).NotTo(BeNil())
 				g.Expect(member.Hostname).To(Equal(tc.wantMember))
+			}
+		})
+	}
+}
+
+func TestEtcdMemberMatchesMachine(t *testing.T) {
+	machine := newMachine("cp-a", func(m *clusterv1.Machine) {
+		m.Status.NodeRef = clusterv1.MachineNodeReference{Name: "cp-a"}
+		m.Status.Addresses = []clusterv1.MachineAddress{
+			{Type: clusterv1.MachineExternalIP, Address: "203.0.113.5"},
+			{Type: clusterv1.MachineInternalIP, Address: "2001:db8::5"},
+			{Type: clusterv1.MachineInternalDNS, Address: "10.0.0.1"},
+		}
+	})
+
+	for _, tt := range []struct {
+		name   string
+		member *machineapi.EtcdMember
+		want   bool
+	}{
+		{name: "by name", member: &machineapi.EtcdMember{Hostname: "CP-A"}, want: true},
+		{name: "by IPv4 peer URL", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://203.0.113.5:2380"}}, want: true},
+		{name: "by IPv6 peer URL", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://[2001:db8:0::5]:2380"}}, want: true},
+		{name: "by any of several peer URLs", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://192.0.2.1:2380", "https://203.0.113.5:2380"}}, want: true},
+		{name: "client URLs are not used", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", ClientUrls: []string{"https://203.0.113.5:2379"}}},
+		{name: "addresses other than InternalIP and ExternalIP are not used", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://10.0.0.1:2380"}}},
+		{name: "a peer URL host name is not matched", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"https://cp-a:2380"}}},
+		{name: "an invalid peer URL is ignored", member: &machineapi.EtcdMember{Hostname: "talos-4y4-bo8", PeerUrls: []string{"://203.0.113.5"}}},
+		{name: "neither name nor peer URL", member: &machineapi.EtcdMember{Hostname: "cp-b", PeerUrls: []string{"https://192.0.2.1:2380"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := etcdMemberMatchesMachine(tt.member, &machine); got != tt.want {
+				t.Fatalf("etcdMemberMatchesMachine() = %v, want %v", got, tt.want)
 			}
 		})
 	}
