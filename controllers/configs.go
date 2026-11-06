@@ -7,6 +7,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"reflect"
 
 	"github.com/pkg/errors"
@@ -21,6 +22,29 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// talosEndpoint returns the address to use as a Talos API endpoint, and false if the address can't be one.
+//
+// Link-local addresses are skipped: they are only reachable on the link of the node, and an IPv6 link-local address
+// carries a zone (e.g. "fe80::1%eth0") that is not valid in the gRPC target the Talos client builds from its
+// endpoints, so a single one of them breaks the client for every endpoint. Infrastructure providers such as Metal3
+// report them in the Machine addresses. Addresses that are not IPs (host names) are kept as they are.
+func talosEndpoint(address string) (string, bool) {
+	if address == "" {
+		return "", false
+	}
+
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return address, true
+	}
+
+	if ip.IsLinkLocalUnicast() {
+		return "", false
+	}
+
+	return ip.WithZone("").String(), true
+}
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
 //
@@ -81,8 +105,12 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 
 	for _, machine := range machines {
 		for _, addr := range machine.Status.Addresses {
-			if addr.Type == clusterv1.MachineExternalIP || addr.Type == clusterv1.MachineInternalIP {
-				addrList = append(addrList, addr.Address)
+			if addr.Type != clusterv1.MachineExternalIP && addr.Type != clusterv1.MachineInternalIP {
+				continue
+			}
+
+			if endpoint, ok := talosEndpoint(addr.Address); ok {
+				addrList = append(addrList, endpoint)
 			}
 		}
 
@@ -132,8 +160,12 @@ func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context
 		}
 
 		for _, addr := range node.Status.Addresses {
-			if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
-				addrList = append(addrList, addr.Address)
+			if addr.Type != corev1.NodeExternalIP && addr.Type != corev1.NodeInternalIP {
+				continue
+			}
+
+			if endpoint, ok := talosEndpoint(addr.Address); ok {
+				addrList = append(addrList, endpoint)
 			}
 		}
 
