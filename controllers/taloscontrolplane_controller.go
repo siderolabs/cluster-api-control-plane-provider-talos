@@ -292,8 +292,11 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		return ctrl.Result{}, nil, err
 	}
 
+	// A Machine being deleted that fails to sync doesn't hold back the other steps: the error is reported with theirs.
+	deletingErr := r.syncDeletingMachines(ctx, tcp, &ownedMachines)
+
 	if err := r.reconcileMachineTemplateState(ctx, cluster, tcp, &ownedMachines); err != nil {
-		return ctrl.Result{}, nil, err
+		return ctrl.Result{}, nil, kerrors.NewAggregate([]error{deletingErr, err})
 	}
 
 	getters := make([]*clusterv1.Machine, len(ownedMachines.Items))
@@ -324,7 +327,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 	}
 
 	var (
-		errs        error
+		errs        = deletingErr
 		result      ctrl.Result
 		phaseResult ctrl.Result
 
@@ -380,10 +383,12 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 //
 // Only the Machines the TalosControlPlane controls are applied: the apply sets the TalosControlPlane as their
 // controller, which would adopt a Machine without one, and fail for a Machine with another one.
+//
+// A Machine that is being deleted is skipped: it only gets the deletion timeouts, see syncDeletingMachines.
 func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
 	for i := range machines.Items {
 		machine := &machines.Items[i]
-		if !machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
+		if !metav1.IsControlledBy(machine, tcp) || !machine.DeletionTimestamp.IsZero() {
 			continue
 		}
 
@@ -401,6 +406,71 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 	}
 
 	return nil
+}
+
+// syncDeletingMachines propagates the deletion timeouts of the TalosControlPlane to the Machines it controls that are
+// being deleted, see syncDeletingMachine. A Machine that fails to sync doesn't stop the others: the errors are
+// aggregated.
+func (r *TalosControlPlaneReconciler) syncDeletingMachines(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
+	var errs []error
+
+	for i := range machines.Items {
+		machine := &machines.Items[i]
+		if machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
+			continue
+		}
+
+		if err := r.syncDeletingMachine(ctx, tcp, machine); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return kerrors.NewAggregate(errs)
+}
+
+// syncDeletingMachine propagates the deletion timeouts of the TalosControlPlane to a Machine that is being deleted,
+// the way KubeadmControlPlane does: the timeouts are the only fields that still matter for such a Machine, and
+// setting them on the TalosControlPlane lets a drain blocked by a PodDisruptionBudget, or a volume detach or Node
+// deletion that never completes, end without patching the Machine by hand.
+//
+// Only the timeouts the TalosControlPlane sets are propagated: an unset one leaves the Machine as it is, so that a
+// timeout set on the Machine by hand, or defaulted by the Machine webhook, is kept. The Machine is patched rather
+// than applied, so that the apply does not take over the other fields of a Machine that is going away. The Machine
+// is only updated in memory once the patch succeeds.
+func (r *TalosControlPlaneReconciler) syncDeletingMachine(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error {
+	desired := tcp.Spec.MachineTemplate.Spec.Deletion
+	patched := machine.DeepCopy()
+
+	changed := syncTimeout(&patched.Spec.Deletion.NodeDrainTimeoutSeconds, desired.NodeDrainTimeoutSeconds)
+	changed = syncTimeout(&patched.Spec.Deletion.NodeVolumeDetachTimeoutSeconds, desired.NodeVolumeDetachTimeoutSeconds) || changed
+	changed = syncTimeout(&patched.Spec.Deletion.NodeDeletionTimeoutSeconds, desired.NodeDeletionTimeoutSeconds) || changed
+
+	if !changed {
+		return nil
+	}
+
+	if err := r.Client.Patch(ctx, patched, client.MergeFrom(machine), client.FieldOwner(r.classicManager)); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+
+		return errors.Wrapf(err, "failed to sync the deletion timeouts of deleting machine %s", machine.Name)
+	}
+
+	*machine = *patched
+
+	return nil
+}
+
+// syncTimeout sets the timeout to the desired one if that is set and differs, and reports whether it changed it.
+func syncTimeout(timeout **int32, desired *int32) bool {
+	if desired == nil || ptr.Equal(*timeout, desired) {
+		return false
+	}
+
+	*timeout = ptr.To(*desired)
+
+	return true
 }
 
 func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, clusterName string) map[string]string {
@@ -467,6 +537,11 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 		return ctrl.Result{}, nil
 	}
 
+	// The Machines already being deleted still get the deletion timeouts, so that setting them on the
+	// TalosControlPlane ends a drain that blocks the teardown. A failure doesn't stop the other Machines from being
+	// deleted.
+	syncErr := r.syncDeletingMachines(ctx, tcp, &ownedMachines)
+
 	for _, ownedMachine := range ownedMachines.Items {
 		// Already deleting this machine
 		if !ownedMachine.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -485,6 +560,10 @@ func (r *TalosControlPlaneReconciler) reconcileDelete(ctx context.Context, clust
 		Reason:  clusterv1.DeletingReason,
 		Message: "Deleting TalosControlPlane-owned control plane machines",
 	})
+
+	if syncErr != nil {
+		return ctrl.Result{}, syncErr
+	}
 
 	// Requeue the deletion so we can check to make sure machines got cleaned up
 	return ctrl.Result{RequeueAfter: requeueDuration}, nil
