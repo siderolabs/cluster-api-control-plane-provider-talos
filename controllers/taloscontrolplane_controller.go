@@ -75,8 +75,8 @@ type TalosControlPlaneReconciler struct {
 	// etcd runs etcd operations on individual machines; nil means through the Talos API.
 	etcd etcdMemberManager
 
-	// machineApplyCache remembers the Machine applies that changed nothing, so they are not sent again; nil disables it.
-	machineApplyCache *utilcache.Expiring
+	// applyCache remembers the Machine applies that changed nothing, so they are not sent again; nil disables it.
+	applyCache *utilcache.Expiring
 
 	// classicManager is the field manager of the updates the controller makes without server-side apply, whose
 	// managed fields are handed over when a Machine is adopted for server-side apply.
@@ -84,7 +84,7 @@ type TalosControlPlaneReconciler struct {
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
-	r.machineApplyCache = utilcache.NewExpiring()
+	r.applyCache = utilcache.NewExpiring()
 	r.classicManager = classicManagerName(mgr.GetConfig().UserAgent)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -323,8 +323,13 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		controlPlane.infraTemplate = infraTemplate
 	}
 
+	var errs error
+
+	if controlPlane != nil {
+		errs = r.reconcileClonedObjectsMetadata(ctx, controlPlane)
+	}
+
 	var (
-		errs        error
 		result      ctrl.Result
 		phaseResult ctrl.Result
 
@@ -401,6 +406,50 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 	}
 
 	return nil
+}
+
+// reconcileClonedObjectsMetadata propagates the labels and annotations of the machine template to the infrastructure
+// machines and TalosConfigs of the Machines the TalosControlPlane controls, like KubeadmControlPlane does: they get
+// them when they are cloned, and keep them in sync with the Machines afterwards.
+//
+// The objects that are not found, e.g. as the cache is not up to date yet, are skipped. An object that fails is
+// reported, and the others are still applied.
+func (r *TalosControlPlaneReconciler) reconcileClonedObjectsMetadata(ctx context.Context, controlPlane *ControlPlane) error {
+	tcp := controlPlane.TCP
+	labels := controlPlaneMachineLabelsForCluster(tcp, controlPlane.Cluster.Name)
+	annotations := maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations)
+
+	var errs []error
+
+	for _, machine := range controlPlane.Machines {
+		if !machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
+			continue
+		}
+
+		var cloned []client.Object
+
+		if infraMachine, ok := controlPlane.infraObjects[machine.Name]; ok {
+			cloned = append(cloned, infraMachine)
+		}
+
+		if talosConfig, ok := controlPlane.talosConfigs[machine.Name]; ok {
+			cloned = append(cloned, talosConfig)
+		}
+
+		for _, obj := range cloned {
+			if err := r.migrateManagedFields(ctx, obj, tcpMetadataManagerName); err != nil {
+				errs = append(errs, errors.Wrapf(err, "failed to migrate the managed fields of %s", obj.GetName()))
+
+				continue
+			}
+
+			if err := r.applyMetadata(ctx, obj, labels, annotations); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return kerrors.NewAggregate(errs)
 }
 
 func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, clusterName string) map[string]string {

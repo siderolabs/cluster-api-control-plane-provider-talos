@@ -22,6 +22,7 @@ import (
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
@@ -30,8 +31,12 @@ const (
 	// tcpManagerName is the field manager of the Machine fields that the TalosControlPlane controller applies.
 	tcpManagerName = "capi-taloscontrolplane"
 
-	// machineApplyCacheTTL is how long an apply that did not change the Machine is remembered.
-	machineApplyCacheTTL = 30 * time.Minute
+	// tcpMetadataManagerName is the field manager of the labels and annotations that the TalosControlPlane
+	// controller applies to the infrastructure machines and TalosConfigs of its Machines, like KubeadmControlPlane.
+	tcpMetadataManagerName = "capi-taloscontrolplane-metadata"
+
+	// applyCacheTTL is how long an apply that did not change the object is remembered.
+	applyCacheTTL = 30 * time.Minute
 )
 
 // computeDesiredMachine computes the Machine of the TalosControlPlane, the way KubeadmControlPlane does.
@@ -100,44 +105,89 @@ func (r *TalosControlPlaneReconciler) applyMachine(ctx context.Context, machine 
 		return err
 	}
 
-	var requestID string
-
-	if original != nil && r.machineApplyCache != nil {
-		requestID, err = machineApplyRequestID(original.GetResourceVersion(), modified)
-		if err != nil {
-			return err
-		}
-
-		if _, ok := r.machineApplyCache.Get(requestID); ok {
-			*machine = *original.DeepCopy()
-
-			return nil
-		}
+	var originalResourceVersion string
+	if original != nil {
+		originalResourceVersion = original.GetResourceVersion()
 	}
 
-	beforeApply := modified.DeepCopy()
-
-	if err := r.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(modified), client.ForceOwnership, client.FieldOwner(tcpManagerName)); err != nil {
+	applied, err := r.apply(ctx, modified, originalResourceVersion, tcpManagerName)
+	if err != nil {
 		return errors.Wrapf(err, "failed to apply machine %s", machine.Name)
+	}
+
+	if !applied {
+		*machine = *original.DeepCopy()
+
+		return nil
 	}
 
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(modified.Object, machine); err != nil {
 		return errors.Wrapf(err, "failed to convert applied machine %s", machine.Name)
 	}
 
-	if r.machineApplyCache == nil {
-		return nil
-	}
+	return nil
+}
 
-	// Remember the request against the resulting version: the Machine read on the next reconcile is that version.
-	requestID, err = machineApplyRequestID(modified.GetResourceVersion(), beforeApply)
+// applyMetadata applies the labels and annotations of an object cloned for a Machine, the way KubeadmControlPlane
+// does, so that the labels and annotations removed from the machine template are removed from it too.
+func (r *TalosControlPlaneReconciler) applyMetadata(ctx context.Context, obj client.Object, labels, annotations map[string]string) error {
+	gvk, err := apiutil.GVKForObject(obj, r.Client.Scheme())
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "failed to get the kind of %s", obj.GetName())
 	}
 
-	r.machineApplyCache.Set(requestID, struct{}{}, machineApplyCacheTTL)
+	modified := &unstructured.Unstructured{}
+	modified.SetGroupVersionKind(gvk)
+	modified.SetNamespace(obj.GetNamespace())
+	modified.SetName(obj.GetName())
+	// The UID makes sure the apply only updates the object, and never creates it again after it was deleted.
+	modified.SetUID(obj.GetUID())
+	modified.SetLabels(labels)
+	modified.SetAnnotations(annotations)
+
+	if _, err := r.apply(ctx, modified, obj.GetResourceVersion(), tcpMetadataManagerName); err != nil {
+		return errors.Wrapf(err, "failed to apply the labels and annotations of %s %s", gvk.Kind, obj.GetName())
+	}
 
 	return nil
+}
+
+// apply applies the object with server-side apply as the field manager, and reports whether it was sent.
+//
+// originalResourceVersion is the version of the object as last read, empty when it is created: an apply that did not
+// change it is remembered, and not sent again until the object or the applied object changes.
+// On success, modified holds the object returned by the API server.
+func (r *TalosControlPlaneReconciler) apply(ctx context.Context, modified *unstructured.Unstructured, originalResourceVersion, fieldManager string) (bool, error) {
+	if originalResourceVersion != "" && r.applyCache != nil {
+		requestID, err := applyRequestID(originalResourceVersion, modified)
+		if err != nil {
+			return false, err
+		}
+
+		if _, ok := r.applyCache.Get(requestID); ok {
+			return false, nil
+		}
+	}
+
+	beforeApply := modified.DeepCopy()
+
+	if err := r.Client.Apply(ctx, client.ApplyConfigurationFromUnstructured(modified), client.ForceOwnership, client.FieldOwner(fieldManager)); err != nil {
+		return false, err
+	}
+
+	if r.applyCache == nil {
+		return true, nil
+	}
+
+	// Remember the request against the resulting version: the object read on the next reconcile is that version.
+	requestID, err := applyRequestID(modified.GetResourceVersion(), beforeApply)
+	if err != nil {
+		return true, err
+	}
+
+	r.applyCache.Set(requestID, struct{}{}, applyCacheTTL)
+
+	return true, nil
 }
 
 // prepareMachineForApply converts the Machine to unstructured, keeping only the fields the controller owns.
@@ -167,8 +217,8 @@ func prepareMachineForApply(scheme *runtime.Scheme, machine *clusterv1.Machine) 
 	return modified, nil
 }
 
-// machineApplyRequestID identifies an apply of the desired Machine to a version of the Machine.
-func machineApplyRequestID(resourceVersion string, modified *unstructured.Unstructured) (string, error) {
+// applyRequestID identifies an apply of the desired object to a version of the object.
+func applyRequestID(resourceVersion string, modified *unstructured.Unstructured) (string, error) {
 	content, err := json.Marshal(modified.Object)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to compute the machine apply request identifier")
@@ -195,18 +245,12 @@ func classicManagerName(userAgent string) string {
 // adoptMachineForServerSideApply hands the fields of a Machine created before the controller used server-side apply
 // over to its apply field manager, the way Cluster API migrates the managed fields of its objects.
 //
-// It drops the managed fields of the classic manager, which created the Machine, and seeds the apply field manager,
-// so that the next apply owns every field it sets: a field it stops setting is then removed. Fields the classic
-// manager set that are not applied anymore are left as they are, so the spec fields the controller used to sync
-// without server-side apply are first reset to the TalosControlPlane, like that sync did: only minReadySeconds, the
-// other spec fields the controller applies were not set by earlier versions.
+// Fields the classic manager set that are not applied anymore are left as they are, see migrateManagedFields, so the
+// spec fields the controller used to sync without server-side apply are first reset to the TalosControlPlane, like
+// that sync did: only minReadySeconds, the other spec fields the controller applies were not set by earlier versions.
 func (r *TalosControlPlaneReconciler) adoptMachineForServerSideApply(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error {
-	for _, managedField := range machine.GetManagedFields() {
-		if managedField.Manager == tcpManagerName &&
-			managedField.Operation == metav1.ManagedFieldsOperationApply &&
-			managedField.Subresource == "" {
-			return nil
-		}
+	if hasApplyManagedFields(machine, tcpManagerName) {
+		return nil
 	}
 
 	// Reset before the managed fields are migrated, as the classic manager: the migration then drops the managed
@@ -220,10 +264,31 @@ func (r *TalosControlPlaneReconciler) adoptMachineForServerSideApply(ctx context
 		}
 	}
 
-	base := machine.DeepCopy()
+	if err := r.migrateManagedFields(ctx, machine, tcpManagerName); err != nil {
+		return errors.Wrapf(err, "failed to migrate the managed fields of machine %s", machine.Name)
+	}
 
-	managedFields := make([]metav1.ManagedFieldsEntry, 0, len(machine.GetManagedFields())+1)
-	for _, managedField := range machine.GetManagedFields() {
+	return nil
+}
+
+// migrateManagedFields hands the fields of an object the controller created or updated without server-side apply
+// over to the apply field manager, once, like Cluster API's ssa.MigrateManagedFields.
+//
+// It drops the managed fields of the classic manager and seeds the apply field manager, so that the next apply owns
+// every field it sets: a field it stops setting is then removed. Fields the classic manager set that are not applied
+// anymore are left as they are, unowned.
+func (r *TalosControlPlaneReconciler) migrateManagedFields(ctx context.Context, obj client.Object, fieldManager string) error {
+	if hasApplyManagedFields(obj, fieldManager) {
+		return nil
+	}
+
+	base, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
+		return errors.Errorf("failed to copy %s", obj.GetName())
+	}
+
+	managedFields := make([]metav1.ManagedFieldsEntry, 0, len(obj.GetManagedFields())+1)
+	for _, managedField := range obj.GetManagedFields() {
 		if managedField.Manager == r.classicManager &&
 			managedField.Operation == metav1.ManagedFieldsOperationUpdate &&
 			managedField.Subresource == "" {
@@ -233,20 +298,34 @@ func (r *TalosControlPlaneReconciler) adoptMachineForServerSideApply(ctx context
 		managedFields = append(managedFields, managedField)
 	}
 
+	gvk, err := apiutil.GVKForObject(obj, r.Client.Scheme())
+	if err != nil {
+		return err
+	}
+
 	managedFields = append(managedFields, metav1.ManagedFieldsEntry{
-		Manager:    tcpManagerName,
+		Manager:    fieldManager,
 		Operation:  metav1.ManagedFieldsOperationApply,
-		APIVersion: clusterv1.GroupVersion.String(),
+		APIVersion: gvk.GroupVersion().String(),
 		Time:       ptr.To(metav1.Now()),
 		FieldsType: "FieldsV1",
 		FieldsV1:   &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:name":{}}}`)},
 	})
 
-	machine.SetManagedFields(managedFields)
+	obj.SetManagedFields(managedFields)
 
-	if err := r.Client.Patch(ctx, machine, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-		return errors.Wrapf(err, "failed to migrate the managed fields of machine %s", machine.Name)
+	return r.Client.Patch(ctx, obj, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+// hasApplyManagedFields reports whether the field manager applied the object.
+func hasApplyManagedFields(obj client.Object, fieldManager string) bool {
+	for _, managedField := range obj.GetManagedFields() {
+		if managedField.Manager == fieldManager &&
+			managedField.Operation == metav1.ManagedFieldsOperationApply &&
+			managedField.Subresource == "" {
+			return true
+		}
 	}
 
-	return nil
+	return false
 }
