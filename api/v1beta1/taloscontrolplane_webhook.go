@@ -10,11 +10,13 @@ import (
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/validate/content"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -107,6 +109,7 @@ func (r *TalosControlPlane) validate() field.ErrorList {
 	allErrs = append(allErrs, validateInfrastructureRef(r.Spec.MachineTemplate.Spec.InfrastructureRef, field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"))...)
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
+	allErrs = append(allErrs, validateMachineTaints(r.Spec.MachineTemplate.Spec.Taints, field.NewPath("spec", "machineTemplate", "spec", "taints"))...)
 
 	return allErrs
 }
@@ -122,6 +125,38 @@ func validateInfrastructureRef(ref clusterv1.ContractVersionedObjectReference, f
 	}
 	if ref.APIGroup == "" {
 		allErrs = append(allErrs, field.Required(fldPath.Child("apiGroup"), "apiGroup is required"))
+	}
+
+	return allErrs
+}
+
+// validateMachineTaints validates the taints of the machine template the way KubeadmControlPlane does: they are
+// only allowed with the MachineTaintPropagation feature gate, and must not use the keys reserved for Cluster API,
+// the node lifecycle and the cloud provider.
+func validateMachineTaints(taints []clusterv1.MachineTaint, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if !feature.Gates.Enabled(feature.MachineTaintPropagation) && len(taints) > 0 {
+		allErrs = append(allErrs, field.Forbidden(fldPath, "taints are not allowed to be set when the feature gate MachineTaintPropagation is disabled"))
+	}
+
+	for i, taint := range taints {
+		idxPath := fldPath.Index(i)
+
+		switch {
+		case taint.Key == clusterv1.NodeUninitializedTaint.Key, taint.Key == clusterv1.NodeOutdatedRevisionTaint.Key:
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("key"), taint.Key, "taint key is not allowed"))
+		case strings.HasPrefix(taint.Key, "node.kubernetes.io/") && taint.Key != "node.kubernetes.io/out-of-service":
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("key"), taint.Key, "taint key must not have the prefix node.kubernetes.io/, except for node.kubernetes.io/out-of-service"))
+		case strings.HasPrefix(taint.Key, "node.cloudprovider.kubernetes.io/"):
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("key"), taint.Key, "taint key must not have the prefix node.cloudprovider.kubernetes.io/"))
+		case taint.Key == "node-role.kubernetes.io/master":
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("key"), taint.Key, "taint is deprecated since 1.24 and should not be used anymore"))
+		}
+
+		for _, msg := range content.IsLabelKey(taint.Key) {
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("key"), taint.Key, msg))
+		}
 	}
 
 	return allErrs

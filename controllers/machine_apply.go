@@ -64,6 +64,7 @@ func computeDesiredMachine(tcp *controlplanev1.TalosControlPlane, cluster *clust
 			ClusterName:     cluster.Name,
 			Version:         tcp.Spec.Version,
 			ReadinessGates:  slices.Clone(tcp.Spec.MachineTemplate.Spec.ReadinessGates),
+			Taints:          slices.Clone(tcp.Spec.MachineTemplate.Spec.Taints),
 			Deletion:        buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion),
 			MinReadySeconds: copyInt32(tcp.Spec.MinReadySeconds),
 		},

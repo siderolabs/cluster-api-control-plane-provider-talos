@@ -7,10 +7,12 @@ package controllers
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
@@ -770,5 +772,91 @@ func TestReconcileDeleteSyncsDeletionTimeouts(t *testing.T) {
 
 	if other.DeletionTimestamp.IsZero() {
 		t.Fatal("expected the other machine to be deleted")
+	}
+}
+
+// TestReconcileMachineTemplateStatePropagatesTaints checks that the taints of the machine template are applied to
+// the Machines in place, like KubeadmControlPlane does, and that the taints removed from it are removed from them.
+func TestReconcileMachineTemplateStatePropagatesTaints(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-cluster",
+			Namespace: "default",
+		},
+	}
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "talos-control-plane",
+			Namespace: "default",
+			UID:       "tcp-uid",
+		},
+	}
+
+	machine := computeDesiredMachine(tcp, cluster, nil)
+	machine.Name = "cp-0"
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
+
+	if err := fakeClient.Create(context.Background(), machine, client.FieldOwner("manager")); err != nil {
+		t.Fatalf("failed to create machine: %v", err)
+	}
+
+	reconciler := &TalosControlPlaneReconciler{
+		Client:         fakeClient,
+		classicManager: "manager",
+	}
+
+	sync := func() []clusterv1.MachineTaint {
+		t.Helper()
+
+		machines := &clusterv1.MachineList{}
+		if err := fakeClient.List(context.Background(), machines); err != nil {
+			t.Fatalf("failed to list machines: %v", err)
+		}
+
+		if err := reconciler.reconcileMachineTemplateState(context.Background(), cluster, tcp, machines); err != nil {
+			t.Fatalf("reconcileMachineTemplateState failed: %v", err)
+		}
+
+		persisted := &clusterv1.Machine{}
+		if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(machine), persisted); err != nil {
+			t.Fatalf("failed to get reconciled machine: %v", err)
+		}
+
+		return persisted.Spec.Taints
+	}
+
+	dedicated := clusterv1.MachineTaint{
+		Key:         "example.siderolabs.dev/dedicated",
+		Value:       "control-plane",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the taint to be propagated, got %v", taints)
+	}
+
+	dedicated.Value = "etcd"
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the changed taint to be propagated, got %v", taints)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = nil
+
+	if taints := sync(); len(taints) != 0 {
+		t.Fatalf("expected the taint removed from the machine template to be removed, got %v", taints)
 	}
 }

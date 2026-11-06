@@ -227,5 +227,11 @@ spec:
 
 See `config/samples` for complete examples.
 
+#### Machine taints
+
+`machineTemplate.spec.taints` (on the `TalosControlPlane`, the `TalosControlPlaneTemplate`, or `ClusterClass.spec.controlPlane.taints` for managed topology) lists the node taints Cluster API manages on the control plane nodes.
+The taints are applied to the control plane Machines in place, without a rollout.
+Like in Cluster API, this is an alpha feature behind the `MachineTaintPropagation` feature gate, which is disabled by default: enable it in both Cluster API and this provider, e.g. by setting `EXP_MACHINE_TAINT_PROPAGATION=true` before `clusterctl init`.
+
 Note that specifying the full config above removes the ability for our control plane provider to generate a talosconfig for use.
 As such, you should keep track of the talosconfig that's generated when running `talosctl config generate`.
