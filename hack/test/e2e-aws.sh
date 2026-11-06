@@ -31,8 +31,14 @@ AMI=${AWS_AMI:-$(curl -sL https://github.com/talos-systems/talos/releases/downlo
     jq -r --arg REGION "${REGION}" '.[] | select(.region == $REGION) | select (.arch == "amd64") | .id')}
 export PROVIDER=aws:v2.9.3
 # pin the core and bootstrap providers, so that the test runs against a known CAPI release under the v1beta2 contract;
-# the bootstrap provider version follows the CABPT version in go.mod
-export CORE_PROVIDER="${CORE_PROVIDER:-cluster-api:v1.14.3}"
+# both versions follow go.mod (sigs.k8s.io/cluster-api and the CABPT module), so a dependency bump also moves the e2e pin
+CAPI_VERSION="${CAPI_VERSION:-$(awk '$1 == "sigs.k8s.io/cluster-api" { print $2 }' go.mod)}"
+if [[ -z ${CAPI_VERSION} ]]; then
+  echo "failed to determine the CAPI version from go.mod"
+
+  exit 1
+fi
+export CORE_PROVIDER="${CORE_PROVIDER:-cluster-api:${CAPI_VERSION}}"
 CABPT_VERSION="${CABPT_VERSION:-$(awk '$1 == "github.com/siderolabs/cluster-api-bootstrap-provider-talos" { print $2 }' go.mod)}"
 if [[ -z ${CABPT_VERSION} ]]; then
   echo "failed to determine the CABPT version from go.mod"

@@ -156,11 +156,18 @@ func (suite *IntegrationSuite) SetupSuite() {
 	suite.Require().NoError(encoder.Close())
 
 	// Pin the core and bootstrap providers, so that the test runs against a known CAPI release under
-	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. The bootstrap
-	// provider version matches github.com/siderolabs/cluster-api-bootstrap-provider-talos in go.mod.
+	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. Both versions
+	// must be set in the environment: hack/test/e2e-aws.sh derives them from go.mod, so a dependency
+	// bump also moves the pin.
+	coreProvider := os.Getenv("CORE_PROVIDER")
+	suite.Require().NotEmpty(coreProvider, "CORE_PROVIDER must be set (see hack/test/e2e-aws.sh)")
+
+	bootstrapProvider := os.Getenv("BOOTSTRAP_PROVIDER")
+	suite.Require().NotEmpty(bootstrapProvider, "BOOTSTRAP_PROVIDER must be set (see hack/test/e2e-aws.sh)")
+
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.14.3"),
-		BootstrapProviders:      []string{env("BOOTSTRAP_PROVIDER", "talos:v0.7.0-alpha.3")},
+		CoreProvider:            coreProvider,
+		BootstrapProviders:      []string{bootstrapProvider},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{env("CONTROL_PLANE_PROVIDER", "talos")},
 		WaitProviderTimeout:     time.Minute,
