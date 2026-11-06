@@ -6,6 +6,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -218,20 +219,24 @@ func TestBootControlPlaneCleansUpAfterFailure(t *testing.T) {
 		{
 			name: "TalosConfig creation fails",
 			funcs: interceptor.Funcs{
-				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-					if _, ok := obj.(*cabptv1.TalosConfig); ok {
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					if appliedKind(obj) == "TalosConfig" {
 						return errInjected
 					}
 
-					return c.Create(ctx, obj, opts...)
+					return c.Apply(ctx, obj, opts...)
 				},
 			},
 		},
 		{
 			name: "Machine apply fails",
 			funcs: interceptor.Funcs{
-				Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
-					return errInjected
+				Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+					if appliedKind(obj) == "Machine" {
+						return errInjected
+					}
+
+					return c.Apply(ctx, obj, opts...)
 				},
 			},
 		},
@@ -259,6 +264,21 @@ func TestBootControlPlaneCleansUpAfterFailure(t *testing.T) {
 			g.Expect(talosConfigs).To(BeEmpty())
 		})
 	}
+}
+
+// appliedKind returns the kind of an applied object.
+func appliedKind(obj runtime.ApplyConfiguration) string {
+	content, err := json.Marshal(obj)
+	if err != nil {
+		return ""
+	}
+
+	var typeMeta metav1.TypeMeta
+	if err := json.Unmarshal(content, &typeMeta); err != nil {
+		return ""
+	}
+
+	return typeMeta.Kind
 }
 
 // TestInfrastructureTemplateFailedReportsFailures checks that a template that cannot be resolved is reported in the

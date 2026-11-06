@@ -210,9 +210,9 @@ func TestReconcileMachineTemplateStateRemovesDroppedFields(t *testing.T) {
 	}
 
 	reconciler := &TalosControlPlaneReconciler{
-		Client:            fakeClient,
-		machineApplyCache: utilcache.NewExpiring(),
-		classicManager:    classicManagerName(classicManager + "/v0.6.0 (linux/amd64) kubernetes/abcdef0"),
+		Client:         fakeClient,
+		applyCache:     utilcache.NewExpiring(),
+		classicManager: classicManagerName(classicManager + "/v0.6.0 (linux/amd64) kubernetes/abcdef0"),
 	}
 
 	sync := func() *clusterv1.Machine {
@@ -519,7 +519,7 @@ func TestSyncDeletingMachinesSyncsDeletionTimeouts(t *testing.T) {
 		},
 	}).Build()
 
-	reconciler := &TalosControlPlaneReconciler{Client: fakeClient, classicManager: "manager", machineApplyCache: utilcache.NewExpiring()}
+	reconciler := &TalosControlPlaneReconciler{Client: fakeClient, classicManager: "manager", applyCache: utilcache.NewExpiring()}
 
 	sync := func() *clusterv1.Machine {
 		t.Helper()

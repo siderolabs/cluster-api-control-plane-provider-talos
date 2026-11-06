@@ -59,6 +59,10 @@ import (
 
 const requeueDuration = 30 * time.Second
 
+// clonedObjectConflictRequeue is how long to wait before migrating again the managed fields of a cloned object whose
+// migration conflicted: the cache is usually up to date by then.
+const clonedObjectConflictRequeue = 5 * time.Second
+
 // remoteConnectionGracePeriod is how long the Available condition keeps its last known state while the workload
 // cluster can't be reached, e.g. right after a controller restart, before it is set to Unknown. It is the default
 // remote conditions grace period of KubeadmControlPlane.
@@ -75,8 +79,8 @@ type TalosControlPlaneReconciler struct {
 	// etcd runs etcd operations on individual machines; nil means through the Talos API.
 	etcd etcdMemberManager
 
-	// machineApplyCache remembers the Machine applies that changed nothing, so they are not sent again; nil disables it.
-	machineApplyCache *utilcache.Expiring
+	// applyCache remembers the Machine applies that changed nothing, so they are not sent again; nil disables it.
+	applyCache *utilcache.Expiring
 
 	// classicManager is the field manager of the updates the controller makes without server-side apply, whose
 	// managed fields are handed over when a Machine is adopted for server-side apply.
@@ -84,7 +88,7 @@ type TalosControlPlaneReconciler struct {
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
-	r.machineApplyCache = utilcache.NewExpiring()
+	r.applyCache = utilcache.NewExpiring()
 	r.classicManager = classicManagerName(mgr.GetConfig().UserAgent)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -335,6 +339,13 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		etcdStatuses map[string]etcdMachineStatus
 	)
 
+	if controlPlane != nil {
+		var metadataErr error
+
+		result, metadataErr = r.reconcileClonedObjectsMetadata(ctx, controlPlane)
+		errs = kerrors.NewAggregate([]error{errs, metadataErr})
+	}
+
 	// run all similar reconcile steps in the loop and pick the lowest RetryAfter, aggregate errors and check the requeue flags.
 	// Remediation and scaling both delete Machines, so they run together as the last step, which deletes at most one Machine.
 	for _, phase := range []func(context.Context, *clusterv1.Cluster, *controlplanev1.TalosControlPlane, *clusterv1.MachineList) (ctrl.Result, error){
@@ -471,6 +482,63 @@ func syncTimeout(timeout **int32, desired *int32) bool {
 	*timeout = ptr.To(*desired)
 
 	return true
+}
+
+// reconcileClonedObjectsMetadata propagates the labels and annotations of the machine template to the infrastructure
+// machines and TalosConfigs of the Machines the TalosControlPlane controls, like KubeadmControlPlane does: they get
+// them when they are cloned, and keep them in sync with the Machines afterwards.
+//
+// The objects that are not found, e.g. as the cache is not up to date yet, are skipped. An object that fails is
+// reported, and the others are still applied. An object whose managed fields migration conflicts, as it was read
+// from a stale cache, e.g. right after a scale-up while the Machine controller and the providers update it, is
+// migrated again on a requeue rather than reported.
+func (r *TalosControlPlaneReconciler) reconcileClonedObjectsMetadata(ctx context.Context, controlPlane *ControlPlane) (ctrl.Result, error) {
+	tcp := controlPlane.TCP
+	labels := controlPlaneMachineLabelsForCluster(tcp, controlPlane.Cluster.Name)
+	annotations := maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations)
+
+	var (
+		result ctrl.Result
+		errs   []error
+	)
+
+	for _, machine := range controlPlane.Machines {
+		if !machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
+			continue
+		}
+
+		var cloned []client.Object
+
+		if infraMachine, ok := controlPlane.infraObjects[machine.Name]; ok {
+			cloned = append(cloned, infraMachine)
+		}
+
+		if talosConfig, ok := controlPlane.talosConfigs[machine.Name]; ok {
+			cloned = append(cloned, talosConfig)
+		}
+
+		for _, obj := range cloned {
+			if err := r.migrateClonedObjectManagedFields(ctx, obj, labels, annotations); err != nil {
+				if apierrors.IsConflict(err) {
+					ctrl.LoggerFrom(ctx).V(4).Info("the managed fields migration conflicted, retrying", "object", obj.GetName(), "error", err)
+
+					result = util.LowestNonZeroResult(result, ctrl.Result{RequeueAfter: clonedObjectConflictRequeue})
+
+					continue
+				}
+
+				errs = append(errs, errors.Wrapf(err, "failed to migrate the managed fields of %s", obj.GetName()))
+
+				continue
+			}
+
+			if err := r.applyMetadata(ctx, obj, labels, annotations); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return result, kerrors.NewAggregate(errs)
 }
 
 func controlPlaneMachineLabelsForCluster(tcp *controlplanev1.TalosControlPlane, clusterName string) map[string]string {
@@ -682,6 +750,9 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		}
 	}
 
+	labels := controlPlaneMachineLabelsForCluster(tcp, cluster.Name)
+	annotations := maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations)
+
 	infraMachine, err := external.GenerateTemplate(&external.GenerateTemplateInput{
 		Template: infraTemplate,
 		TemplateRef: &corev1.ObjectReference{
@@ -694,11 +765,11 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		Name:        machineName,
 		OwnerRef:    infraCloneOwner,
 		ClusterName: cluster.Name,
-		Labels:      controlPlaneMachineLabelsForCluster(tcp, cluster.Name),
-		Annotations: maps.Clone(tcp.Spec.MachineTemplate.ObjectMeta.Annotations),
+		Labels:      labels,
+		Annotations: annotations,
 	})
 	if err == nil {
-		err = r.Client.Create(ctx, infraMachine)
+		err = r.createClone(ctx, infraMachine, labels, annotations)
 	}
 
 	if err != nil {
@@ -863,7 +934,7 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 }
 
 // generateTalosConfig creates the TalosConfig of a new Machine, with the labels and annotations of the Machine,
-// like the infrastructure machine.
+// like the infrastructure machine, with server-side apply.
 func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, clusterName, name string, spec *cabptv1.TalosConfigSpec) (*clusterv1.ContractVersionedObjectReference, error) {
 	owner := metav1.OwnerReference{
 		APIVersion:         controlplanev1.GroupVersion.String(),
@@ -884,7 +955,21 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 		Spec: *spec,
 	}
 
-	if err := r.Client.Create(ctx, bootstrapConfig); err != nil {
+	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(bootstrapConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to convert the bootstrap configuration to unstructured")
+	}
+
+	// Only the spec is applied with the metadata: the status belongs to the bootstrap provider.
+	clone := &unstructured.Unstructured{Object: map[string]any{"spec": content["spec"]}}
+	clone.SetGroupVersionKind(cabptv1.GroupVersion.WithKind("TalosConfig"))
+	clone.SetName(bootstrapConfig.Name)
+	clone.SetNamespace(bootstrapConfig.Namespace)
+	clone.SetLabels(bootstrapConfig.Labels)
+	clone.SetAnnotations(bootstrapConfig.Annotations)
+	clone.SetOwnerReferences(bootstrapConfig.OwnerReferences)
+
+	if err := r.createClone(ctx, clone, bootstrapConfig.Labels, bootstrapConfig.Annotations); err != nil {
 		return nil, errors.Wrap(err, "Failed to create bootstrap configuration")
 	}
 
