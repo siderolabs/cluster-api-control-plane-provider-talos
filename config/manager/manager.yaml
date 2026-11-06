@@ -22,6 +22,7 @@ spec:
             - --enable-leader-election
             - "--diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}"
             - "--insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}"
+            - "--feature-gates=MachineTaintPropagation=${EXP_MACHINE_TAINT_PROPAGATION:=false}"
           image: controller:latest
           imagePullPolicy: Always
           name: manager
