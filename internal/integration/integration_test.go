@@ -9,7 +9,9 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -156,11 +158,23 @@ func (suite *IntegrationSuite) SetupSuite() {
 	suite.Require().NoError(encoder.Close())
 
 	// Pin the core and bootstrap providers, so that the test runs against a known CAPI release under
-	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. The bootstrap
-	// provider version matches github.com/siderolabs/cluster-api-bootstrap-provider-talos in go.mod.
+	// the v1beta2 contract instead of whatever clusterctl resolves as the latest release. Unless set in
+	// the environment (hack/test/e2e-aws.sh sets both), the versions are read from go.mod, so a
+	// dependency bump also moves the pin. The build info of a test binary does not carry them on every
+	// Go toolchain, so go.mod is read directly.
+	coreProvider := os.Getenv("CORE_PROVIDER")
+	if coreProvider == "" {
+		coreProvider = "cluster-api:" + suite.goModVersion("sigs.k8s.io/cluster-api")
+	}
+
+	bootstrapProvider := os.Getenv("BOOTSTRAP_PROVIDER")
+	if bootstrapProvider == "" {
+		bootstrapProvider = "talos:" + suite.goModVersion("github.com/siderolabs/cluster-api-bootstrap-provider-talos")
+	}
+
 	options := capi.Options{
-		CoreProvider:            env("CORE_PROVIDER", "cluster-api:v1.14.3"),
-		BootstrapProviders:      []string{env("BOOTSTRAP_PROVIDER", "talos:v0.7.0-alpha.3")},
+		CoreProvider:            coreProvider,
+		BootstrapProviders:      []string{bootstrapProvider},
 		InfrastructureProviders: []infrastructure.Provider{provider},
 		ControlPlaneProviders:   []string{env("CONTROL_PLANE_PROVIDER", "talos")},
 		WaitProviderTimeout:     time.Minute,
@@ -463,4 +477,39 @@ func TestIntegration(t *testing.T) {
 	}
 
 	suite.Run(t, new(IntegrationSuite))
+}
+
+// goModVersion returns the version of the given module required in go.mod, which is looked up in the
+// current directory and its parents (the test runs from the package directory or the repository root).
+func (suite *IntegrationSuite) goModVersion(path string) string {
+	dir, err := os.Getwd()
+	suite.Require().NoError(err)
+
+	for {
+		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+		if err == nil {
+			for line := range strings.Lines(string(data)) {
+				fields := strings.Fields(line)
+
+				if len(fields) > 0 && fields[0] == "require" {
+					fields = fields[1:]
+				}
+
+				if len(fields) >= 2 && fields[0] == path {
+					return fields[1]
+				}
+			}
+
+			suite.FailNow("module not found in go.mod", "%s (%s)", path, filepath.Join(dir, "go.mod"))
+		}
+
+		suite.Require().ErrorIs(err, fs.ErrNotExist)
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			suite.FailNow("go.mod not found", "searched from the current directory up for %s", path)
+		}
+
+		dir = parent
+	}
 }
