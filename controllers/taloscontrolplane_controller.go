@@ -380,10 +380,20 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 //
 // Only the Machines the TalosControlPlane controls are applied: the apply sets the TalosControlPlane as their
 // controller, which would adopt a Machine without one, and fail for a Machine with another one.
+//
+// A Machine that is being deleted only gets the deletion timeouts, see syncDeletingMachine.
 func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
 	for i := range machines.Items {
 		machine := &machines.Items[i]
-		if !machine.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(machine, tcp) {
+		if !metav1.IsControlledBy(machine, tcp) {
+			continue
+		}
+
+		if !machine.DeletionTimestamp.IsZero() {
+			if err := r.syncDeletingMachine(ctx, tcp, machine); err != nil {
+				return err
+			}
+
 			continue
 		}
 
@@ -398,6 +408,46 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 		}
 
 		*machine = *desired
+	}
+
+	return nil
+}
+
+// defaultMachineNodeDeletionTimeoutSeconds is the node deletion timeout the Cluster API Machine webhook defaults
+// (sigs.k8s.io/cluster-api/core/webhooks/admission).
+const defaultMachineNodeDeletionTimeoutSeconds = int32(10)
+
+// syncDeletingMachine propagates the deletion timeouts of the TalosControlPlane to a Machine that is being deleted,
+// the way KubeadmControlPlane does: the timeouts are the only fields that still matter for such a Machine, and
+// setting them on the TalosControlPlane lets a drain blocked by a PodDisruptionBudget, or a volume detach or Node
+// deletion that never completes, end without patching the Machine by hand.
+//
+// The Machine is patched rather than applied, so that the apply does not take over the other fields of a Machine
+// that is going away. An unset node deletion timeout is defaulted like the Machine webhook does, so that a Machine
+// defaulted on creation is not patched on every reconcile.
+func (r *TalosControlPlaneReconciler) syncDeletingMachine(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error {
+	desired := buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion)
+	if desired.NodeDeletionTimeoutSeconds == nil {
+		desired.NodeDeletionTimeoutSeconds = ptr.To(defaultMachineNodeDeletionTimeoutSeconds)
+	}
+
+	if ptr.Equal(machine.Spec.Deletion.NodeDrainTimeoutSeconds, desired.NodeDrainTimeoutSeconds) &&
+		ptr.Equal(machine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds, desired.NodeVolumeDetachTimeoutSeconds) &&
+		ptr.Equal(machine.Spec.Deletion.NodeDeletionTimeoutSeconds, desired.NodeDeletionTimeoutSeconds) {
+		return nil
+	}
+
+	base := machine.DeepCopy()
+	machine.Spec.Deletion.NodeDrainTimeoutSeconds = desired.NodeDrainTimeoutSeconds
+	machine.Spec.Deletion.NodeVolumeDetachTimeoutSeconds = desired.NodeVolumeDetachTimeoutSeconds
+	machine.Spec.Deletion.NodeDeletionTimeoutSeconds = desired.NodeDeletionTimeoutSeconds
+
+	if err := r.Client.Patch(ctx, machine, client.MergeFrom(base)); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+
+		return errors.Wrapf(err, "failed to sync the deletion timeouts of deleting machine %s", machine.Name)
 	}
 
 	return nil
