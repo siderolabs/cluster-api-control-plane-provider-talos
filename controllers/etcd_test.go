@@ -192,6 +192,129 @@ func TestNodeNamesForMachine(t *testing.T) {
 	}
 }
 
+// withMemberID records the etcd member ID of a machine, as the etcd health check does.
+func withMemberID(id uint64) func(*clusterv1.Machine) {
+	return func(m *clusterv1.Machine) {
+		if m.Annotations == nil {
+			m.Annotations = map[string]string{}
+		}
+
+		m.Annotations[etcdMemberIDAnnotation] = formatEtcdMemberID(id)
+	}
+}
+
+// member returns an etcd member.
+func member(id uint64, hostname string) *machineapi.EtcdMember {
+	return &machineapi.EtcdMember{Id: id, Hostname: hostname}
+}
+
+func TestEtcdMemberIDs(t *testing.T) {
+	g := NewWithT(t)
+
+	recorded := newMachine("recorded", withMemberID(0x3602b0aed27e8f41))
+	overridden := newMachine("overridden", withMemberID(1))
+	invalid := newMachine("invalid", func(m *clusterv1.Machine) {
+		m.Annotations = map[string]string{etcdMemberIDAnnotation: "not-an-id"}
+	})
+	none := newMachine("none", nil)
+
+	g.Expect(recorded.Annotations[etcdMemberIDAnnotation]).To(Equal("3602b0aed27e8f41"))
+	g.Expect(etcdMemberIDs([]*clusterv1.Machine{&recorded, &overridden, &invalid, &none}, map[string]uint64{"overridden": 2})).To(Equal(map[string]uint64{
+		"recorded":   0x3602b0aed27e8f41,
+		"overridden": 2,
+	}))
+}
+
+func TestMatchEtcdMembers(t *testing.T) {
+	withNode := func(name string, mutate ...func(*clusterv1.Machine)) *clusterv1.Machine {
+		m := newMachine(name, func(m *clusterv1.Machine) {
+			m.Status.NodeRef = clusterv1.MachineNodeReference{Name: name}
+
+			for _, f := range mutate {
+				f(m)
+			}
+		})
+
+		return &m
+	}
+
+	for _, tt := range []struct {
+		name       string
+		machines   []*clusterv1.Machine
+		members    []*machineapi.EtcdMember
+		want       map[string]uint64
+		unmatched  []uint64
+		unresolved []string
+	}{
+		{
+			name:     "by member ID, whatever the member name",
+			machines: []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(2))},
+			members:  []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8")},
+			want:     map[string]uint64{"cp-a": 1, "cp-b": 2},
+		},
+		{
+			name:     "by host name without a member ID",
+			machines: []*clusterv1.Machine{withNode("cp-a"), withNode("cp-b")},
+			members:  []*machineapi.EtcdMember{member(1, "CP-A"), member(2, "cp-b")},
+			want:     map[string]uint64{"cp-a": 1, "cp-b": 2},
+		},
+		{
+			// the member of a machine with a known ID that is not in the list is gone, whatever the member names
+			name:      "a known member ID that is not a member is not matched by host name",
+			machines:  []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(9))},
+			members:   []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b")},
+			want:      map[string]uint64{"cp-a": 1},
+			unmatched: []uint64{2},
+		},
+		{
+			// an orphaned member carries the host name of the new machine, which runs another member
+			name:      "a member that a machine runs by ID is not matched by host name",
+			machines:  []*clusterv1.Machine{withNode("cp-a", withMemberID(3)), withNode("cp-b")},
+			members:   []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b"), member(3, "talos-4y4-bo8")},
+			want:      map[string]uint64{"cp-a": 3, "cp-b": 2},
+			unmatched: []uint64{1},
+		},
+		{
+			name:       "a machine with neither a member ID nor a matching host name is unresolved",
+			machines:   []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b"), newMachinePtr("cp-new")},
+			members:    []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8")},
+			want:       map[string]uint64{"cp-a": 1},
+			unmatched:  []uint64{2},
+			unresolved: []string{"cp-b", "cp-new"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			match := matchEtcdMembers(tt.members, tt.machines, etcdMemberIDs(tt.machines, nil))
+
+			got := map[string]uint64{}
+			for name, member := range match.members {
+				got[name] = member.Id
+			}
+
+			unmatched := []uint64{}
+			for _, member := range match.unmatched {
+				unmatched = append(unmatched, member.Id)
+			}
+
+			g.Expect(got).To(Equal(tt.want))
+			g.Expect(unmatched).To(ConsistOf(tt.unmatched))
+			g.Expect(match.unresolved).To(Equal(tt.unresolved))
+		})
+	}
+}
+
+func newMachinePtr(name string, mutate ...func(*clusterv1.Machine)) *clusterv1.Machine {
+	m := newMachine(name, func(m *clusterv1.Machine) {
+		for _, f := range mutate {
+			f(m)
+		}
+	})
+
+	return &m
+}
+
 func TestEtcdMembershipVerify(t *testing.T) {
 	withNode := func(name, nodeName string, mutate func(*clusterv1.Machine), addresses ...clusterv1.MachineAddress) clusterv1.Machine {
 		return newMachine(name, func(m *clusterv1.Machine) {
@@ -208,10 +331,14 @@ func TestEtcdMembershipVerify(t *testing.T) {
 		out := make([]*machineapi.EtcdMember, 0, len(hostnames))
 
 		for i, hostname := range hostnames {
-			out = append(out, &machineapi.EtcdMember{Id: uint64(i), Hostname: hostname})
+			out = append(out, member(uint64(i+1), hostname))
 		}
 
 		return out
+	}
+
+	with := func(base []*machineapi.EtcdMember, extra ...*machineapi.EtcdMember) []*machineapi.EtcdMember {
+		return append(base, extra...)
 	}
 
 	cpA := withNode("cp-a", "node-a", nil)
@@ -223,12 +350,15 @@ func TestEtcdMembershipVerify(t *testing.T) {
 	// the infrastructure machine name is reported as MachineHostName and differs from the node hostname
 	cpInfraName := withNode("cp-d", "node-d", nil,
 		clusterv1.MachineAddress{Type: clusterv1.MachineHostName, Address: "infra-cp-d"})
+	// cp-e joined etcd under a temporary hostname, and its member ID is recorded
+	cpTempName := withNode("cp-e", "cp-e", withMemberID(100))
 
 	tests := []struct {
-		name    string
-		owned   []clusterv1.Machine
-		members []*machineapi.EtcdMember
-		wantErr string
+		name     string
+		owned    []clusterv1.Machine
+		members  []*machineapi.EtcdMember
+		observed map[string]uint64
+		wantErr  string
 	}{
 		{
 			name:    "every machine has a member",
@@ -239,13 +369,13 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			name:    "a machine without a member is reported",
 			owned:   []clusterv1.Machine{cpA, cpB, cpC},
 			members: members("node-a", "node-b"),
-			wantErr: `etcd is missing a member for control plane machine "cp-c"`,
+			wantErr: `etcd is missing a member for 1 of the control plane machines ["cp-c"]`,
 		},
 		{
 			name:    "a member matching no machine is an orphan",
 			owned:   []clusterv1.Machine{cpA, cpB},
 			members: members("node-a", "node-b", "node-x"),
-			wantErr: `etcd member "node-x" does not match any control plane machine`,
+			wantErr: `etcd member "node-x" does not match any control plane machine (member ID 0000000000000003)`,
 		},
 		{
 			name:    "a leaving machine whose member is still present is tolerated",
@@ -268,6 +398,36 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			members: members("node-a", "infra-cp-d"),
 		},
 		{
+			name:    "a member that joined under a temporary hostname matches by its recorded member ID",
+			owned:   []clusterv1.Machine{cpA, cpTempName},
+			members: with(members("node-a"), member(100, "talos-4y4-bo8")),
+		},
+		{
+			name:     "a member that joined under a temporary hostname matches by its observed member ID",
+			owned:    []clusterv1.Machine{cpA, cpB},
+			members:  with(members("node-a"), member(100, "talos-4y4-bo8")),
+			observed: map[string]uint64{"cp-b": 100},
+		},
+		{
+			name:     "an observed member ID takes precedence over the recorded one",
+			owned:    []clusterv1.Machine{cpA, cpTempName},
+			members:  with(members("node-a"), member(100, "talos-4y4-bo8")),
+			observed: map[string]uint64{"cp-e": 101},
+			wantErr:  `etcd is missing member 0000000000000065 of control plane machine "cp-e"`,
+		},
+		{
+			// the member named cp-e belongs to a deleted machine whose replacement got the same name
+			name:    "a member with the host name of a machine that runs another member is an orphan",
+			owned:   []clusterv1.Machine{cpA, cpTempName},
+			members: with(members("node-a", "cp-e"), member(100, "talos-4y4-bo8")),
+			wantErr: `etcd member "cp-e" does not match any control plane machine`,
+		},
+		{
+			name:    "a machine whose member is not identified claims one unmatched member",
+			owned:   []clusterv1.Machine{cpA, cpB},
+			members: with(members("node-a"), member(100, "talos-4y4-bo8")),
+		},
+		{
 			name:    "a machine without a noderef yet claims one unmatched member",
 			owned:   []clusterv1.Machine{cpA, noNodeRef},
 			members: members("node-a", "node-new"),
@@ -276,7 +436,7 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			name:    "a machine without a noderef yet must still have a member",
 			owned:   []clusterv1.Machine{cpA, noNodeRef},
 			members: members("node-a"),
-			wantErr: `etcd is missing a member for 1 of the control plane machines without a noderef yet ["cp-new"]`,
+			wantErr: `etcd is missing a member for 1 of the control plane machines ["cp-new"]`,
 		},
 		{
 			name:    "a machine without a noderef yet does not excuse a second unmatched member",
@@ -299,64 +459,55 @@ func TestEtcdMembershipVerify(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			membership := newEtcdMembership(tt.owned, remainingMachines(tt.owned))
+			membership := newEtcdMembership(tt.owned, remainingMachines(tt.owned), tt.observed)
 
-			got, err := membership.verify("node-a", tt.members)
+			err := membership.verify("node-a", membership.match(tt.members))
 
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Fatalf("verify() = %v, want nil", err)
 			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
 				t.Fatalf("verify() = %v, want error containing %q", err, tt.wantErr)
-			case tt.wantErr == "" && len(got) != len(tt.members):
-				t.Fatalf("verify() returned %d members, want %d", len(got), len(tt.members))
-			}
-
-			if err == nil {
-				for _, member := range tt.members {
-					if _, ok := got[strings.ToLower(member.Hostname)]; !ok {
-						t.Fatalf("verify() returned members %v without %q", got, member.Hostname)
-					}
-				}
 			}
 		})
 	}
 }
 
 func TestCompareEtcdMembers(t *testing.T) {
-	set := func(names ...string) map[string]struct{} {
-		out := make(map[string]struct{}, len(names))
-
-		for _, name := range names {
-			out[name] = struct{}{}
-		}
-
-		return out
+	set := func(members ...*machineapi.EtcdMember) map[uint64]string {
+		return etcdMemberSet(members)
 	}
 
 	tests := []struct {
 		name     string
-		members  map[string]struct{}
-		previous map[string]struct{}
+		members  map[uint64]string
+		previous map[uint64]string
 		wantErr  string
 	}{
 		{
 			name:     "same members",
-			members:  set("node-a", "node-b"),
-			previous: set("node-b", "node-a"),
+			members:  set(member(1, "node-a"), member(2, "node-b")),
+			previous: set(member(2, "node-b"), member(1, "node-a")),
 		},
 		{
 			name:     "a member only this node knows",
-			members:  set("node-a", "node-b", "node-x"),
-			previous: set("node-a", "node-b"),
-			wantErr:  `node-b: etcd member "node-x" is not known to node-a`,
+			members:  set(member(1, "node-a"), member(2, "node-b"), member(3, "node-x")),
+			previous: set(member(1, "node-a"), member(2, "node-b")),
+			wantErr:  `node-b: etcd member "node-x" (0000000000000003) is not known to node-a`,
 		},
 		{
 			// a member list that is shorter on a later node is as much of a split view as a longer one
 			name:     "a member only the previous node knows",
-			members:  set("node-a", "node-b"),
-			previous: set("node-a", "node-b", "node-x"),
-			wantErr:  `node-b: etcd member "node-x" known to node-a is missing`,
+			members:  set(member(1, "node-a"), member(2, "node-b")),
+			previous: set(member(1, "node-a"), member(2, "node-b"), member(3, "node-x")),
+			wantErr:  `node-b: etcd member "node-x" (0000000000000003) known to node-a is missing`,
+		},
+		{
+			// the same name does not make it the same member
+			name:     "a member with another ID",
+			members:  set(member(1, "node-a"), member(4, "node-b")),
+			previous: set(member(1, "node-a"), member(2, "node-b")),
+			wantErr:  `node-b: etcd member "node-b" (0000000000000004) is not known to node-a`,
 		},
 	}
 
@@ -388,6 +539,9 @@ func TestIdentifyEtcdMember(t *testing.T) {
 	unnamed := newTestMachine("new", now, withoutNodeRef())
 	other := newTestMachine("m2", now)
 	otherUnnamed := newTestMachine("new2", now, withoutNodeRef())
+	withID := newTestMachine("m3", now, withAnnotation(etcdMemberIDAnnotation, formatEtcdMemberID(100)))
+	otherWithID := newTestMachine("m4", now, withAnnotation(etcdMemberIDAnnotation, formatEtcdMemberID(101)))
+	tempHostname := member(100, "talos-4y4-bo8")
 
 	for _, tc := range []struct {
 		name       string
@@ -406,11 +560,43 @@ func TestIdentifyEtcdMember(t *testing.T) {
 			wantKnown:  true,
 		},
 		{
+			name:       "matched by member ID",
+			machine:    withID,
+			machines:   []*clusterv1.Machine{withID, other},
+			members:    append(etcdMembersFor("m2", "m3"), tempHostname),
+			wantMember: "talos-4y4-bo8",
+			wantKnown:  true,
+		},
+		{
+			name:      "not a member by member ID, whatever the member names",
+			machine:   withID,
+			machines:  []*clusterv1.Machine{withID, other},
+			members:   etcdMembersFor("m2", "m3"),
+			wantKnown: true,
+		},
+		{
 			name:      "not a member",
 			machine:   named,
 			machines:  []*clusterv1.Machine{named, other},
-			members:   etcdMembersFor("m2", "x"),
+			members:   etcdMembersFor("m2"),
 			wantKnown: true,
+		},
+		{
+			// m1 may have joined etcd under a temporary hostname
+			name:       "by elimination when the name doesn't match",
+			machine:    named,
+			machines:   []*clusterv1.Machine{named, other},
+			members:    etcdMembersFor("m2", "x"),
+			wantMember: "x",
+			wantKnown:  true,
+		},
+		{
+			name:       "by elimination, other machines matched by member ID",
+			machine:    unnamed,
+			machines:   []*clusterv1.Machine{unnamed, otherWithID},
+			members:    []*machineapi.EtcdMember{member(101, "talos-4y4-bo8"), member(5, "ip-10-0-0-1")},
+			wantMember: "ip-10-0-0-1",
+			wantKnown:  true,
 		},
 		{
 			name:      "without host names, every member matches another machine",
