@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
@@ -39,6 +40,18 @@ const (
 	// applyCacheTTL is how long an apply that did not change the object is remembered.
 	applyCacheTTL = 30 * time.Minute
 )
+
+// desiredMachineTaints returns the taints of the machine template, or none when the MachineTaintPropagation feature
+// gate is disabled: the Machine webhook of Cluster API rejects every Machine that sets taints then, which would stop
+// the reconcile of the TalosControlPlane at its first Machine. This also covers taints stored while the gate was
+// enabled: they are dropped from the Machines by the apply.
+func desiredMachineTaints(tcp *controlplanev1.TalosControlPlane) []clusterv1.MachineTaint {
+	if !feature.Gates.Enabled(feature.MachineTaintPropagation) {
+		return nil
+	}
+
+	return slices.Clone(tcp.Spec.MachineTemplate.Spec.Taints)
+}
 
 // computeDesiredMachine computes the Machine of the TalosControlPlane, the way KubeadmControlPlane does.
 //
@@ -64,7 +77,7 @@ func computeDesiredMachine(tcp *controlplanev1.TalosControlPlane, cluster *clust
 			ClusterName:     cluster.Name,
 			Version:         tcp.Spec.Version,
 			ReadinessGates:  slices.Clone(tcp.Spec.MachineTemplate.Spec.ReadinessGates),
-			Taints:          slices.Clone(tcp.Spec.MachineTemplate.Spec.Taints),
+			Taints:          desiredMachineTaints(tcp),
 			Deletion:        buildMachineDeletionSpec(tcp.Spec.MachineTemplate.Spec.Deletion),
 			MinReadySeconds: copyInt32(tcp.Spec.MinReadySeconds),
 		},

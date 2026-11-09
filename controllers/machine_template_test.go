@@ -18,8 +18,10 @@ import (
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/labels/format"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -776,10 +778,12 @@ func TestReconcileDeleteSyncsDeletionTimeouts(t *testing.T) {
 }
 
 // TestReconcileMachineTemplateStatePropagatesTaints checks that the taints of the machine template are applied to
-// the Machines in place, like KubeadmControlPlane does, and that the taints removed from it are removed from them.
+// the Machines in place, like KubeadmControlPlane does, that the taints removed from it are removed from them, and
+// that no taints are applied while the MachineTaintPropagation feature gate is disabled, as the Machine webhook of
+// Cluster API would reject the Machine then.
+//
+// It is not parallel, as it sets the feature gate.
 func TestReconcileMachineTemplateStatePropagatesTaints(t *testing.T) {
-	t.Parallel()
-
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
@@ -841,6 +845,8 @@ func TestReconcileMachineTemplateStatePropagatesTaints(t *testing.T) {
 		Propagation: clusterv1.MachineTaintPropagationAlways,
 	}
 
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+
 	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
 
 	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
@@ -858,5 +864,18 @@ func TestReconcileMachineTemplateStatePropagatesTaints(t *testing.T) {
 
 	if taints := sync(); len(taints) != 0 {
 		t.Fatalf("expected the taint removed from the machine template to be removed, got %v", taints)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the taint to be propagated again, got %v", taints)
+	}
+
+	// Taints stored while the feature gate was enabled are dropped from the Machines once it is disabled.
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+	if taints := sync(); len(taints) != 0 {
+		t.Fatalf("expected no taints to be applied with the feature gate disabled, got %v", taints)
 	}
 }
