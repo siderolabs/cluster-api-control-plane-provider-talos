@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -80,15 +81,28 @@ func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {
 
 // ValidateCreate implements admission.Validator so a webhook will be registered for the type.
 func (*TalosControlPlane) ValidateCreate(_ context.Context, obj *TalosControlPlane) (admission.Warnings, error) {
-	return nil, obj.toErr(obj.validate())
+	allErrs := obj.validate()
+	allErrs = append(allErrs, validateMachineTaintsFeatureGate(obj.Spec.MachineTemplate.Spec.Taints, machineTemplateTaintsPath)...)
+
+	return nil, obj.toErr(allErrs)
 }
 
 // ValidateUpdate implements admission.Validator so a webhook will be registered for the type.
 //
 // Like KubeadmControlPlane, the infrastructure reference may point to a template of another kind:
 // the Machines cloned from the previous template are rolled out.
-func (*TalosControlPlane) ValidateUpdate(_ context.Context, _, newObj *TalosControlPlane) (admission.Warnings, error) {
-	return nil, newObj.toErr(newObj.validate())
+//
+// The MachineTaintPropagation feature gate is only checked when the taints change: a TalosControlPlane whose taints
+// were set while the gate was enabled can still be updated once it is disabled, so that the controller can keep
+// patching its status and remove its finalizer.
+func (*TalosControlPlane) ValidateUpdate(_ context.Context, oldObj, newObj *TalosControlPlane) (admission.Warnings, error) {
+	allErrs := newObj.validate()
+
+	if !apiequality.Semantic.DeepEqual(oldObj.Spec.MachineTemplate.Spec.Taints, newObj.Spec.MachineTemplate.Spec.Taints) {
+		allErrs = append(allErrs, validateMachineTaintsFeatureGate(newObj.Spec.MachineTemplate.Spec.Taints, machineTemplateTaintsPath)...)
+	}
+
+	return nil, newObj.toErr(allErrs)
 }
 
 // ValidateDelete implements admission.Validator so a webhook will be registered for the type.
@@ -109,7 +123,7 @@ func (r *TalosControlPlane) validate() field.ErrorList {
 	allErrs = append(allErrs, validateInfrastructureRef(r.Spec.MachineTemplate.Spec.InfrastructureRef, field.NewPath("spec", "machineTemplate", "spec", "infrastructureRef"))...)
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.MachineNamingStrategy, field.NewPath("spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.RolloutStrategy, field.NewPath("spec", "rolloutStrategy"))...)
-	allErrs = append(allErrs, validateMachineTaints(r.Spec.MachineTemplate.Spec.Taints, field.NewPath("spec", "machineTemplate", "spec", "taints"))...)
+	allErrs = append(allErrs, validateMachineTaints(r.Spec.MachineTemplate.Spec.Taints, machineTemplateTaintsPath)...)
 
 	return allErrs
 }
@@ -130,15 +144,24 @@ func validateInfrastructureRef(ref clusterv1.ContractVersionedObjectReference, f
 	return allErrs
 }
 
-// validateMachineTaints validates the taints of the machine template the way KubeadmControlPlane does: they are
-// only allowed with the MachineTaintPropagation feature gate, and must not use the keys reserved for Cluster API,
-// the node lifecycle and the cloud provider.
+// machineTemplateTaintsPath is the path of the taints of the machine template of a TalosControlPlane.
+var machineTemplateTaintsPath = field.NewPath("spec", "machineTemplate", "spec", "taints")
+
+// validateMachineTaintsFeatureGate forbids the taints of the machine template unless the MachineTaintPropagation
+// feature gate is enabled, like KubeadmControlPlane does.
+func validateMachineTaintsFeatureGate(taints []clusterv1.MachineTaint, fldPath *field.Path) field.ErrorList {
+	if feature.Gates.Enabled(feature.MachineTaintPropagation) || len(taints) == 0 {
+		return nil
+	}
+
+	return field.ErrorList{field.Forbidden(fldPath, "taints are not allowed to be set when the feature gate MachineTaintPropagation is disabled")}
+}
+
+// validateMachineTaints validates the taints of the machine template the way KubeadmControlPlane does: they must
+// not use the keys reserved for Cluster API, the node lifecycle and the cloud provider. The feature gate is checked
+// separately, see validateMachineTaintsFeatureGate.
 func validateMachineTaints(taints []clusterv1.MachineTaint, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
-
-	if !feature.Gates.Enabled(feature.MachineTaintPropagation) && len(taints) > 0 {
-		allErrs = append(allErrs, field.Forbidden(fldPath, "taints are not allowed to be set when the feature gate MachineTaintPropagation is disabled"))
-	}
 
 	for i, taint := range taints {
 		idxPath := fldPath.Index(i)
