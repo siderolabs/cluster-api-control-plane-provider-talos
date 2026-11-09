@@ -160,6 +160,9 @@ func validateMachineTaintsFeatureGate(taints []clusterv1.MachineTaint, fldPath *
 // validateMachineTaints validates the taints of the machine template the way KubeadmControlPlane does: they must
 // not use the keys reserved for Cluster API, the node lifecycle and the cloud provider. The feature gate is checked
 // separately, see validateMachineTaintsFeatureGate.
+//
+// It is a copy of ValidateMachineTaints of sigs.k8s.io/cluster-api v1.14.4 internal/util/taints, which can't be
+// imported: compare it with that function, and TestValidateMachineTaints with its tests, on every CAPI bump.
 func validateMachineTaints(taints []clusterv1.MachineTaint, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 

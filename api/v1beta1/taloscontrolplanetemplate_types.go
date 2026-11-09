@@ -76,6 +76,7 @@ type TalosControlPlaneTemplateMachineTemplateSpec struct {
 	// Deletion contains configuration options for Machine deletion.
 	// +optional
 	Deletion TalosControlPlaneMachineTemplateDeletionSpec `json:"deletion,omitempty,omitzero"`
+
 	// Taints are the node taints that Cluster API will manage.
 	// This list is not necessarily complete: other Kubernetes components may add or remove other taints from nodes,
 	// e.g. the node controller might add the node.kubernetes.io/not-ready taint.
