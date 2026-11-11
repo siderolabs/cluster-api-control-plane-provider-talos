@@ -81,6 +81,11 @@ func (r *TalosControlPlaneTemplate) validate() (admission.Warnings, error) {
 
 	allErrs = append(allErrs, validateMachineNamingStrategy(r.Spec.Template.Spec.MachineNamingStrategy, field.NewPath("spec", "template", "spec", "machineNamingStrategy"))...)
 	allErrs = append(allErrs, validateRolloutStrategy(r.Spec.Template.Spec.RolloutStrategy, field.NewPath("spec", "template", "spec", "rolloutStrategy"))...)
+	taintsPath := field.NewPath("spec", "template", "spec", "machineTemplate", "spec", "taints")
+	allErrs = append(allErrs, validateMachineTaints(r.Spec.Template.Spec.MachineTemplate.Spec.Taints, taintsPath)...)
+	// The spec of a TalosControlPlaneTemplate is immutable, so the feature gate only needs to be checked on create.
+	allErrs = append(allErrs, validateMachineTaintsFeatureGate(r.Spec.Template.Spec.MachineTemplate.Spec.Taints, taintsPath)...)
+
 	if len(allErrs) == 0 {
 		return nil, nil
 	}

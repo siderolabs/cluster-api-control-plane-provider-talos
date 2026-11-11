@@ -7,17 +7,21 @@ package controllers
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/labels/format"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -770,5 +774,192 @@ func TestReconcileDeleteSyncsDeletionTimeouts(t *testing.T) {
 
 	if other.DeletionTimestamp.IsZero() {
 		t.Fatal("expected the other machine to be deleted")
+	}
+}
+
+// TestReconcileMachineTemplateStatePropagatesTaints checks that the taints of the machine template are applied to
+// the Machines in place, like KubeadmControlPlane does, that the taints removed from it are removed from them, and
+// that no taints are applied while the MachineTaintPropagation feature gate is disabled, as the Machine webhook of
+// Cluster API would reject the Machine then.
+//
+// It is not parallel, as it sets the feature gate.
+func TestReconcileMachineTemplateStatePropagatesTaints(t *testing.T) {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-cluster",
+			Namespace: "default",
+		},
+	}
+
+	tcp := &controlplanev1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "talos-control-plane",
+			Namespace: "default",
+			UID:       "tcp-uid",
+		},
+	}
+
+	machine := computeDesiredMachine(tcp, cluster, nil)
+	machine.Name = "cp-0"
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
+
+	if err := fakeClient.Create(context.Background(), machine, client.FieldOwner("manager")); err != nil {
+		t.Fatalf("failed to create machine: %v", err)
+	}
+
+	reconciler := &TalosControlPlaneReconciler{
+		Client:         fakeClient,
+		classicManager: "manager",
+	}
+
+	sync := func() []clusterv1.MachineTaint {
+		t.Helper()
+
+		machines := &clusterv1.MachineList{}
+		if err := fakeClient.List(context.Background(), machines); err != nil {
+			t.Fatalf("failed to list machines: %v", err)
+		}
+
+		if err := reconciler.reconcileMachineTemplateState(context.Background(), cluster, tcp, machines); err != nil {
+			t.Fatalf("reconcileMachineTemplateState failed: %v", err)
+		}
+
+		persisted := &clusterv1.Machine{}
+		if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(machine), persisted); err != nil {
+			t.Fatalf("failed to get reconciled machine: %v", err)
+		}
+
+		return persisted.Spec.Taints
+	}
+
+	dedicated := clusterv1.MachineTaint{
+		Key:         "example.siderolabs.dev/dedicated",
+		Value:       "control-plane",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the taint to be propagated, got %v", taints)
+	}
+
+	dedicated.Value = "etcd"
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the changed taint to be propagated, got %v", taints)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = nil
+
+	if taints := sync(); len(taints) != 0 {
+		t.Fatalf("expected the taint removed from the machine template to be removed, got %v", taints)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{dedicated}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{dedicated}) {
+		t.Fatalf("expected the taint to be propagated again, got %v", taints)
+	}
+
+	// Taints stored while the feature gate was enabled are dropped from the Machines once it is disabled.
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+	if taints := sync(); len(taints) != 0 {
+		t.Fatalf("expected no taints to be applied with the feature gate disabled, got %v", taints)
+	}
+}
+
+// TestSyncDeletingMachinesSyncsTaints checks that the taints of the TalosControlPlane reach a Machine that is already
+// being deleted, like KubeadmControlPlane does, so that node.kubernetes.io/out-of-service can unblock the teardown of
+// an unreachable Node: they replace the taints of the Machine, a Machine already in sync is not patched again, and
+// the taints of the Machine are left as they are while the MachineTaintPropagation feature gate is disabled.
+//
+// It is not parallel, as it sets the feature gate.
+func TestSyncDeletingMachinesSyncsTaints(t *testing.T) {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+
+	tcp, objects := deletionTimeoutTestObjects([]string{"cp-0"}, map[string]bool{"cp-0": true})
+
+	patches := 0
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+
+	reconciler := &TalosControlPlaneReconciler{Client: fakeClient, classicManager: "manager"}
+
+	sync := func() []clusterv1.MachineTaint {
+		t.Helper()
+
+		machines := &clusterv1.MachineList{}
+		if err := fakeClient.List(context.Background(), machines); err != nil {
+			t.Fatalf("failed to list machines: %v", err)
+		}
+
+		if err := reconciler.syncDeletingMachines(context.Background(), tcp, machines); err != nil {
+			t.Fatalf("syncDeletingMachines failed: %v", err)
+		}
+
+		persisted := &clusterv1.Machine{}
+		if err := fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "cp-0"}, persisted); err != nil {
+			t.Fatalf("failed to get cp-0: %v", err)
+		}
+
+		return persisted.Spec.Taints
+	}
+
+	// Sync the drain timeout first, so that the patches counted below are the ones of the taints.
+	sync()
+
+	outOfService := clusterv1.MachineTaint{
+		Key:         "node.kubernetes.io/out-of-service",
+		Value:       "nodeshutdown",
+		Effect:      corev1.TaintEffectNoExecute,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = []clusterv1.MachineTaint{outOfService}
+
+	// With the feature gate disabled, the taints of the deleting Machine are left as they are.
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+	patches = 0
+
+	if taints := sync(); len(taints) != 0 || patches != 0 {
+		t.Fatalf("expected no taints to be synced with the feature gate disabled, got %v and %d patches", taints, patches)
+	}
+
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{outOfService}) || patches != 1 {
+		t.Fatalf("expected the out-of-service taint to be synced with one patch, got %v and %d patches", taints, patches)
+	}
+
+	if taints := sync(); !reflect.DeepEqual(taints, []clusterv1.MachineTaint{outOfService}) || patches != 1 {
+		t.Fatalf("expected a deleting machine in sync not to be patched again, got %v and %d patches", taints, patches)
+	}
+
+	tcp.Spec.MachineTemplate.Spec.Taints = nil
+
+	if taints := sync(); len(taints) != 0 || patches != 2 {
+		t.Fatalf("expected the taint removed from the TalosControlPlane to be removed, got %v and %d patches", taints, patches)
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +40,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/collections"
@@ -395,7 +397,7 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 // Only the Machines the TalosControlPlane controls are applied: the apply sets the TalosControlPlane as their
 // controller, which would adopt a Machine without one, and fail for a Machine with another one.
 //
-// A Machine that is being deleted is skipped: it only gets the deletion timeouts, see syncDeletingMachines.
+// A Machine that is being deleted is skipped: it only gets the deletion timeouts and taints, see syncDeletingMachines.
 func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
 	for i := range machines.Items {
 		machine := &machines.Items[i]
@@ -419,8 +421,8 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 	return nil
 }
 
-// syncDeletingMachines propagates the deletion timeouts of the TalosControlPlane to the Machines it controls that are
-// being deleted, see syncDeletingMachine. A Machine that fails to sync doesn't stop the others: the errors are
+// syncDeletingMachines propagates the deletion timeouts and the taints of the TalosControlPlane to the Machines it
+// controls that are being deleted, see syncDeletingMachine. A Machine that fails to sync doesn't stop the others: the errors are
 // aggregated.
 func (r *TalosControlPlaneReconciler) syncDeletingMachines(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) error {
 	var errs []error
@@ -439,13 +441,16 @@ func (r *TalosControlPlaneReconciler) syncDeletingMachines(ctx context.Context, 
 	return kerrors.NewAggregate(errs)
 }
 
-// syncDeletingMachine propagates the deletion timeouts of the TalosControlPlane to a Machine that is being deleted,
-// the way KubeadmControlPlane does: the timeouts are the only fields that still matter for such a Machine, and
-// setting them on the TalosControlPlane lets a drain blocked by a PodDisruptionBudget, or a volume detach or Node
-// deletion that never completes, end without patching the Machine by hand.
+// syncDeletingMachine propagates the deletion timeouts and the taints of the TalosControlPlane to a Machine that is
+// being deleted, the way KubeadmControlPlane does: they are the only fields that still matter for such a Machine.
+// Setting the timeouts on the TalosControlPlane lets a drain blocked by a PodDisruptionBudget, or a volume detach or
+// Node deletion that never completes, end without patching the Machine by hand. Setting the
+// node.kubernetes.io/out-of-service taint on it lets the volumes of an unreachable Node be detached by force.
 //
 // Only the timeouts the TalosControlPlane sets are propagated: an unset one leaves the Machine as it is, so that a
-// timeout set on the Machine by hand, or defaulted by the Machine webhook, is kept. The Machine is patched rather
+// timeout set on the Machine by hand, or defaulted by the Machine webhook, is kept. The taints replace those of the
+// Machine, like KubeadmControlPlane does, so that a taint removed from the TalosControlPlane is removed from it too;
+// they are left as they are when the MachineTaintPropagation feature gate is disabled. The Machine is patched rather
 // than applied, so that the apply does not take over the other fields of a Machine that is going away. The Machine
 // is only updated in memory once the patch succeeds.
 func (r *TalosControlPlaneReconciler) syncDeletingMachine(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) error {
@@ -456,6 +461,10 @@ func (r *TalosControlPlaneReconciler) syncDeletingMachine(ctx context.Context, t
 	changed = syncTimeout(&patched.Spec.Deletion.NodeVolumeDetachTimeoutSeconds, desired.NodeVolumeDetachTimeoutSeconds) || changed
 	changed = syncTimeout(&patched.Spec.Deletion.NodeDeletionTimeoutSeconds, desired.NodeDeletionTimeoutSeconds) || changed
 
+	if feature.Gates.Enabled(feature.MachineTaintPropagation) {
+		changed = syncTaints(&patched.Spec.Taints, tcp.Spec.MachineTemplate.Spec.Taints) || changed
+	}
+
 	if !changed {
 		return nil
 	}
@@ -465,12 +474,23 @@ func (r *TalosControlPlaneReconciler) syncDeletingMachine(ctx context.Context, t
 			return nil
 		}
 
-		return errors.Wrapf(err, "failed to sync the deletion timeouts of deleting machine %s", machine.Name)
+		return errors.Wrapf(err, "failed to sync the deletion timeouts and taints of deleting machine %s", machine.Name)
 	}
 
 	*machine = *patched
 
 	return nil
+}
+
+// syncTaints replaces the taints with the desired ones if they differ, and reports whether it changed them.
+func syncTaints(taints *[]clusterv1.MachineTaint, desired []clusterv1.MachineTaint) bool {
+	if len(*taints) == 0 && len(desired) == 0 || apiequality.Semantic.DeepEqual(*taints, desired) {
+		return false
+	}
+
+	*taints = slices.Clone(desired)
+
+	return true
 }
 
 // syncTimeout sets the timeout to the desired one if that is set and differs, and reports whether it changed it.

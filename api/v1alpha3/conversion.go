@@ -74,6 +74,7 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		dst.Spec.MachineTemplate.ObjectMeta = restored.Spec.MachineTemplate.ObjectMeta
 		dst.Spec.MachineTemplate.Spec.ReadinessGates = restored.Spec.MachineTemplate.Spec.ReadinessGates
 		dst.Spec.MachineTemplate.Spec.Deletion = restored.Spec.MachineTemplate.Spec.Deletion
+		dst.Spec.MachineTemplate.Spec.Taints = restored.Spec.MachineTemplate.Spec.Taints
 
 		// The apiVersion is left empty on down-conversion when it cannot be resolved: recover the apiGroup.
 		infraRef := &dst.Spec.MachineTemplate.Spec.InfrastructureRef

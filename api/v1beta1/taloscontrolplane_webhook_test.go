@@ -10,9 +10,13 @@ import (
 	"testing"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/yaml"
 )
 
@@ -505,5 +509,170 @@ func cabptControlPlaneConfig(generateType string, strategicPatches []string) cab
 	return cabptv1.TalosConfigSpec{
 		GenerateType:     generateType,
 		StrategicPatches: strategicPatches,
+	}
+}
+
+// TestValidateMachineTaints checks that the taints of the machine template are validated like KubeadmControlPlane
+// does, in the TalosControlPlane and the TalosControlPlaneTemplate.
+func TestValidateMachineTaints(t *testing.T) {
+	validate := func(taints []clusterv1.MachineTaint) []error {
+		tcp := &TalosControlPlane{
+			Spec: TalosControlPlaneSpec{
+				Version: "v1.31.0",
+				MachineTemplate: TalosControlPlaneMachineTemplate{
+					Spec: TalosControlPlaneMachineTemplateSpec{
+						InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+							Name:     "cp-template",
+							Kind:     "DockerMachineTemplate",
+							APIGroup: "infrastructure.cluster.x-k8s.io",
+						},
+						Taints: taints,
+					},
+				},
+			},
+		}
+
+		tcpt := &TalosControlPlaneTemplate{
+			Spec: TalosControlPlaneTemplateSpec{
+				Template: TalosControlPlaneTemplateResource{
+					Spec: TalosControlPlaneTemplateResourceSpec{
+						MachineTemplate: TalosControlPlaneTemplateMachineTemplate{
+							Spec: TalosControlPlaneTemplateMachineTemplateSpec{Taints: taints},
+						},
+					},
+				},
+			},
+		}
+
+		_, tcpErr := tcp.ValidateCreate(context.Background(), tcp)
+		_, tcptErr := tcpt.ValidateCreate(context.Background(), tcpt)
+
+		return []error{tcpErr, tcptErr}
+	}
+
+	taint := clusterv1.MachineTaint{
+		Key:         "example.siderolabs.dev/dedicated",
+		Value:       "control-plane",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	t.Run("feature gate disabled", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+		for _, err := range validate(nil) {
+			if err != nil {
+				t.Fatalf("expected no taints to be valid, got %v", err)
+			}
+		}
+
+		for _, err := range validate([]clusterv1.MachineTaint{taint}) {
+			if err == nil || !strings.Contains(err.Error(), "feature gate MachineTaintPropagation is disabled") {
+				t.Fatalf("expected the taints to be forbidden, got %v", err)
+			}
+		}
+	})
+
+	t.Run("feature gate enabled", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, true)
+
+		for _, err := range validate([]clusterv1.MachineTaint{taint}) {
+			if err != nil {
+				t.Fatalf("expected the taint to be valid, got %v", err)
+			}
+		}
+
+		for _, key := range []string{
+			clusterv1.NodeUninitializedTaint.Key,
+			clusterv1.NodeOutdatedRevisionTaint.Key,
+			"node.kubernetes.io/not-ready",
+			"node.cloudprovider.kubernetes.io/uninitialized",
+			"node-role.kubernetes.io/master",
+			"not a key",
+		} {
+			invalid := taint
+			invalid.Key = key
+
+			for _, err := range validate([]clusterv1.MachineTaint{invalid}) {
+				if err == nil || !strings.Contains(err.Error(), "taints[0].key") {
+					t.Fatalf("expected the taint key %q to be rejected, got %v", key, err)
+				}
+			}
+		}
+
+		outOfService := taint
+		outOfService.Key = "node.kubernetes.io/out-of-service"
+
+		for _, err := range validate([]clusterv1.MachineTaint{outOfService}) {
+			if err != nil {
+				t.Fatalf("expected the out-of-service taint to be valid, got %v", err)
+			}
+		}
+	})
+}
+
+// TestTalosControlPlaneValidateUpdateChecksTaintsFeatureGateOnChange checks that a TalosControlPlane whose taints were
+// set while the MachineTaintPropagation feature gate was enabled can still be updated once it is disabled, as long as
+// its taints don't change, so that the controller can keep patching it and remove its finalizer, and that a change of
+// the taints is still forbidden then.
+//
+// It is not parallel, as it sets the feature gate.
+func TestTalosControlPlaneValidateUpdateChecksTaintsFeatureGateOnChange(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, feature.Gates, feature.MachineTaintPropagation, false)
+
+	taint := clusterv1.MachineTaint{
+		Key:         "example.siderolabs.dev/dedicated",
+		Value:       "control-plane",
+		Effect:      corev1.TaintEffectNoSchedule,
+		Propagation: clusterv1.MachineTaintPropagationAlways,
+	}
+
+	oldObj := &TalosControlPlane{
+		Spec: TalosControlPlaneSpec{
+			Version: "v1.31.0",
+			MachineTemplate: TalosControlPlaneMachineTemplate{
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name:     "cp-template",
+						Kind:     "DockerMachineTemplate",
+						APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
+					Taints: []clusterv1.MachineTaint{taint},
+				},
+			},
+		},
+	}
+
+	// The finalizer removal, and any other update that leaves the taints alone, is allowed.
+	newObj := oldObj.DeepCopy()
+	newObj.Finalizers = nil
+	newObj.Spec.Replicas = ptr.To[int32](3)
+
+	if _, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj); err != nil {
+		t.Fatalf("expected an update that leaves the taints alone to be allowed, got %v", err)
+	}
+
+	// Removing the taints is allowed too.
+	newObj = oldObj.DeepCopy()
+	newObj.Spec.MachineTemplate.Spec.Taints = nil
+
+	if _, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj); err != nil {
+		t.Fatalf("expected the removal of the taints to be allowed, got %v", err)
+	}
+
+	// Changing the taints is forbidden.
+	newObj = oldObj.DeepCopy()
+	newObj.Spec.MachineTemplate.Spec.Taints[0].Value = "etcd"
+
+	if _, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj); err == nil || !strings.Contains(err.Error(), "feature gate MachineTaintPropagation is disabled") {
+		t.Fatalf("expected the change of the taints to be forbidden, got %v", err)
+	}
+
+	// The reserved keys are still rejected when the taints don't change.
+	oldObj.Spec.MachineTemplate.Spec.Taints[0].Key = clusterv1.NodeUninitializedTaint.Key
+	newObj = oldObj.DeepCopy()
+
+	if _, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj); err == nil || !strings.Contains(err.Error(), "taints[0].key") {
+		t.Fatalf("expected the reserved taint key to be rejected, got %v", err)
 	}
 }
