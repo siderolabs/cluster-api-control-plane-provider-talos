@@ -1417,11 +1417,19 @@ func TestCanSafelyRemoveEtcdMember(t *testing.T) {
 			safe:     true,
 		},
 		{
-			// m1 runs member 9, which is gone: the member named m1 is not its member and counts as unhealthy
-			name:     "2 members, a member with the name of another machine but not its ID",
+			// m1 recorded member 9, which is gone: m1 is matched by host name
+			name:     "2 members, an outdated member ID falls back to the host name",
 			machines: 2,
 			members:  etcdMembersFor("m0", "m1"),
 			ids:      map[string]uint64{"m1": 9},
+			safe:     true,
+		},
+		{
+			// m0 and m1 share member ID 2: it identifies neither, m0's member can't be told and counts as unhealthy
+			name:     "2 members, a member ID that two machines share identifies neither",
+			machines: 2,
+			members:  etcdMembersFor("talos-4y4-bo8", "m1"),
+			ids:      map[string]uint64{"m0": 2, "m1": 2},
 			safe:     false,
 		},
 	} {

@@ -25,9 +25,13 @@ func (suite *ControllersSuite) TestAuditEtcdMatchesMembersByID() {
 	for i, tc := range []struct {
 		name string
 		// idA and idB are the member IDs foo-a and foo-b report, 0 if they report none
-		idA, idB   uint64
-		members    []*machine.EtcdMember
-		wantRemove []uint64
+		idA, idB uint64
+		// recordedA and recordedB are the member IDs recorded on foo-a and foo-b, 0 if none is
+		recordedA, recordedB uint64
+		members              []*machine.EtcdMember
+		wantRemove           []uint64
+		// wantNoStatusCalls tells that the machines must not be asked for their member ID
+		wantNoStatusCalls bool
 	}{
 		{
 			name: "a member that joined under a temporary hostname is kept, an orphan is removed",
@@ -69,6 +73,40 @@ func (suite *ControllersSuite) TestAuditEtcdMatchesMembersByID() {
 				{Id: 100, Hostname: "talos-4y4-bo8"},
 			},
 		},
+		{
+			// foo-b was reset and joined etcd again as member 9 under the same hostname; its recorded member 5 is gone,
+			// and it doesn't report its member ID while its etcd starts
+			name:      "a member is matched by host name when the recorded member ID is outdated",
+			idA:       1,
+			recordedA: 1,
+			recordedB: 5,
+			members: []*machine.EtcdMember{
+				{Id: 1, Hostname: "foo-a"},
+				{Id: 9, Hostname: "foo-b"},
+			},
+		},
+		{
+			// foo-b recorded the member ID of foo-a, e.g. because its Talos endpoint reached foo-a's node
+			name:      "a member ID that two machines share identifies neither",
+			recordedA: 1,
+			recordedB: 1,
+			members: []*machine.EtcdMember{
+				{Id: 1, Hostname: "foo-a"},
+				{Id: 2, Hostname: "talos-4y4-bo8"},
+			},
+		},
+		{
+			name:      "the machines are not asked for their member ID when the recorded ones match every member",
+			idA:       1,
+			idB:       100,
+			recordedA: 1,
+			recordedB: 100,
+			members: []*machine.EtcdMember{
+				{Id: 1, Hostname: "foo-a"},
+				{Id: 100, Hostname: "talos-4y4-bo8"},
+			},
+			wantNoStatusCalls: true,
+		},
 	} {
 		suite.Run(tc.name, func() {
 			g := NewWithT(suite.T())
@@ -91,10 +129,16 @@ func (suite *ControllersSuite) TestAuditEtcdMatchesMembersByID() {
 			msB.setEtcdMemberID(tc.idB)
 
 			suite.createMachines(fakeClient, cluster, tcp, addrA, addrB)
+			suite.recordEtcdMemberID(fakeClient, cluster, "foo-a", tc.recordedA)
+			suite.recordEtcdMemberID(fakeClient, cluster, "foo-b", tc.recordedB)
 
 			r := newReconciler(fakeClient)
 
 			g.Expect(r.AuditEtcd(suite.ctx, tcp, util.ObjectKey(cluster))).To(Succeed())
+
+			if tc.wantNoStatusCalls {
+				g.Expect(msA.getEtcdStatusCalls() + msB.getEtcdStatusCalls()).To(BeZero())
+			}
 
 			removed := []uint64{}
 
@@ -107,6 +151,51 @@ func (suite *ControllersSuite) TestAuditEtcdMatchesMembersByID() {
 			g.Expect(removed).To(ConsistOf(tc.wantRemove))
 		})
 	}
+}
+
+// TestAuditEtcdEmptyMemberList checks that auditEtcd fails, rather than panics, when the member list response has no
+// message.
+func (suite *ControllersSuite) TestAuditEtcdEmptyMemberList() {
+	g := NewWithT(suite.T())
+
+	fakeClient := newFakeClient()
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-etcd-audit-empty", ptr.To[int32](2))
+
+	msA, addrA := suite.startMachineServer()
+	msB, addrB := suite.startMachineServer()
+
+	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, addrA)).To(Succeed())
+
+	for _, ms := range []*machineService{msA, msB} {
+		ms.setEtcdMembersResponse(&machine.EtcdMemberListResponse{})
+	}
+
+	suite.createMachines(fakeClient, cluster, tcp, addrA, addrB)
+
+	r := newReconciler(fakeClient)
+
+	g.Expect(r.AuditEtcd(suite.ctx, tcp, util.ObjectKey(cluster))).To(MatchError(ContainSubstring("empty etcd member list response")))
+}
+
+// recordEtcdMemberID records the etcd member ID on the machine, as the etcd health check does; 0 records none.
+func (suite *ControllersSuite) recordEtcdMemberID(fakeClient client.Client, cluster *clusterv1.Cluster, name string, id uint64) {
+	if id == 0 {
+		return
+	}
+
+	g := NewWithT(suite.T())
+
+	var m clusterv1.Machine
+
+	g.Expect(fakeClient.Get(suite.ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: name}, &m)).To(Succeed())
+
+	if m.Annotations == nil {
+		m.Annotations = map[string]string{}
+	}
+
+	m.Annotations[controllers.EtcdMemberIDAnnotation] = fmt.Sprintf("%016x", id)
+
+	g.Expect(fakeClient.Update(suite.ctx, &m)).To(Succeed())
 }
 
 // TestEtcdMemberIDIsRecorded checks that the etcd member ID each machine reports to the etcd health check is recorded

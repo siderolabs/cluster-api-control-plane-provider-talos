@@ -259,12 +259,28 @@ func TestMatchEtcdMembers(t *testing.T) {
 			want:     map[string]uint64{"cp-a": 1, "cp-b": 2},
 		},
 		{
-			// the member of a machine with a known ID that is not in the list is gone, whatever the member names
-			name:      "a known member ID that is not a member is not matched by host name",
-			machines:  []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(9))},
-			members:   []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b")},
-			want:      map[string]uint64{"cp-a": 1},
-			unmatched: []uint64{2},
+			// cp-b was reset and joined etcd again under the same hostname: its recorded member 9 is gone
+			name:     "a known member ID that is not a member falls back to the host name",
+			machines: []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(9))},
+			members:  []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b")},
+			want:     map[string]uint64{"cp-a": 1, "cp-b": 2},
+		},
+		{
+			name:       "a known member ID that is not a member doesn't tell that the machine has no member",
+			machines:   []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(9))},
+			members:    []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8")},
+			want:       map[string]uint64{"cp-a": 1},
+			unmatched:  []uint64{2},
+			unresolved: []string{"cp-b"},
+		},
+		{
+			// cp-b recorded the member ID of cp-a, e.g. because its Talos endpoint reached cp-a's node
+			name:       "a member ID that two machines share identifies neither",
+			machines:   []*clusterv1.Machine{withNode("cp-a", withMemberID(1)), withNode("cp-b", withMemberID(1))},
+			members:    []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8")},
+			want:       map[string]uint64{"cp-a": 1},
+			unmatched:  []uint64{2},
+			unresolved: []string{"cp-b"},
 		},
 		{
 			// an orphaned member carries the host name of the new machine, which runs another member
@@ -411,9 +427,25 @@ func TestEtcdMembershipVerify(t *testing.T) {
 		{
 			name:     "an observed member ID takes precedence over the recorded one",
 			owned:    []clusterv1.Machine{cpA, cpTempName},
-			members:  with(members("node-a"), member(100, "talos-4y4-bo8")),
+			members:  with(members("node-a"), member(100, "talos-4y4-bo8"), member(101, "talos-dtq-420")),
 			observed: map[string]uint64{"cp-e": 101},
-			wantErr:  `etcd is missing member 0000000000000065 of control plane machine "cp-e"`,
+			wantErr:  `etcd member "talos-4y4-bo8" does not match any control plane machine (member ID 0000000000000064)`,
+		},
+		{
+			name:    "a recorded member ID that is not a member falls back to the host name",
+			owned:   []clusterv1.Machine{cpA, cpTempName},
+			members: with(members("node-a"), member(7, "cp-e")),
+		},
+		{
+			name:    "a machine whose recorded member ID is not a member claims one unmatched member",
+			owned:   []clusterv1.Machine{cpA, cpTempName},
+			members: with(members("node-a"), member(7, "talos-dtq-420")),
+		},
+		{
+			name:    "a machine whose recorded member ID is not a member must still have a member",
+			owned:   []clusterv1.Machine{cpA, cpTempName},
+			members: members("node-a"),
+			wantErr: `etcd is missing a member for 1 of the control plane machines ["cp-e"]`,
 		},
 		{
 			// the member named cp-e belongs to a deleted machine whose replacement got the same name
@@ -445,10 +477,15 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			wantErr: `etcd member "node-x" does not match any control plane machine`,
 		},
 		{
-			name:    "an excluded machine without a noderef does not disable the orphan check",
+			name:    "an excluded machine without a noderef may claim one unmatched member",
 			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
 			members: members("node-a", "node-b", "node-x"),
-			wantErr: `etcd member "node-x" does not match any control plane machine`,
+		},
+		{
+			name:    "an excluded machine without a noderef does not disable the orphan check",
+			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
+			members: members("node-a", "node-b", "node-x", "node-y"),
+			wantErr: `etcd member "node-y" does not match any control plane machine`,
 		},
 		{
 			name:    "an excluded machine without a noderef is not required to have a member",
@@ -469,6 +506,79 @@ func TestEtcdMembershipVerify(t *testing.T) {
 			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
 				t.Fatalf("verify() = %v, want error containing %q", err, tt.wantErr)
 			}
+		})
+	}
+}
+
+func TestEtcdMembershipExcludedVotingMembers(t *testing.T) {
+	withNode := func(name string, mutate func(*clusterv1.Machine)) clusterv1.Machine {
+		return newMachine(name, func(m *clusterv1.Machine) {
+			m.Status.NodeRef = clusterv1.MachineNodeReference{Name: name}
+
+			if mutate != nil {
+				mutate(m)
+			}
+		})
+	}
+
+	cpA := withNode("cp-a", nil)
+	cpB := withNode("cp-b", nil)
+	cpCLeaving := withNode("cp-c", markLeaving)
+	noNodeRef := newMachine("cp-new", nil)
+	noNodeRefDeleting := newMachine("cp-stuck", markDeleting)
+
+	learner := member(9, "node-learner")
+	learner.IsLearner = true
+
+	for _, tt := range []struct {
+		name    string
+		owned   []clusterv1.Machine
+		members []*machineapi.EtcdMember
+		want    int
+	}{
+		{
+			name:    "the member of an excluded machine",
+			owned:   []clusterv1.Machine{cpA, cpB, cpCLeaving},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b"), member(3, "cp-c")},
+			want:    1,
+		},
+		{
+			name:    "an excluded machine whose member is gone",
+			owned:   []clusterv1.Machine{cpA, cpB, cpCLeaving},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b")},
+			want:    0,
+		},
+		{
+			name:    "an excluded machine whose member can't be told may run an unmatched member",
+			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b"), member(3, "talos-4y4-bo8")},
+			want:    1,
+		},
+		{
+			name:    "a checked machine whose member can't be told claims an unmatched member first",
+			owned:   []clusterv1.Machine{cpA, noNodeRef, noNodeRefDeleting},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8")},
+			want:    0,
+		},
+		{
+			name:    "an excluded machine whose member can't be told runs at most one member",
+			owned:   []clusterv1.Machine{cpA, noNodeRef, noNodeRefDeleting},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "talos-4y4-bo8"), member(3, "talos-dtq-420"), member(4, "talos-x")},
+			want:    1,
+		},
+		{
+			name:    "an unmatched learner doesn't vote",
+			owned:   []clusterv1.Machine{cpA, cpB, noNodeRefDeleting},
+			members: []*machineapi.EtcdMember{member(1, "cp-a"), member(2, "cp-b"), learner},
+			want:    0,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			membership := newEtcdMembership(tt.owned, remainingMachines(tt.owned), nil)
+
+			g.Expect(membership.excludedVotingMembers(membership.match(tt.members))).To(Equal(tt.want))
 		})
 	}
 }
@@ -568,11 +678,26 @@ func TestIdentifyEtcdMember(t *testing.T) {
 			wantKnown:  true,
 		},
 		{
-			name:      "not a member by member ID, whatever the member names",
+			// m3 was reset and joined etcd again under the same hostname: its recorded member 100 is gone
+			name:       "a recorded member ID that is not a member falls back to the host name",
+			machine:    withID,
+			machines:   []*clusterv1.Machine{withID, other},
+			members:    etcdMembersFor("m2", "m3"),
+			wantMember: "m3",
+			wantKnown:  true,
+		},
+		{
+			name:      "a recorded member ID that is not a member, every member matches another machine",
 			machine:   withID,
 			machines:  []*clusterv1.Machine{withID, other},
-			members:   etcdMembersFor("m2", "m3"),
+			members:   etcdMembersFor("m2"),
 			wantKnown: true,
+		},
+		{
+			name:     "a recorded member ID that is not a member, several unmatched members",
+			machine:  withID,
+			machines: []*clusterv1.Machine{withID, other},
+			members:  etcdMembersFor("m2", "talos-4y4-bo8", "talos-dtq-420"),
 		},
 		{
 			name:      "not a member",

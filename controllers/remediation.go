@@ -769,19 +769,7 @@ func (r *TalosControlPlaneReconciler) canSafelyRemediateMachine(
 		return false, "", listErr
 	}
 
-	var observedIDs map[string]uint64
-
-	for name, status := range observed {
-		if status.hasMemberID {
-			if observedIDs == nil {
-				observedIDs = map[string]uint64{}
-			}
-
-			observedIDs[name] = status.memberID
-		}
-	}
-
-	safe, details := canSafelyRemoveEtcdMember(members, target, machines, healthy, etcdMemberIDs(machines, observedIDs))
+	safe, details := canSafelyRemoveEtcdMember(members, target, machines, healthy, etcdMemberIDs(machines, observedEtcdMemberIDs(observed)))
 
 	r.Log.Info("checked etcd quorum before remediation", "machine", target.Name, "members", len(members), "safe", safe, "details", details)
 

@@ -54,10 +54,22 @@ type etcdMachineStatus struct {
 	members []*machineapi.EtcdMember
 	// listErr is why the etcd member list could not be listed, if it could not.
 	listErr error
-	// memberID is the ID of the machine's own etcd member, as the machine reported it; it is only known if
-	// hasMemberID is set.
-	memberID    uint64
-	hasMemberID bool
+	// memberID is the ID of the machine's own etcd member, as the machine reported it, or 0 if it is not known.
+	memberID uint64
+}
+
+// observedEtcdMemberIDs returns the member IDs that the machines reported in the etcd health check, by machine name
+// (see etcdMachineStatus.memberID).
+func observedEtcdMemberIDs(statuses map[string]etcdMachineStatus) map[string]uint64 {
+	ids := make(map[string]uint64, len(statuses))
+
+	for name, status := range statuses {
+		if status.memberID != 0 {
+			ids[name] = status.memberID
+		}
+	}
+
+	return ids
 }
 
 // etcdMachineProbe is what the Talos API of a control plane machine returned about etcd.
@@ -65,11 +77,11 @@ type etcdMachineProbe struct {
 	// inspectErr is set if the etcd service status could not be retrieved.
 	inspectErr error
 	services   []talosclient.ServiceInfo
-	// memberList and memberID are only retrieved when the etcd service is healthy.
-	memberList  *machineapi.EtcdMemberListResponse
-	listErr     error
-	memberID    uint64
-	memberIDErr error
+	// memberList and memberID are only retrieved when the etcd service is healthy; memberID is 0 if it could not be
+	// retrieved.
+	memberList *machineapi.EtcdMemberListResponse
+	listErr    error
+	memberID   uint64
 }
 
 // probeEtcd retrieves the etcd service status of the machine and, if it is healthy, the etcd member list as seen by
@@ -94,15 +106,31 @@ func (r *TalosControlPlaneReconciler) probeEtcd(ctx context.Context, tcp *contro
 	probe := etcdMachineProbe{services: svcs}
 
 	if etcdServiceError(svcs) == nil {
-		probe.memberList, probe.listErr = c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
-		probe.memberID, probe.memberIDErr = etcdMemberIDVia(ctx, c)
+		// The two calls are independent: run them concurrently, so that a slow member list doesn't leave the member ID
+		// call without time.
+		var wg sync.WaitGroup
+
+		wg.Go(func() {
+			probe.memberList, probe.listErr = c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
+		})
+
+		wg.Go(func() {
+			var err error
+
+			if probe.memberID, err = etcdMemberIDVia(ctx, c); err != nil {
+				r.Log.V(1).Info("failed to get the etcd member ID of the machine", "machine", machine.Name, "error", err)
+			}
+		})
+
+		wg.Wait()
 	}
 
 	return probe
 }
 
 // etcdMemberIDVia returns the ID of the etcd member of the single machine the client points to, as the machine
-// reports it. It fails if etcd does not run on the machine, or if its Talos version has no etcd status API.
+// reports it; the ID is never 0 when err is nil. It fails if etcd does not run on the machine, or if its Talos version
+// has no etcd status API.
 func etcdMemberIDVia(ctx context.Context, c *talosclient.Client) (uint64, error) {
 	resp, err := c.EtcdStatus(ctx)
 	if err != nil {
@@ -239,15 +267,11 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 	}
 
 	// The member IDs the machines just reported take precedence over the recorded ones.
-	observedIDs := make(map[string]uint64, len(machines))
-
 	for i, machine := range machines {
-		if probes[i].inspectErr == nil && probes[i].memberIDErr == nil && probes[i].memberID != 0 {
-			observedIDs[machine.Name] = probes[i].memberID
-		}
+		health.statuses[machine.Name] = etcdMachineStatus{memberID: probes[i].memberID}
 	}
 
-	membership := newEtcdMembership(ownedMachines, machines, observedIDs)
+	membership := newEtcdMembership(ownedMachines, machines, observedEtcdMemberIDs(health.statuses))
 
 	// the member list reported by the previous node, to check that every node sees the same cluster
 	var (
@@ -261,8 +285,6 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 	// finished first.
 	for i, machine := range machines {
 		probe := probes[i]
-
-		health.statuses[machine.Name] = etcdMachineStatus{}
 
 		if err := func() error {
 			if probe.inspectErr != nil {
@@ -278,11 +300,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 			health.healthy++
 
-			status := etcdMachineStatus{healthy: true, listErr: probe.listErr}
-
-			if id, ok := observedIDs[machine.Name]; ok {
-				status.memberID, status.hasMemberID = id, true
-			}
+			status := etcdMachineStatus{healthy: true, listErr: probe.listErr, memberID: probe.memberID}
 
 			if probe.listErr == nil && len(probe.memberList.GetMessages()) > 0 {
 				// The client points to a single machine, so only 1 message should return.
@@ -298,7 +316,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 			for _, message := range probe.memberList.Messages {
 				match := membership.match(message.Members)
 
-				votingMembers, excludedMembers := 0, 0
+				votingMembers := 0
 
 				for _, member := range message.Members {
 					if !member.IsLearner {
@@ -306,14 +324,8 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 					}
 				}
 
-				for machineName, member := range match.members {
-					if _, checked := membership.checked[machineName]; !checked && !member.IsLearner {
-						excludedMembers++
-					}
-				}
-
 				health.members = max(health.members, votingMembers)
-				health.excluded = max(health.excluded, excludedMembers)
+				health.excluded = max(health.excluded, membership.excludedVotingMembers(match))
 
 				// a learner doesn't vote, so its health doesn't help etcd keep quorum
 				if member := match.members[machine.Name]; member != nil && member.IsLearner {
@@ -461,39 +473,51 @@ type etcdMemberMatch struct {
 	members map[string]*machineapi.EtcdMember
 	// unmatched are the members that run on none of the machines, in member list order.
 	unmatched []*machineapi.EtcdMember
-	// unresolved are the names of the machines whose member can't be told, in machine order: their member ID is not
-	// known, and no member has one of their host names. Each of them may run one of the unmatched members, or none.
+	// unresolved are the names of the machines whose member can't be told, in machine order: they match no member by
+	// member ID, and no member has one of their host names. Each of them may run one of the unmatched members, or none.
 	unresolved []string
 }
 
 // matchEtcdMembers tells which etcd member runs on which machine; ids are the known member IDs of the machines (see
 // etcdMemberIDs).
 //
-// A machine whose member ID is known runs the member with that ID, or none if no member has it. Host names identify a
-// member less reliably: a node can join etcd before it gets its final hostname, and the member keeps the name it
-// joined with. So a machine is only matched by host name (see nodeNamesForMachine) if its member ID is not known,
-// e.g. because it has not been reached yet, and only to a member that no machine runs by ID.
+// A machine runs the member with its known member ID, if there is one and no other machine has the same ID. A known ID
+// may still be outdated, e.g. a recorded one after the node was reset and joined etcd again, or wrong, e.g. one that
+// was read from another node through a reused address: a machine whose ID matches no member, or that shares its ID with
+// another machine, is matched as if its ID was not known. That never tells that the machine has no member.
+//
+// Host names identify a member less reliably: a node can join etcd before it gets its final hostname, and the member
+// keeps the name it joined with. So a machine is only matched by host name (see nodeNamesForMachine) if it has no
+// member by ID, and only to a member that no machine runs by ID.
 func matchEtcdMembers(members []*machineapi.EtcdMember, machines []*clusterv1.Machine, ids map[string]uint64) etcdMemberMatch {
 	match := etcdMemberMatch{members: make(map[string]*machineapi.EtcdMember, len(machines))}
 	claimed := make(map[*machineapi.EtcdMember]struct{}, len(members))
 
-	for _, machine := range machines {
-		id, ok := ids[machine.Name]
-		if !ok {
-			continue
-		}
+	machinesByID := make(map[uint64]int, len(ids))
 
-		if i := slices.IndexFunc(members, func(member *machineapi.EtcdMember) bool { return member.Id == id }); i >= 0 {
-			match.members[machine.Name] = members[i]
-			claimed[members[i]] = struct{}{}
+	for _, machine := range machines {
+		if id, ok := ids[machine.Name]; ok {
+			machinesByID[id]++
 		}
 	}
 
+	byName := make([]*clusterv1.Machine, 0, len(machines))
+
 	for _, machine := range machines {
-		if _, ok := ids[machine.Name]; ok {
-			continue
+		id, ok := ids[machine.Name]
+		if ok && machinesByID[id] == 1 {
+			if i := slices.IndexFunc(members, func(member *machineapi.EtcdMember) bool { return member.Id == id }); i >= 0 {
+				match.members[machine.Name] = members[i]
+				claimed[members[i]] = struct{}{}
+
+				continue
+			}
 		}
 
+		byName = append(byName, machine)
+	}
+
+	for _, machine := range byName {
 		names := nodeNamesForMachine(machine)
 
 		i := slices.IndexFunc(members, func(member *machineapi.EtcdMember) bool {
@@ -589,34 +613,28 @@ func (m etcdMembership) match(members []*machineapi.EtcdMember) etcdMemberMatch 
 
 // verify checks the match of the etcd member list reported by node.
 //
-// Every machine that must be a member has to have one. A machine whose member ID is known must run the member with
-// that ID. A machine whose member can't be told (see etcdMemberMatch.unresolved), e.g. a new machine that has no
-// nodeRef yet, is accounted for by count: each such machine claims one member that runs on no owned machine. Any
-// further unmatched member is an orphan (auditEtcd force-removes these), and fewer unmatched members than such
-// machines means a new machine has not joined etcd yet. The member of an excluded machine is tolerated; that machine's
-// member may also already be gone, which is expected, so it is not required.
+// Every machine that must be a member has to have one. A machine whose member can't be told (see
+// etcdMemberMatch.unresolved), e.g. a new machine that has no nodeRef yet, is accounted for by count: each such machine
+// claims one member that runs on no owned machine, and fewer unmatched members than such machines means a machine has
+// not joined etcd yet. An excluded machine may still run a member, or not anymore, which is expected: its member is
+// tolerated but not required, and if it can't be told, it may claim one unmatched member. Any further unmatched member
+// is an orphan (auditEtcd force-removes these).
 func (m etcdMembership) verify(node string, match etcdMemberMatch) error {
 	var unresolved []string
 
-	for _, machine := range m.owned {
-		if _, checked := m.checked[machine.Name]; !checked {
-			continue
-		}
+	excludedUnresolved := 0
 
-		if _, ok := match.members[machine.Name]; ok {
-			continue
+	for _, name := range match.unresolved {
+		if _, checked := m.checked[name]; checked {
+			unresolved = append(unresolved, name)
+		} else {
+			excludedUnresolved++
 		}
-
-		if !slices.Contains(match.unresolved, machine.Name) {
-			return fmt.Errorf("%s: etcd is missing member %s of control plane machine %q", node, formatEtcdMemberID(m.ids[machine.Name]), machine.Name)
-		}
-
-		unresolved = append(unresolved, machine.Name)
 	}
 
 	switch {
-	case len(match.unmatched) > len(unresolved):
-		member := match.unmatched[len(unresolved)]
+	case len(match.unmatched) > len(unresolved)+excludedUnresolved:
+		member := match.unmatched[len(unresolved)+excludedUnresolved]
 
 		return fmt.Errorf("%s: etcd member %q does not match any control plane machine (member ID %s)", node, member.Hostname, formatEtcdMemberID(member.Id))
 	case len(match.unmatched) < len(unresolved):
@@ -625,6 +643,39 @@ func (m etcdMembership) verify(node string, match etcdMemberMatch) error {
 	}
 
 	return nil
+}
+
+// excludedVotingMembers returns how many voting members of the match may run on the machines excluded from the health
+// check: those matched to them, and, for each excluded machine whose member can't be told, one of the unmatched
+// members that the checked such machines leave over (see verify).
+func (m etcdMembership) excludedVotingMembers(match etcdMemberMatch) int {
+	excluded := 0
+
+	for name, member := range match.members {
+		if _, checked := m.checked[name]; !checked && !member.IsLearner {
+			excluded++
+		}
+	}
+
+	checkedUnresolved, excludedUnresolved := 0, 0
+
+	for _, name := range match.unresolved {
+		if _, checked := m.checked[name]; checked {
+			checkedUnresolved++
+		} else {
+			excludedUnresolved++
+		}
+	}
+
+	unmatchedVoting := 0
+
+	for _, member := range match.unmatched {
+		if !member.IsLearner {
+			unmatchedVoting++
+		}
+	}
+
+	return excluded + min(excludedUnresolved, max(0, unmatchedVoting-checkedUnresolved))
 }
 
 // compareEtcdMembers reports a member list that differs from the one another node reported: each etcd member must see
@@ -647,7 +698,8 @@ func compareEtcdMembers(node string, members map[uint64]string, previousNode str
 }
 
 // identifyEtcdMember returns the etcd member running on the machine, or nil if there is none; machines are all the
-// control plane machines, whose member IDs are the recorded ones (see etcdMemberIDAnnotation). See
+// control plane machines, whose member IDs are the recorded ones (see etcdMemberIDAnnotation). A recorded ID that no
+// member has, or that another machine has too, doesn't tell that the machine has no member (see matchEtcdMembers). See
 // etcdMemberMatch.memberOf; known is false when it can't be told whether the machine has a member.
 func identifyEtcdMember(members []*machineapi.EtcdMember, machine *clusterv1.Machine, machines []*clusterv1.Machine) (member *machineapi.EtcdMember, known bool) {
 	if !slices.ContainsFunc(machines, func(m *clusterv1.Machine) bool { return m.Name == machine.Name }) {
@@ -934,10 +986,11 @@ func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c *tal
 // auditEtcd force-removes the etcd members that run on no control plane machine (see matchEtcdMembers). It lists the
 // members through the first control plane machine that is not being deleted.
 //
-// The machines are asked for their member ID first, so that a member is matched by ID even when its machine has none
-// recorded yet, or a recorded one that is outdated. A member that matches no machine may still belong to a machine
-// whose member can't be told (see etcdMemberMatch.unresolved): no member is removed while a machine that stays in the
-// control plane is such a machine.
+// The members are matched with the recorded member IDs first. Only if a member is left unmatched, the machines are
+// asked for their member ID, so that a member is matched by ID even when its machine has none recorded yet, or a
+// recorded one that is outdated. A member that matches no machine may still belong to a machine whose member can't be
+// told (see etcdMemberMatch.unresolved): no member is removed while a machine that stays in the control plane is such
+// a machine.
 func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *controlplanev1.TalosControlPlane, cluster client.ObjectKey) error {
 	machineList, err := r.getControlPlaneMachinesForCluster(ctx, cluster)
 	if err != nil {
@@ -969,25 +1022,27 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 
 	designatedCPMachine := machines[i]
 
-	ids := etcdMemberIDs(machines, r.observeEtcdMemberIDs(ctx, tcp, machines))
-
-	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	listCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 
 	defer cancel()
 
-	c, err := r.talosconfigForMachines(ctx, tcp, *designatedCPMachine)
+	c, err := r.talosconfigForMachines(listCtx, tcp, *designatedCPMachine)
 	if err != nil {
 		return err
 	}
 
 	defer c.Close() //nolint:errcheck
 
-	response, err := c.EtcdMemberList(ctx, &machineapi.EtcdMemberListRequest{})
+	response, err := c.EtcdMemberList(listCtx, &machineapi.EtcdMemberListRequest{})
 	if err != nil {
 		return fmt.Errorf("error getting etcd members via %q (endpoints %v): %w", designatedCPMachine.Name, c.GetConfigContext().Endpoints, err)
 	}
 
 	// Only querying one CP node, so only 1 message should return.
+	if len(response.GetMessages()) == 0 {
+		return fmt.Errorf("empty etcd member list response via %q", designatedCPMachine.Name)
+	}
+
 	memberList := response.Messages[0]
 
 	for _, member := range memberList.Members {
@@ -996,7 +1051,12 @@ func (r *TalosControlPlaneReconciler) auditEtcd(ctx context.Context, tcp *contro
 		}
 	}
 
-	match := matchEtcdMembers(memberList.Members, machines, ids)
+	match := matchEtcdMembers(memberList.Members, machines, etcdMemberIDs(machines, nil))
+	if len(match.unmatched) == 0 {
+		return nil
+	}
+
+	match = matchEtcdMembers(memberList.Members, machines, etcdMemberIDs(machines, r.observeEtcdMemberIDs(ctx, tcp, machines)))
 	if len(match.unmatched) == 0 {
 		return nil
 	}
@@ -1032,7 +1092,7 @@ func (r *TalosControlPlaneReconciler) recordEtcdMemberIDs(ctx context.Context, m
 		machine := &machines[i]
 
 		status, ok := statuses[machine.Name]
-		if !ok || !status.hasMemberID {
+		if !ok || status.memberID == 0 {
 			continue
 		}
 
