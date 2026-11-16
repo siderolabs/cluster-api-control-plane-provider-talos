@@ -1390,6 +1390,11 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 	}
 
 	health, err := r.etcdHealthcheck(ctx, tcp, machines.Items)
+
+	if recordErr := r.recordEtcdMemberIDs(ctx, machines.Items, health.statuses); recordErr != nil {
+		errs = kerrors.NewAggregate([]error{errs, recordErr})
+	}
+
 	if err != nil {
 		// The reason tells the Available condition whether etcd still has quorum.
 		apimeta.SetStatusCondition(&tcp.Status.Conditions, metav1.Condition{

@@ -440,6 +440,8 @@ type machineService struct {
 
 	events              []*machine.Event
 	etcdMembers         *machine.EtcdMemberListResponse
+	etcdMemberID        uint64
+	etcdStatusCalls     int
 	serviceListResponse *machine.ServiceListResponse
 	resetChan           chan struct{}
 
@@ -508,6 +510,38 @@ func (ms *machineService) EtcdMemberList(ctx context.Context, req *machine.EtcdM
 	}
 
 	return ms.etcdMembers, nil
+}
+
+func (ms *machineService) EtcdStatus(ctx context.Context, req *emptypb.Empty) (*machine.EtcdStatusResponse, error) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	ms.etcdStatusCalls++
+
+	// like a Talos version without the etcd status API
+	if ms.etcdMemberID == 0 {
+		return nil, status.Error(codes.Unimplemented, "method EtcdStatus not implemented")
+	}
+
+	return &machine.EtcdStatusResponse{
+		Messages: []*machine.EtcdStatus{{MemberStatus: &machine.EtcdMemberStatus{MemberId: ms.etcdMemberID}}},
+	}, nil
+}
+
+// setEtcdMemberID sets the ID of the etcd member the machine reports; 0 reports none.
+func (ms *machineService) setEtcdMemberID(id uint64) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	ms.etcdMemberID = id
+}
+
+// getEtcdStatusCalls returns how many times the etcd status of the machine was requested.
+func (ms *machineService) getEtcdStatusCalls() int {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	return ms.etcdStatusCalls
 }
 
 func (ms *machineService) List(req *machine.ListRequest, serv machine.MachineService_ListServer) error {

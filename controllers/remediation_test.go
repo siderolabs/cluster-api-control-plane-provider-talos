@@ -1369,6 +1369,7 @@ func TestCanSafelyRemoveEtcdMember(t *testing.T) {
 		machines  int
 		members   []*machineapi.EtcdMember
 		unhealthy []int
+		ids       map[string]uint64
 		safe      bool
 	}{
 		{name: "1 member", machines: 1, safe: false},
@@ -1407,6 +1408,30 @@ func TestCanSafelyRemoveEtcdMember(t *testing.T) {
 			members:  etcdMembersFor("m0", "m1", "orphan"),
 			safe:     false,
 		},
+		{
+			// m0 joined etcd under a temporary hostname, and is matched by its member ID
+			name:     "2 members, the target member is matched by ID",
+			machines: 2,
+			members:  etcdMembersFor("talos-4y4-bo8", "m1"),
+			ids:      map[string]uint64{"m0": 1},
+			safe:     true,
+		},
+		{
+			// m1 recorded member 9, which is gone: m1 is matched by host name
+			name:     "2 members, an outdated member ID falls back to the host name",
+			machines: 2,
+			members:  etcdMembersFor("m0", "m1"),
+			ids:      map[string]uint64{"m1": 9},
+			safe:     true,
+		},
+		{
+			// m0 and m1 share member ID 2: it identifies neither, m0's member can't be told and counts as unhealthy
+			name:     "2 members, a member ID that two machines share identifies neither",
+			machines: 2,
+			members:  etcdMembersFor("talos-4y4-bo8", "m1"),
+			ids:      map[string]uint64{"m0": 2, "m1": 2},
+			safe:     false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := NewWithT(t)
@@ -1431,7 +1456,7 @@ func TestCanSafelyRemoveEtcdMember(t *testing.T) {
 				members = etcdMembersFor(names...)
 			}
 
-			safe, details := canSafelyRemoveEtcdMember(members, machines[0], machines, healthy)
+			safe, details := canSafelyRemoveEtcdMember(members, machines[0], machines, healthy, tc.ids)
 			g.Expect(safe).To(Equal(tc.safe), details)
 		})
 	}

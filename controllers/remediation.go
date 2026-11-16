@@ -182,7 +182,7 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdLeavingMachines(ctx context.C
 
 		member, known := identifyEtcdMember(members, m, machines)
 		if !known {
-			return false, fmt.Errorf("failed to check whether machine %s left etcd: its etcd member can't be identified, it has no host names yet", m.Name)
+			return false, fmt.Errorf("failed to check whether machine %s left etcd: its etcd member can't be identified by member ID or host name", m.Name)
 		}
 
 		if member != nil {
@@ -769,7 +769,7 @@ func (r *TalosControlPlaneReconciler) canSafelyRemediateMachine(
 		return false, "", listErr
 	}
 
-	safe, details := canSafelyRemoveEtcdMember(members, target, machines, healthy)
+	safe, details := canSafelyRemoveEtcdMember(members, target, machines, healthy, etcdMemberIDs(machines, observedEtcdMemberIDs(observed)))
 
 	r.Log.Info("checked etcd quorum before remediation", "machine", target.Name, "members", len(members), "safe", safe, "details", details)
 
@@ -782,13 +782,24 @@ func (r *TalosControlPlaneReconciler) canSafelyRemediateMachine(
 // Removing a member is itself a change that needs a quorum of the current voting members to commit, and the remaining
 // voting members then need a quorum of their own: in a 3 member cluster, the 2 other members must be healthy, in a 5
 // member cluster, 3 of the 4 others. Learners block remediation until they are promoted. Members that can't be matched
-// to a machine count as unhealthy; when the target's member can't be identified, it is assumed to be one of them, so
-// anything unknown makes the check stricter.
-func canSafelyRemoveEtcdMember(members []*machineapi.EtcdMember, target *clusterv1.Machine, machines []*clusterv1.Machine, healthy map[string]bool) (bool, string) {
-	var (
-		learners, remainingVoting, remainingHealthy int
-		targetMember                                *machineapi.EtcdMember
-	)
+// to a machine (see matchEtcdMembers, ids are the known member IDs of the machines) count as unhealthy; when the
+// target's member can't be identified, it is assumed to be one of them, so anything unknown makes the check stricter.
+func canSafelyRemoveEtcdMember(members []*machineapi.EtcdMember, target *clusterv1.Machine, machines []*clusterv1.Machine, healthy map[string]bool, ids map[string]uint64) (bool, string) {
+	match := matchEtcdMembers(members, machines, ids)
+
+	// the target member is not found by elimination (see etcdMemberMatch.memberOf): an unidentified member is assumed
+	// to be unhealthy, which is stricter
+	targetMember := match.members[target.Name]
+
+	healthyMembers := make(map[*machineapi.EtcdMember]struct{}, len(match.members))
+
+	for name, member := range match.members {
+		if name != target.Name && healthy[name] {
+			healthyMembers[member] = struct{}{}
+		}
+	}
+
+	var learners, remainingVoting, remainingHealthy int
 
 	for _, member := range members {
 		if member.IsLearner {
@@ -797,20 +808,14 @@ func canSafelyRemoveEtcdMember(members []*machineapi.EtcdMember, target *cluster
 			continue
 		}
 
-		if targetMember == nil && etcdMemberMatchesMachine(member, target) {
-			targetMember = member
-
+		if member == targetMember {
 			continue
 		}
 
 		remainingVoting++
 
-		for _, m := range machines {
-			if m.Name != target.Name && healthy[m.Name] && etcdMemberMatchesMachine(member, m) {
-				remainingHealthy++
-
-				break
-			}
+		if _, ok := healthyMembers[member]; ok {
+			remainingHealthy++
 		}
 	}
 
